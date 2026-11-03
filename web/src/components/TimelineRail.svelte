@@ -16,7 +16,7 @@
   // ring while closed, filled while open, flat while held open, so the row shows it opens before it is touched; the row
   // keeps one glyph.
   import { LinearProgress } from "m3-svelte";
-  import { AGENT_WORKING_LABEL, clarificationProgress, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, suiteResultText, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
+  import { AGENT_WORKING_LABEL, clarificationProgress, commandReportText, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, suiteResultText, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
   import { elapsedMs } from "../time.ts";
   import { bandKey, currentPlanStep, planStepState, type RoundGroup, type TimelineEntry } from "../state.ts";
   import CircularIndeterminate from "./CircularIndeterminate.svelte";
@@ -150,6 +150,12 @@
           {@render collapsedRow(node.collapsed)}
         {:else}
         {@render loops(entry.groups)}
+        <!-- Issue #39 (decision Q2): one line per command whose runner counted its tests. -->
+        {#if entry.counts.some((c) => c._tag === "Counted")}
+          <ul class="suite-counts" data-suite-counts>
+            {#each entry.counts as report, r (r)}{#if report._tag === "Counted"}<li class="m3-font-body-small">{commandReportText(report)}</li>{/if}{/each}
+          </ul>
+        {/if}
         {#if entry.steps.length > 0}
           <ol class="steps">
             {#each entry.steps as step, s (s)}
@@ -238,6 +244,7 @@
   .count { display: block; }
   .group { margin: 0.25rem 0 0 0.25rem; }
   .group.done { color: var(--m3c-on-surface-variant); }
+  .suite-counts { margin: 0.25rem 0 0 0.25rem; color: var(--m3c-on-surface-variant); overflow-wrap: anywhere; }
   .muted { color: var(--m3c-on-surface-variant); }
   .entry > .elapsed { display: block; }
   /* Issue #63: the disclosure of a row, after the one of a decision's entry (issue #87): a native button, a state layer of

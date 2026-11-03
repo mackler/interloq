@@ -25,7 +25,8 @@ import { editIdOf, type QueueEdit } from "../src/chainQueue.ts";
 import type { ItemId } from "../src/tracker.ts";
 import { listedState } from "../src/runMode.ts";
 import { runInProgressText, termsChoiceLine, WAIT_ALREADY_ENDED_TEXT } from "../src/prompts.ts";
-import { initialState, reduce } from "../web/src/state.ts";
+import { initialState, reduce, type TimelineEntry } from "../web/src/state.ts";
+import { railView } from "../web/src/rail.ts";
 import { choiceOf, isOpen } from "../src/uiState.ts";
 import { codexReviewerLayer } from "../src/codex.ts";
 import { codexThread } from "../src/codexExec.ts";
@@ -608,6 +609,43 @@ test("tabs of one run agree that a rail phase is closed, live and from the repla
     a.send({ type: "stop", incarnation, run: 1 });
     await until("the end of run 1", () => hasEnded(a, 1));
     for (const x of [a, b, c]) x.close();
+  });
+});
+
+// Issue #39 (S10, decision Q2): the Full test suite row's open state is the run's shared state. Tab A opens and then
+// closes the row; tab B folds the frames it receives with the page's reducer, and the rail it computes over a suite entry
+// with counted commands shows the row open and then closed.
+test("tabs of one run agree that the Full test suite row is open, then closed", async () => {
+  const repo = tempRepo();
+  await serve(await managerOf(repo, [{ steps: [{ hang: true }] }]), dist(), async (port) => {
+    const a = await connect(port);
+    const b = await connect(port);
+    await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
+    a.send(startFrame());
+    await until("the run's start in both tabs", () => (perRun(a).get(1)?.length ?? 0) > 1 && (perRun(b).get(1)?.length ?? 0) > 1);
+    const incarnation = (a.messages[0] as Extract<ServerMessage, { type: "hello" }>).incarnation;
+    const view = (c: Client) => c.messages.reduce(reduce, initialState).modes.implementation.runs.at(-1) ?? null;
+    const suite: TimelineEntry = {
+      phase: { kind: "suite", n: 1 }, label: "Full test suite", groups: [], steps: [], state: "done", plan: null,
+      began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null,
+      result: "passed",
+      counts: [{ _tag: "Counted", name: "npm run test:unit", outcome: "passed", scope: "whole", counts: { passed: 10, failed: 0, skipped: 1 } }],
+    };
+    const rowOpen = (c: Client): boolean => {
+      const node = railView({ ...view(c)!, timeline: [suite] }, false, false).phases[0].node;
+      return node._tag === "Disclosure" && node.open;
+    };
+    assert.equal(rowOpen(b), false, "the row starts closed");
+    const scope = { _tag: "RailPhase" as const, phase: "suite-1" };
+    a.send({ type: "ui", incarnation, run: 1, flag: { scope, open: true } });
+    await until("the opened state in tab B", () => view(b)?.ui.version === 1);
+    assert.equal(rowOpen(b), true);
+    a.send({ type: "ui", incarnation, run: 1, flag: { scope, open: false } });
+    await until("the closed state in tab B", () => view(b)?.ui.version === 2);
+    assert.equal(rowOpen(b), false);
+    a.send({ type: "stop", incarnation, run: 1 });
+    await until("the end of run 1", () => hasEnded(a, 1));
+    for (const x of [a, b]) x.close();
   });
 });
 

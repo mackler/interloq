@@ -8,7 +8,7 @@ import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote, Sk
 import type { ChainSource } from "./chainQueue.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import type { CompletedWork, Ending, ItemReturn } from "./ending.ts";
-import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -20,6 +20,7 @@ import type { ItemState } from "./tracker.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
 import type { NetworkCode, ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
+import type { CommandReport, Fall } from "./testCounts.ts";
 import { checkTotals } from "./stepChecks.ts";
 import { FIGURE_SVG_LIMIT_BYTES } from "./figure.ts";
 import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome, type SuiteStop, type WorkFailure } from "./suite.ts";
@@ -1241,7 +1242,12 @@ export const NARRATION_OUTCOME_SENTENCE = "When you write about a command's outc
 export const runningNoteLead = (count: number): string => (count === 1 ? "Written while this command had not ended:" : "Written while these commands had not ended:");
 /** Issue #40: the note on a message written while the named commands had not ended, or null where none ran. */
 export const runningNote = (names: readonly string[]): string | null => (names.length === 0 ? null : `${runningNoteLead(names.length)} ${names.join("; ")}`);
-export const REPORT_CHECKS_SENTENCE = "In the report's 'checks', list each check command you ran in this call, in the order you ran them: the step's id in 'step', the command exactly as you ran it in 'command', and how long it took in seconds in 'seconds'. List none if you ran none.";
+/**
+ * Issue #39: and whether the command ran a selection, and its counts from the runner's structured report alone. The
+ * prompt is every project's, so it states the rule with runners as examples; `checkRunOf` of src/schemaNormalize.ts keeps
+ * no impossible count.
+ */
+export const REPORT_CHECKS_SENTENCE = "In the report's 'checks', list each check command you ran in this call, in the order you ran them: the step's id in 'step', the command exactly as you ran it in 'command', how long it took in seconds in 'seconds', in 'selection' true where the command ran only some of the tests (such as the tests the change touches, or one end-to-end scenario) and false otherwise, and in 'counts' the passed, failed and skipped tests ('passed', 'failed', 'skipped') taken only from the runner's structured report, a JSON or TAP reporter the runner offers (for example Node's --test-reporter=tap, Vitest's --reporter=json, bats' --formatter tap, Playwright's --reporter=json), never from its printed summary and never computed or estimated; give 'null' where the check used no structured reporter or its runner counts nothing (a build, a type check). List none if you ran none.";
 /**
  * When an execution call asks the user (issue #186, work review 1, W1-R1-1): a decision or information about how to
  * carry out the work, or a remaining step that proves wrong. A point of what the work should achieve that the sources
@@ -1786,11 +1792,18 @@ export const EXEMPTED_CHECKS_TIMED = `An exempted test or command still counts t
  */
 export const WORK_CHECK_CRITERION = `Raise an issue for a step whose reported checks ran tests its change does not touch, ran a command its text in the plan does not name, or together took longer than ${STEP_CHECK_LIMIT_MS / 60_000} minutes (the step's total, not any single command). ${PROJECT_RULE_EXEMPTION} ${STEP_RULE_EXEMPTION} ${EXEMPTED_CHECKS_TIMED} For an issue under this criterion, put the step's id, not a file path, in the location field.`;
 /** The checks an execution phase reported, per step with each command's seconds and the step's total (issue #162). */
+/** Issue #39: a reported check's seconds, then its counts where it gave them, then whether it ran a selection. */
+const checkDetails = (c: Omit<StepCheckRun, "step">): string =>
+  [
+    `${c.seconds} seconds`,
+    ...(c.counts === null ? [] : [`${c.counts.passed} passed, ${c.counts.failed} failed, ${c.counts.skipped} skipped`]),
+    ...(c.selection ? ["a selection"] : []),
+  ].join("; ");
 export const reportedChecksText = (execution: WorkExecution): string => {
   const totals = checkTotals(execution.outcome.checks);
   return totals.length === 0
     ? "none reported"
-    : totals.map((total) => `- ${total.step}: ${total.seconds} seconds in all: ${total.commands.map((c) => `${codeSpan(c.command)} (${c.seconds} seconds)`).join(", ")}`).join("\n");
+    : totals.map((total) => `- ${total.step}: ${total.seconds} seconds in all: ${total.commands.map((c) => `${codeSpan(c.command)} (${checkDetails(c)})`).join(", ")}`).join("\n");
 };
 export function workReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, execution: WorkExecution, thread: ReviewThread): string {
   const prefix = `W${phase}`;
@@ -2096,16 +2109,41 @@ export function phaseLabel(kind: "update" | "questions" | "planning" | "executio
       return numbered(FULL_SUITE_PHASE);
   }
 }
+/**
+ * Issue #39: one command that ran, in words: a counted command with its passed, failed and skipped tests and whether it
+ * ran a selection; an uncounted one (a build, a type check) with whether it succeeded, and no number. The one source of a
+ * report's words, which the suite's lines, the rail and npm test's summary share.
+ */
+export function commandReportText(report: CommandReport): string {
+  switch (report._tag) {
+    case "Counted": {
+      const { passed, failed, skipped } = report.counts;
+      return `${report.name}: ${passed} passed, ${failed} failed, ${skipped} skipped${report.scope === "selection" ? " (a selection)" : ""}`;
+    }
+    case "Uncounted":
+      return `${report.name} ${report.outcome === "passed" ? "succeeded" : "failed"}`;
+  }
+}
+/** Issue #39: the reports joined in the order given, as one sentence. */
+export function commandReportsText(reports: readonly CommandReport[]): string {
+  return `${reports.map(commandReportText).join("; ")}.`;
+}
+/** Issue #39: each passed count that fell since an earlier suite run, stated as a change and judged no further. */
+export function fallenCountsText(falls: readonly Fall[], earlierLabel: string): string {
+  return falls.map((f) => `The passed count of ${f.name} fell from ${f.before} in ${earlierLabel} to ${f.after}.`).join(" ");
+}
 /** Issue #162: the lines of a suite run, said on the page and written to conversation.md. */
 export function suiteBeganLine(label: string, command: string): string {
   return `\n${label}: Interloq runs the whole suite, ${command}, because the review of the work found nothing left to correct.`;
 }
-export function suitePassedLine(label: string, command: string): string {
+/** Issue #39: the commands a suite run's command reported, with their counts, after a line's first sentence; nothing for none. */
+const withReports = (first: string, reports: readonly CommandReport[]): string => (reports.length === 0 ? first : `${first} ${commandReportsText(reports)}`);
+export function suitePassedLine(label: string, command: string, reports: readonly CommandReport[]): string {
   // Issue #176: the commit check follows a passed suite, so the pass alone no longer finishes the run.
-  return `${label} passed: ${command}.`;
+  return withReports(`${label} passed: ${command}.`, reports);
 }
-export function suiteFailedLine(label: string, command: string, reason: WorkFailure, log: string): string {
-  return `${label} failed: ${command}; ${suiteFailureText(reason)}. Its output is in ${log}. Claude Code revises the plan to correct it, and the suite runs again after the next review of the work finds nothing left to correct.`;
+export function suiteFailedLine(label: string, command: string, reason: WorkFailure, log: string, reports: readonly CommandReport[]): string {
+  return `${withReports(`${label} failed: ${command}; ${suiteFailureText(reason)}.`, reports)} Its output is in ${log}. Claude Code revises the plan to correct it, and the suite runs again after the next review of the work finds nothing left to correct.`;
 }
 /**
  * Issue #181 (requirements Q1): a suite run stopped outside the work, by its limit or unable to start, said on the page

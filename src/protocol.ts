@@ -2,6 +2,7 @@
 // the same way. Pure: no Node import (the browser imports this module).
 
 import { FigureSchema } from "./figure.ts";
+import { CommandReportSchema } from "./testCounts.ts";
 import { type Ending, EndingSchema, UNESTABLISHED } from "./ending.ts";
 import { Effect, Option, Result, Schema } from "effect";
 import { type PreparationMark, PreparationMarkSchema, type PreparationView, PreparationViewSchema } from "./preparationSwitch.ts";
@@ -254,6 +255,8 @@ const ShownDocumentSchema = Schema.Union([tagged("Markdown", { text: Str }), tag
 export const UiEventSchema = Schema.Union([
   tagged("PhaseBegan", { phase: PhaseSchema }),
   tagged("PhaseEnded", { phase: PhaseSchema, result: Str }),
+  // Issue #39: a frame whose count is negative, or whose uncounted command carries counts, does not decode.
+  tagged("SuiteCounted", { phase: PhaseSchema, commands: Schema.Array(CommandReportSchema) }),
   tagged("RoundBegan", { ...round, limit: Int }),
   tagged("ReviewReceived", { ...round, review: Schema.Union([S.EffectReview, S.Review]), counted: Int }),
   // The question subject's response is the planner's plus `questions` (defect A of docs/page-question-phase-defects.md).

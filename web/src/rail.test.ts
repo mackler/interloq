@@ -6,6 +6,8 @@ import * as prompts from "../../src/prompts.ts";
 import { PLAIN, type PhaseTiming, phaseTiming, railView, soFarText, tookText } from "./rail.ts";
 import { emptyRun, type TimelineEntry, type TimelineState } from "./state.ts";
 import { elapsedMs } from "./time.ts";
+import type { CommandReport } from "../../src/testCounts.ts";
+import { emptyUiState, type UiScope, withFlag } from "../../src/uiState.ts";
 
 /** The text the rail shows for a timing at the instant `at`, as TimelineRail.svelte renders it. */
 const shown = (timing: PhaseTiming, at: number): string | null =>
@@ -25,6 +27,7 @@ const entryOf = (state: TimelineEntry["state"], began: string | null, ended: str
   acted: [],
   record: null,
   result: null,
+  counts: [],
 });
 
 const MIN = Date.parse("2026-01-01T00:00:00.000Z");
@@ -68,5 +71,30 @@ describe("the Full test suite row (issue #162)", () => {
       const run = { ...emptyRun(1), timeline: [entry] };
       expect(railView(run, false, st === "active").phases[0].node).toBe(PLAIN);
     }
+  });
+});
+
+// Issue #39 (S10, decision Q2): a Full test suite row that holds counted commands opens and closes like the rail's other
+// rows, closed while untouched, its open state the run's shared state; one with no counted command stays plain.
+describe("the Full test suite row with counts (issue #39)", () => {
+  const counted: CommandReport = { _tag: "Counted", name: "npm run test:unit", outcome: "passed", scope: "whole", counts: { passed: 10, failed: 0, skipped: 1 } };
+  const build: CommandReport = { _tag: "Uncounted", name: "npm run build", outcome: "passed" };
+  const suiteEntry = (counts: readonly CommandReport[]): TimelineEntry => ({
+    ...entryOf("done", "2026-11-03T00:00:00.000Z", "2026-11-03T00:10:00.000Z"),
+    phase: { kind: "suite", n: 1 },
+    label: "Full test suite",
+    result: "passed",
+    counts,
+  });
+  const scope: UiScope = { _tag: "RailPhase", phase: "suite-1" };
+  test("with a counted command it is a disclosure, closed while untouched and open when the run's state opens it", () => {
+    const run = { ...emptyRun(1), timeline: [suiteEntry([build, counted])] };
+    const closed = railView(run, false, false).phases[0].node;
+    expect(closed).toMatchObject({ _tag: "Disclosure", scope, open: false });
+    expect(railView({ ...run, ui: withFlag(emptyUiState, { scope, open: true }) }, false, false).phases[0].node).toMatchObject({ _tag: "Disclosure", open: true });
+    expect(railView({ ...run, ui: withFlag(withFlag(emptyUiState, { scope, open: true }), { scope, open: false }) }, false, false).phases[0].node).toMatchObject({ open: false });
+  });
+  test("with only uncounted commands it stays plain", () => {
+    expect(railView({ ...emptyRun(1), timeline: [suiteEntry([build])] }, false, false).phases[0].node).toBe(PLAIN);
   });
 });

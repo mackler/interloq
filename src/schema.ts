@@ -435,8 +435,21 @@ export const InterviewReply = Schema.Struct({
  * long it took in seconds, as Claude Code reports it; Interloq does not measure it. Plain fields, so that acceptance by
  * an agent never depends on a keyword such as minLength.
  */
-export const StepCheckRun = Schema.Struct({ step: Schema.String, command: Schema.String, seconds: Schema.Finite });
+/**
+ * Issue #39: the passed, failed and skipped tests of a step check as its runner's structured report gave them; plain
+ * integers, with no range keyword, so acceptance never depends on one. A negative member is normalized to no counts
+ * (`checkRunOf` of src/schemaNormalize.ts).
+ */
+export const CheckCounts = Schema.Struct({ passed: Schema.Int, failed: Schema.Int, skipped: Schema.Int });
+/** Issue #39: `selection`, whether the command ran only some of the tests; `counts`, its counts, or null where it gave none. */
+export const StepCheckRun = Schema.Struct({ step: Schema.String, command: Schema.String, seconds: Schema.Finite, selection: Schema.Boolean, counts: Schema.NullOr(CheckCounts) });
 export type StepCheckRun = typeof StepCheckRun.Type;
+/** Issue #39: a step check as an earlier run's events hold it, read as no selection and no counts where they lack them. */
+const StoredStepCheckRun = Schema.Struct({
+  ...StepCheckRun.fields,
+  selection: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+  counts: Schema.NullOr(CheckCounts).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+});
 
 export const ExecReport = Schema.Struct({
   status: Schema.Literals(["finished", "continuing", "needs_input", "blocked", "not_refined"]),
@@ -461,7 +474,7 @@ export const ExecOutcome = Schema.Struct({
   // Set when the user's input was already read during the phase (a question from Claude Code).
   userInput: Schema.NullOr(Schema.String),
   /** Issue #162: the check commands the phase's calls reported, in order; none where no report was given. */
-  checks: Schema.Array(StepCheckRun),
+  checks: Schema.Array(StoredStepCheckRun),
 });
 
 // Constraints for the program's own records (finding 5 of docs/functional-design-review.md). The seven agent

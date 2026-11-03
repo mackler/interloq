@@ -13,7 +13,8 @@ import { SUITE_CLOSE_GRACE_MS, suiteRunner } from "../src/suiteExec.ts";
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "suite-exec-"));
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
 const line = (text: string): CommandLine => Result.getOrThrow(commandLineOf(text));
-const run = (command: string, ceilingMs = 10_000, env: Record<string, string | undefined> = process.env) => Effect.runPromise(suiteRunner(env).run(line(command), DIR, ceilingMs, () => undefined));
+const COUNTS = path.join(DIR, "suite-1-counts.json");
+const run = (command: string, ceilingMs = 10_000, env: Record<string, string | undefined> = process.env, countsFile = COUNTS) => Effect.runPromise(suiteRunner(env).run(line(command), DIR, ceilingMs, () => undefined, countsFile));
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -97,7 +98,7 @@ test("an interrupted run kills its process group, and nothing is uncaught", { ti
   // The shell prints the background sleep's pid on stdout; the test interrupts only once onOutput has delivered it, so
   // a loaded machine cannot interrupt before the pid exists (suite run 1 of issue #49 read a pid file never written).
   let printed = "";
-  const fiber = Effect.runFork(suiteRunner(process.env).run(line("sleep 30 & echo $!; wait"), DIR, BEYOND_THE_TEST_MS, (t) => void (printed += t)));
+  const fiber = Effect.runFork(suiteRunner(process.env).run(line("sleep 30 & echo $!; wait"), DIR, BEYOND_THE_TEST_MS, (t) => void (printed += t), COUNTS));
   try {
     await noneUncaught(async () => {
       const pidOf = (): RegExpExecArray | null => /^(\d+)\n/u.exec(printed);
@@ -118,7 +119,7 @@ test("the command runs in the given directory with the given environment", async
 });
 
 test("a directory that does not exist fails as not started", async () => {
-  const result = await Effect.runPromise(suiteRunner(process.env).run(line("true"), path.join(DIR, "missing"), 1000, () => undefined));
+  const result = await Effect.runPromise(suiteRunner(process.env).run(line("true"), path.join(DIR, "missing"), 1000, () => undefined, COUNTS));
   assert.equal(result._tag, "Failed");
   assert.equal(result._tag === "Failed" ? result.reason.kind : null, "notStarted");
 });
@@ -175,7 +176,7 @@ test("an interrupted run stops reading an output a detached descendant holds, an
   fs.writeFileSync(writer, `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => process.stdout.write("x"), 50);`);
   const command = `node -e "require('child_process').spawn(process.execPath,[${JSON.stringify(writer).replaceAll('"', "'")}],{detached:true,stdio:'inherit'}).unref()"; sleep 20`;
   let pid: number | null = null;
-  const fiber = Effect.runFork(suiteRunner(process.env).run(line(command), DIR, BEYOND_THE_TEST_MS, () => undefined));
+  const fiber = Effect.runFork(suiteRunner(process.env).run(line(command), DIR, BEYOND_THE_TEST_MS, () => undefined, COUNTS));
   try {
     await noneUncaught(async () => {
       assert.ok(await until(() => fs.existsSync(pidFile), READY_DEADLINE_MS), `the detached writer wrote no pid file within ${READY_DEADLINE_MS} ms`);
@@ -195,7 +196,7 @@ test("an interrupted run stops reading an output a detached descendant holds, an
 test("a command spawn refuses synchronously fails as not started, and nothing is uncaught", async () => {
   await noneUncaught(async () => {
     // The cast bypasses commandLineOf on purpose, to reach the edge with a value the constructor refuses.
-    const result = await Effect.runPromise(suiteRunner(process.env).run("echo ok\u0000" as CommandLine, DIR, 1000, () => undefined));
+    const result = await Effect.runPromise(suiteRunner(process.env).run("echo ok\u0000" as CommandLine, DIR, 1000, () => undefined, COUNTS));
     assert.equal(result._tag, "Failed");
     assert.equal(result._tag === "Failed" ? result.reason.kind : null, "notStarted");
   });
@@ -203,14 +204,24 @@ test("a command spawn refuses synchronously fails as not started, and nothing is
 
 test("issue #49: onOutput receives every chunk of both streams in order, together the result's output, and nothing after an interruption", async () => {
   const chunks: string[] = [];
-  const result = await Effect.runPromise(suiteRunner(process.env).run(line("echo one; sleep 0.1; echo two >&2; sleep 0.1; echo three"), DIR, 10_000, (t) => void chunks.push(t)));
+  const result = await Effect.runPromise(suiteRunner(process.env).run(line("echo one; sleep 0.1; echo two >&2; sleep 0.1; echo three"), DIR, 10_000, (t) => void chunks.push(t), COUNTS));
   assert.ok(chunks.length >= 3, `chunks: ${JSON.stringify(chunks)}`);
   assert.equal(chunks.join(""), result.output);
   assert.equal(result.output, "one\ntwo\nthree\n");
   const late: string[] = [];
-  const fiber = Effect.runFork(suiteRunner(process.env).run(line("echo first; sleep 0.5; echo after"), DIR, 10_000, (t) => void late.push(t)));
+  const fiber = Effect.runFork(suiteRunner(process.env).run(line("echo first; sleep 0.5; echo after"), DIR, 10_000, (t) => void late.push(t), COUNTS));
   for (let i = 0; i < 100 && late.length === 0; i++) await sleep(10);
   await Effect.runPromise(Fiber.interrupt(fiber));
   await sleep(800);
   assert.deepEqual(late, ["first\n"]);
+});
+
+// Issue #39 (S7): the command is told, in INTERLOQ_TEST_COUNTS_FILE, the file to write its counts to, beside the
+// environment it inherits.
+test("the command receives the counts file's path in INTERLOQ_TEST_COUNTS_FILE", async () => {
+  const counts = path.join(DIR, "named-counts.json");
+  const result = await run(`printf '%s' "$INTERLOQ_TEST_COUNTS_FILE" > counts-path.txt; printf '%s' "$KEPT" > kept.txt`, 10_000, { ...process.env, KEPT: "yes" }, counts);
+  assert.equal(result._tag, "Passed");
+  assert.equal(fs.readFileSync(path.join(DIR, "counts-path.txt"), "utf8"), counts);
+  assert.equal(fs.readFileSync(path.join(DIR, "kept.txt"), "utf8"), "yes");
 });

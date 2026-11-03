@@ -22,6 +22,7 @@ import type { CallFailure, LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine
 import { callFailedFields, callFailureOf } from "./callFailureRecord.ts";
 import { type GitState, type MergeRefusal, PARK_NO_VERIFY, ParkRecordSchema } from "./park.ts";
 import { parkedMergeRefusedText } from "./prompts.ts";
+import { SuiteRecordSchema } from "./testCounts.ts";
 
 /**
  * The store of one run of one project (issue #120): its records are under <project>/plan-review/<root>/, a root that
@@ -471,6 +472,18 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       loadQuestions: () => readText(questions).pipe(Effect.flatMap((text) => Effect.fromResult(readQuestions(questions, text)))),
       writeRequirements: (text) => writeText(requirements, text),
       saveSuiteLog: (n, text) => writeText(path.join(dir, pathOf({ kind: "suiteLog", n })), text),
+      readSuiteCounts: (n) =>
+        Effect.gen(function* () {
+          const file = at({ kind: "suiteCountsFile", n });
+          return (yield* exists(file)) ? Option.some(yield* readText(file)) : Option.none();
+        }),
+      saveSuiteRecord: (n, record) => saveRecord({ kind: "suiteRecord", n }, record),
+      loadSuiteRecord: (n) =>
+        Effect.gen(function* () {
+          const file = at({ kind: "suiteRecord", n });
+          if (!(yield* exists(file))) return Option.none();
+          return Option.some(yield* Effect.fromResult(decodeText(file, SuiteRecordSchema, yield* readText(file))));
+        }),
       // Issue #98: the markup byte for byte, through a temporary name, so a reader sees no partial picture; the name is
       // the content's hash, so writing a picture again changes nothing a record links to.
       saveFigures: (figures) =>

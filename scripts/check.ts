@@ -2,9 +2,9 @@
 // printed whole when it ends, a failure of one does not stop the others, and the exit code is 1 if any failed.
 
 import { fileURLToPath } from "node:url";
-import { report, runStages, spawnStage, type Stage, type Stages, summary } from "./test-all.ts";
+import { NO_REPORT, report, runStages, spawnStage, type Stage, type Stages, summary } from "./test-all.ts";
 
-const stage = (script: string): Stage => ({ name: script, script });
+const stage = (script: string): Stage => ({ name: script, script, report: NO_REPORT });
 /** The program's configuration, the page's, and the `.svelte` components. */
 export const checkStages: Stages = { kind: "parallel", parallel: [stage("check:program"), stage("check:web"), stage("check:svelte")] };
 

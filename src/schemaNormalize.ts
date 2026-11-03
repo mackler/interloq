@@ -5,7 +5,7 @@ import { Result } from "effect";
 import { QuestionListInvalid } from "./errors.ts";
 import { piecesText } from "./pieces.ts";
 import { orderBySkipCondition } from "./premises.ts";
-import type { ExecReport, InterviewReply, InterviewTurn, QuestionList, QuestionsFile } from "./schema.ts";
+import type { ExecReport, StepCheckRun, InterviewReply, InterviewTurn, QuestionList, QuestionsFile } from "./schema.ts";
 
 /** The questions asked and answered so far, as Claude Code reports them in each turn (issue #21), and the question asked now (S3: with its context, terms and options). */
 type TurnIds = Readonly<{ asked: readonly string[]; answered: readonly string[]; current: InterviewTurn["current_question"] }>;
@@ -43,6 +43,13 @@ export type ReportVariant =
   | (ReportCommon & Readonly<{ kind: "blocked"; description: string }>)
   /** Issue #186: the verdict that the item is not refined, with what the requirements leave out. */
   | (ReportCommon & Readonly<{ kind: "not_refined"; missing: string }>);
+/**
+ * Issue #39: a step check with counts no runner could have given (a negative member) keeps no counts, since the program
+ * never shows a number the runner did not give and an execution report gets no repair turn (behavior 10).
+ */
+export const checkRunOf = (check: StepCheckRun): StepCheckRun =>
+  check.counts !== null && (check.counts.passed < 0 || check.counts.failed < 0 || check.counts.skipped < 0) ? { ...check, counts: null } : check;
+
 export const normalizeReport = (report: ExecReport): ReportVariant => {
   const common = { summary: report.summary, remainingWork: report.remaining_work, checks: report.checks };
   switch (report.status) {

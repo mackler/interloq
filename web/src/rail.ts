@@ -32,7 +32,13 @@ export type RailPhase = Readonly<{ entry: TimelineEntry; node: NodeView; branche
 export type RailView = Readonly<{ phases: readonly RailPhase[] }>;
 
 /** Whether a phase has something to disclose: its cycles, its steps, or its plan. */
-export const phaseHasChildren = (entry: TimelineEntry): boolean => entry.groups.length > 0 || entry.steps.length > 0 || entry.plan !== null;
+export const phaseHasChildren = (entry: TimelineEntry): boolean =>
+  entry.groups.length > 0 || entry.steps.length > 0 || entry.plan !== null || entry.counts.some((c) => c._tag === "Counted");
+/**
+ * A phase's automatic opening: once begun, except a Full test suite, whose counts start closed (issue #39, decision Q2)
+ * until the developer opens them.
+ */
+const phaseOpensItself = (entry: TimelineEntry): boolean => entry.phase.kind !== "suite" && entry.began !== null;
 /** Whether a step of Gather Requirements has something to disclose: its cycles. */
 export const stepHasChildren = (step: TimelineStep): boolean => step.groups.length > 0;
 /** Whether a stage of the plan has something to disclose: its steps. */
@@ -149,7 +155,7 @@ export const railView = (run: RunView, executing: boolean, busy: boolean): RailV
       const count = stages.length > 0 ? stages.map(stageCount).reduce(add, NONE) : gatherCount(entry.steps);
       return {
         entry,
-        node: phaseHasChildren(entry) ? nodeOf(run, { _tag: "RailPhase", phase }, entry.began !== null, needs, collapsedOf(count, running)) : PLAIN,
+        node: phaseHasChildren(entry) ? nodeOf(run, { _tag: "RailPhase", phase }, phaseOpensItself(entry), needs, collapsedOf(count, running)) : PLAIN,
         branches: new Map([...stepNodes, ...stageNodes]),
       };
     }),

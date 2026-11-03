@@ -8,6 +8,7 @@ import type { Readable } from "node:stream";
 import { Effect, Result } from "effect";
 import type { CommandLine } from "./schema.ts";
 import type { SuiteRunnerShape } from "./services.ts";
+import { COUNTS_FILE_VARIABLE } from "./testCounts.ts";
 import type { SuiteFailure, SuiteResult } from "./suite.ts";
 
 /** Kills a process group, which may already be gone. */
@@ -43,7 +44,7 @@ const resultOf = (end: RunEnd, output: string, ms: number): SuiteResult => {
  * output to close, so a descendant outside the group that holds the output cannot delay the result; on interruption it
  * stops reading at once too (W3-R1-2). */
 export const suiteRunner = (env: Readonly<Record<string, string | undefined>>): SuiteRunnerShape => ({
-  run: (command: CommandLine, cwd: string, ceilingMs: number, onOutput: (text: string) => void): Effect.Effect<SuiteResult> =>
+  run: (command: CommandLine, cwd: string, ceilingMs: number, onOutput: (text: string) => void, countsFile: string): Effect.Effect<SuiteResult> =>
     Effect.callback<SuiteResult>((resume) => {
       const started = Date.now();
       const chunks: string[] = [];
@@ -54,7 +55,7 @@ export const suiteRunner = (env: Readonly<Record<string, string | undefined>>): 
       // spawn throws synchronously on an argument it refuses (W2-R1-2); the run then did not start, and the edge stays total.
       const spawned = ((): Result.Result<ChildProcessByStdio<null, Readable, Readable>, string> => {
         try {
-          return Result.succeed(spawn(command, { shell: true, cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] }));
+          return Result.succeed(spawn(command, { shell: true, cwd, env: { ...env, [COUNTS_FILE_VARIABLE]: countsFile }, detached: true, stdio: ["ignore", "pipe", "pipe"] }));
         } catch (e) {
           return Result.fail(e instanceof Error ? e.message : String(e));
         }

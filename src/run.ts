@@ -17,9 +17,10 @@ import { askAgreed, questionPhase } from "./interview.ts";
 import { type PreparationFound, preparationOf } from "./preparedComments.ts";
 import { renderQuestions } from "./render.ts";
 import { type EarlierPlan, undonePlan } from "./earlierPlan.ts";
-import { issueObsoleteLine, issueUpdatedLine, PREPARED_TERMS_CHOICE_LINE, preparationCleanupFailedLine, preparationUsedLine, continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, SUITE_OUTPUT_NAME,
+import { issueObsoleteLine, issueUpdatedLine, PREPARED_TERMS_CHOICE_LINE, preparationCleanupFailedLine, preparationUsedLine, continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, fallenCountsText, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, SUITE_OUTPUT_NAME,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
-import { recordPath, type RunRoot } from "./artifacts.ts";
+import { pathOf, recordPath, type RunRoot } from "./artifacts.ts";
+import { type CommandReport, fallenCounts, suiteReportedOf } from "./testCounts.ts";
 import type { Baseline } from "./records.ts";
 import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
@@ -403,7 +404,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     // Issue #199: each run also records which final command it ran, and the last known iteration foresees one run of
     // each final command it has not yet passed, in order.
     const finals = S.finalCommandsOf(checks);
-    let suiteRuns: ReadonlyArray<Readonly<{ iteration: number; passed: boolean; key: S.FinalCommand["key"] }>> = [];
+    // Issue #39: and the commands it reported with their counts, empty where it reported none.
+    let suiteRuns: ReadonlyArray<Readonly<{ iteration: number; passed: boolean; key: S.FinalCommand["key"]; reports: readonly CommandReport[] }>> = [];
     const shape = (): readonly Iteration[] =>
       iterationsOf(known).map((_, i) => {
         const ran = suiteRuns.flatMap((r, j) => (r.iteration === i + 1 ? [j + 1] : []));
@@ -449,22 +451,39 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         return result;
       }).pipe(Effect.onInterrupt(() => ui.output({ _tag: "Finished", key, name: SUITE_OUTPUT_NAME, status: { _tag: "Stopped" } })));
 
-    const suitePhase = (command: S.CommandLine, n: number) =>
+    /**
+     * Issue #39: a fall in a passed count since the latest earlier suite run of the same final command in this run that
+     * reported its counts, in words; "" where none fell or no earlier run reported.
+     */
+    const fallSince = (key: S.FinalCommand["key"], reports: readonly CommandReport[]): string => {
+      const earlier = suiteRuns.flatMap((r, i) => (r.key === key && r.reports.length > 0 ? [{ reports: r.reports, n: i + 1 }] : [])).at(-1);
+      return reports.length === 0 || earlier === undefined ? "" : fallenCountsText(fallenCounts(earlier.reports, reports), label("suite", earlier.n));
+    };
+    const suitePhase = (command: S.CommandLine, n: number, key: S.FinalCommand["key"]) =>
       Effect.gen(function* () {
         const runner = yield* SuiteRunner;
         const phase: Phase = { kind: "suite", n };
         const name = label("suite", n);
         yield* ui.notify({ _tag: "PhaseBegan", phase });
         yield* sayAndWrite(suiteBeganLine(name, command));
-        const runSuite = (onOutput: (text: string) => void) => runner.run(command, store.project, config.suiteTimeoutMinutes * 60_000, onOutput);
+        // Issue #39: the command may write its counts to this file, which Interloq names in INTERLOQ_TEST_COUNTS_FILE.
+        const countsFile = `${store.dir}/${pathOf({ kind: "suiteCountsFile", n })}`;
+        const runSuite = (onOutput: (text: string) => void) => runner.run(command, store.project, config.suiteTimeoutMinutes * 60_000, onOutput, countsFile);
         const result = yield* Result.match(processKeyOf({ kind: "suite", run: n }), { onFailure: () => runSuite(() => undefined), onSuccess: (key) => liveSuite(key, runSuite) });
         yield* store.saveSuiteLog(n, result.output);
         const log = recordPath(store.root, { kind: "suiteLog", n });
+        // Issue #39: the counts the command wrote, recorded in suite-<n>.json and notified to the page where it reported any.
+        const reported = suiteReportedOf(yield* store.readSuiteCounts(n));
+        yield* store.saveSuiteRecord(n, { version: 2, suite: n, command, result: suiteOutcomeOf(result), reported });
+        const reports: readonly CommandReport[] = reported._tag === "Reported" ? reported.commands : [];
+        if (reported._tag === "Reported") yield* ui.notify({ _tag: "SuiteCounted", phase, commands: reported.commands });
         yield* ui.notify({ _tag: "PhaseEnded", phase, result: suiteOutcomeOf(result) });
         const verdict = suiteVerdictOf(result);
-        if (verdict._tag === "Passed") yield* sayAndWrite(suitePassedLine(name, command));
-        if (verdict._tag === "WorkFailed") yield* sayAndWrite(suiteFailedLine(name, command, verdict.reason, log));
-        return { verdict, log, tail: tailLines(result.output, SUITE_TAIL_LINES) };
+        const fall = fallSince(key, reports);
+        const withFall = (line: string): string => (fall === "" ? line : `${line} ${fall}`);
+        if (verdict._tag === "Passed") yield* sayAndWrite(withFall(suitePassedLine(name, command, reports)));
+        if (verdict._tag === "WorkFailed") yield* sayAndWrite(withFall(suiteFailedLine(name, command, verdict.reason, log, reports)));
+        return { verdict, log, tail: tailLines(result.output, SUITE_TAIL_LINES), reports };
       });
 
     /**
@@ -485,8 +504,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         let here: readonly SuiteStop[] = [];
         for (;;) {
           const n = suiteRuns.length + 1;
-          const { verdict, log, tail } = yield* suitePhase(command, n);
-          suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed", key }];
+          const { verdict, log, tail, reports } = yield* suitePhase(command, n, key);
+          suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed", key, reports }];
           if (verdict._tag === "Passed") return null;
           if (verdict._tag === "WorkFailed") return { _tag: "SuiteFailed", suite: n, command, reason: verdict.reason, tail, log } satisfies RevisionCause;
           // The next suite run of this iteration is foreseen first, so that the lines name this one as the run now numbers it.

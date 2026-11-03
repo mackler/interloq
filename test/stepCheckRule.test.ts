@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
 import { Result } from "effect";
+import { execReport, interpretExecution } from "../src/claudeEvents.ts";
 import { checkTotals } from "../src/stepChecks.ts";
 import * as prompts from "../src/prompts.ts";
 import * as S from "../src/schema.ts";
@@ -52,7 +53,7 @@ test("the execution prompt asks for the report's checks by the schema's field na
 });
 
 test("the work review's first round shows each step's reported checks with their total, and its criterion's limit", () => {
-  const work = { outcome: outcome([{ step: "S1", command: "npm run test:unit", seconds: 90 }, { step: "S2", command: "npm run test:web", seconds: 20 }, { step: "S1", command: "npm run test:unit", seconds: 90 }]), plan: "the plan" };
+  const work = { outcome: outcome([{ step: "S1", command: "npm run test:unit", seconds: 90, selection: false, counts: null }, { step: "S2", command: "npm run test:web", seconds: 20, selection: false, counts: null }, { step: "S1", command: "npm run test:unit", seconds: 90, selection: false, counts: null }]), plan: "the plan" };
   const review = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued");
   assert.ok(review.includes(prompts.WORK_CHECK_CRITERION));
   assert.ok(prompts.WORK_CHECK_CRITERION.includes(`${prompts.STEP_CHECK_LIMIT_MS / 60_000} minutes`));
@@ -65,14 +66,14 @@ test("the work review's first round shows each step's reported checks with their
 });
 
 test("checkTotals groups by step in first-seen order and sums each step's seconds", () => {
-  assert.deepEqual(checkTotals([{ step: "S2", command: "a", seconds: 1 }, { step: "S1", command: "b", seconds: 2 }, { step: "S2", command: "c", seconds: 3 }]), [
-    { step: "S2", commands: [{ command: "a", seconds: 1 }, { command: "c", seconds: 3 }], seconds: 4 },
-    { step: "S1", commands: [{ command: "b", seconds: 2 }], seconds: 2 },
+  assert.deepEqual(checkTotals([{ step: "S2", command: "a", seconds: 1, selection: false, counts: null }, { step: "S1", command: "b", seconds: 2, selection: false, counts: null }, { step: "S2", command: "c", seconds: 3, selection: false, counts: null }]), [
+    { step: "S2", commands: [{ command: "a", seconds: 1, selection: false, counts: null }, { command: "c", seconds: 3, selection: false, counts: null }], seconds: 4 },
+    { step: "S1", commands: [{ command: "b", seconds: 2, selection: false, counts: null }], seconds: 2 },
   ]);
 });
 
 test("property: the totals cover every step once and their seconds sum to the checks' seconds", () => {
-  const run = fc.record({ step: fc.constantFrom("S1", "S2", "S3"), command: fc.string(), seconds: fc.integer({ min: 0, max: 600 }) });
+  const run = fc.record({ step: fc.constantFrom("S1", "S2", "S3"), command: fc.string(), seconds: fc.integer({ min: 0, max: 600 }), selection: fc.boolean(), counts: fc.constant(null) });
   fc.assert(
     fc.property(fc.array(run, { maxLength: 12 }), (runs) => {
       const totals = checkTotals(runs);
@@ -82,4 +83,33 @@ test("property: the totals cover every step once and their seconds sum to the ch
     }),
     { numRuns: 200 },
   );
+});
+
+// Issue #39 (S11): a step check's report carries whether it ran a selection and its counts, taken only from a runner's
+// structured report; the prompt that asks for them and the normalization that keeps no impossible number are tested
+// together.
+const counted = { step: "S3", command: "node --test test/a.test.ts", seconds: 12, selection: true, counts: { passed: 40, failed: 0, skipped: 1 } };
+const build = { step: "S3", command: "npm run build", seconds: 30, selection: false, counts: null };
+
+test("the sentence asks for a selection and for counts from a structured report, never from the printed summary", () => {
+  assert.deepEqual(checkFields, ["step", "command", "seconds", "selection", "counts"]);
+  assert.match(prompts.REPORT_CHECKS_SENTENCE, /structured report/u);
+  assert.match(prompts.REPORT_CHECKS_SENTENCE, /never from its printed summary/u);
+  assert.match(prompts.REPORT_CHECKS_SENTENCE, /'null'/u);
+});
+
+test("the report's counts are kept, and a negative count becomes null on the report path and the stop path", () => {
+  const report = (checks: unknown) => ({ status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks });
+  const negative = { ...counted, counts: { passed: 4, failed: -1, skipped: 0 } };
+  assert.deepEqual(execReport(report([counted, build]))?.checks, [counted, build]);
+  assert.deepEqual(execReport(report([negative]))?.checks, [{ ...negative, counts: null }]);
+  const complete = { sessionId: "s", costUsd: 1, structured: report([negative]), resultText: "", error: null, partial: false, failure: null };
+  assert.deepEqual(interpretExecution(complete, null).checks, [{ ...negative, counts: null }]);
+  assert.deepEqual(interpretExecution(complete, { question: "q?", input: "a" }).checks, [{ ...negative, counts: null }]);
+});
+
+test("the work review shows a check's counts and selection, and nothing of counts it does not have", () => {
+  const review = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, { outcome: outcome([counted, build]), plan: "p" }, "continued");
+  assert.ok(review.includes("`node --test test/a.test.ts` (12 seconds; 40 passed, 0 failed, 1 skipped; a selection)"), review.slice(-600));
+  assert.ok(review.includes("`npm run build` (30 seconds)"));
 });

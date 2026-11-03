@@ -22,7 +22,9 @@ export default defineConfig({
   // describe that runs in order in one worker, while the groups run in parallel.
   fullyParallel: true,
   workers: "50%",
-  reporter: "list",
+  // Issue #39: where Interloq names a counts file (its final run of the end-to-end command), e2e/countsReporter.ts
+  // writes the tests' counts there beside the list reporter's output.
+  reporter: process.env.INTERLOQ_TEST_COUNTS_FILE === undefined || process.env.INTERLOQ_TEST_COUNTS_FILE === "" ? "list" : [["list"], ["./e2e/countsReporter.ts"]],
   use: { browserName: "chromium", headless: true },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   webServer: servers.map(([scenario, port]) => ({

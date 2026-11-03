@@ -8,7 +8,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program } from "../src/program.ts";
-import { attachedHeading, FULL_SUITE_PHASE, SUITE_OUTPUT_NAME, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
+import { attachedHeading, commandReportsText, fallenCountsText, FULL_SUITE_PHASE, SUITE_OUTPUT_NAME, suiteFailedLine, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
+import { type CommandReport, encodeCountsFile, SuiteRecordSchema } from "../src/testCounts.ts";
+import { Schema } from "effect";
 import { recordPath, type RunRoot } from "../src/artifacts.ts";
 import { blocksText, piecesText } from "../src/pieces.ts";
 import type { SuiteResult } from "../src/suite.ts";
@@ -26,12 +28,12 @@ test("(a) the suite passes: the run ends 0 after one suite run of the configured
   const tracker = fakeTrackerOf([scriptedItem]);
   const { wiring, probe } = testWiring(tempRepo(), { ...one, tracker, config: { suiteCommand: SUITE } });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
-  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 2_400_000 }]);
+  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 2_400_000, countsFile: `${probe.dir}/suite-1-counts.json` }]);
   assert.equal(fs.readFileSync(path.join(probe.dir, "suite-1.log"), "utf8"), "all passed\n");
   assert.equal((await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)?.state, "implemented");
   assert.deepEqual(suitesBegan(probe.ui.notified), [1]);
-  assert.ok(probe.ui.said.some((line) => line.includes(suitePassedLine(FULL_SUITE_PHASE, SUITE))), probe.ui.said.join("\n"));
-  assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(suitePassedLine(FULL_SUITE_PHASE, SUITE)));
+  assert.ok(probe.ui.said.some((line) => line.includes(suitePassedLine(FULL_SUITE_PHASE, SUITE, []))), probe.ui.said.join("\n"));
+  assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(suitePassedLine(FULL_SUITE_PHASE, SUITE, [])));
 });
 
 test("(b) the suite fails, then passes: a revision with the failure's tail, its review, an execution, a work review and a second suite run", async () => {
@@ -84,7 +86,7 @@ test("(d) Stop task during the suite ends the run with 130", async () => {
 test("(e) the suite's limit is the configured suiteTimeoutMinutes, in milliseconds (issue #181, Q3, Q4)", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { suiteCommand: SUITE, suiteTimeoutMinutes: 5 } });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
-  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 300_000 }]);
+  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 300_000, countsFile: `${probe.dir}/suite-1-counts.json` }]);
 });
 
 // Issue #181 (requirements Q1, Q2): a suite stopped by its limit or unable to start is not the work's fault: it is run
@@ -230,7 +232,10 @@ test("(e2e-a) both final commands pass: the suite command, then the end-to-end c
   const tracker = fakeTrackerOf([scriptedItem]);
   const { wiring, probe } = testWiring(tempRepo(), { ...one, tracker, config: { suiteCommand: SUITE, endToEndCommand: E2E } });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
-  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 2_400_000 }, { command: E2E, cwd: probe.project, ceilingMs: 2_400_000 }]);
+  assert.deepEqual(probe.suite.runs, [
+    { command: SUITE, cwd: probe.project, ceilingMs: 2_400_000, countsFile: `${probe.dir}/suite-1-counts.json` },
+    { command: E2E, cwd: probe.project, ceilingMs: 2_400_000, countsFile: `${probe.dir}/suite-2-counts.json` },
+  ]);
   assert.ok(fs.existsSync(path.join(probe.dir, "suite-1.log")) && fs.existsSync(path.join(probe.dir, "suite-2.log")));
   assert.equal((await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)?.state, "implemented");
   assert.deepEqual(suitesBegan(probe.ui.notified), [1, 2]);
@@ -285,4 +290,60 @@ test("(e2e-e) only the end-to-end command configured: it alone runs", async () =
   const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { endToEndCommand: E2E } });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
   assert.deepEqual(runsOf(probe), [E2E]);
+});
+
+// Issue #39 (S8): the suite's line names each command its counts file reports, with its counts; Interloq records them in
+// suite-<n>.json and notifies the page; with no counts file the line is what it was, and a fall in a passed count since
+// the previous run of the same command is stated.
+const check: CommandReport = { _tag: "Uncounted", name: "npm run check", outcome: "passed" };
+const unit = (passed: number, failed = 0): CommandReport => ({ _tag: "Counted", name: "npm run test:unit", outcome: failed === 0 ? "passed" : "failed", scope: "whole", counts: { passed, failed, skipped: 1 } });
+const countsText = (commands: readonly [CommandReport, ...CommandReport[]]): string => encodeCountsFile({ version: 2, commands });
+const suiteRecord = (dir: string, n: number) => Schema.decodeUnknownSync(SuiteRecordSchema)(JSON.parse(fs.readFileSync(path.join(dir, `suite-${n}.json`), "utf8")));
+const counted = (notified: readonly { _tag: string }[]) => notified.filter((e) => e._tag === "SuiteCounted");
+
+test("(p) a suite whose command wrote its counts: the line names each command with its counts, recorded and notified", async () => {
+  const reports = [check, unit(10)] as const;
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { suiteCommand: SUITE }, suiteReports: [countsText(reports)] });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const line = suitePassedLine(FULL_SUITE_PHASE, SUITE, reports);
+  assert.ok(line.includes(commandReportsText(reports)), line);
+  assert.ok(probe.ui.said.some((l) => l.includes(line)), probe.ui.said.join("\n"));
+  assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(line));
+  assert.deepEqual(suiteRecord(probe.dir, 1), { version: 2, suite: 1, command: SUITE, result: "passed", reported: { _tag: "Reported", commands: reports } });
+  assert.deepEqual(counted(probe.ui.notified), [{ _tag: "SuiteCounted", phase: { kind: "suite", n: 1 }, commands: reports }]);
+});
+
+test("(q) a suite that wrote no counts file: the line as before, recorded as not reported, nothing notified", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { suiteCommand: SUITE } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.equal(suitePassedLine(FULL_SUITE_PHASE, SUITE, []), `${FULL_SUITE_PHASE} passed: ${SUITE}.`);
+  assert.ok(probe.ui.said.some((l) => l.includes(`${FULL_SUITE_PHASE} passed: ${SUITE}.`)));
+  assert.deepEqual(suiteRecord(probe.dir, 1).reported, { _tag: "NotReported" });
+  assert.deepEqual(counted(probe.ui.notified), []);
+});
+
+test("(r) an unreadable counts file: the line as before, its reason in the record alone", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { suiteCommand: SUITE }, suiteReports: ["{ not json"] });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const said = probe.ui.said.find((l) => l.includes(`${FULL_SUITE_PHASE} passed`));
+  assert.equal(said?.trim(), suitePassedLine(FULL_SUITE_PHASE, SUITE, []));
+  assert.equal(suiteRecord(probe.dir, 1).reported._tag, "Unreadable");
+  assert.deepEqual(counted(probe.ui.notified), []);
+});
+
+test("(s) a suite that fails and then passes with fewer passed tests: the second line states the fall", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+    suite: [failing],
+    suiteReports: [countsText([unit(812, 1)]), countsText([unit(790)])],
+    config: { suiteCommand: SUITE },
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  const failedLine = suiteFailedLine(FULL_SUITE_PHASE, SUITE, { kind: "exit", code: 1 }, recordPath(rootOf(probe.dir), { kind: "suiteLog", n: 1 }), [unit(812, 1)]);
+  assert.ok(conversation.includes(failedLine), conversation);
+  const fall = fallenCountsText([{ name: "npm run test:unit", before: 812, after: 790 }], `${FULL_SUITE_PHASE} 1`);
+  assert.ok(conversation.includes(`${suitePassedLine(`${FULL_SUITE_PHASE} 2`, SUITE, [unit(790)])} ${fall}`), conversation);
 });

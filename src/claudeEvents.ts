@@ -6,7 +6,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Result, Schema } from "effect";
 import * as S from "./schema.ts";
 import type { ExecContinuation, ExecOutcome, ExecReport } from "./schema.ts";
-import { normalizeReport } from "./schemaNormalize.ts";
+import { checkRunOf, normalizeReport } from "./schemaNormalize.ts";
 import { type ClaudeFailure, type ProcessEnd, rejectionOf } from "./transport.ts";
 import { backgroundKilledText } from "./prompts.ts";
 import { type OutputEvent, sanitizedOutput, type ProcessKey, processKeyOf, processNameOf, type ProcessStatus } from "./liveOutput.ts";
@@ -113,7 +113,8 @@ export const NOT_REFINED_BLANK_REASON = "the status report is 'not_refined' with
 /** The status report of an execution call, or null if there is none or it does not match its schema. */
 export const execReport = (structured: unknown): ExecReport | null => {
   const decoded = decodeExecReport(structured);
-  return Result.isSuccess(decoded) ? decoded.success : null;
+  // Issue #39: the checks normalized here, so a recorded stop's outcome and a report's both carry them so.
+  return Result.isSuccess(decoded) ? { ...decoded.success, checks: decoded.success.checks.map(checkRunOf) } : null;
 };
 
 /**

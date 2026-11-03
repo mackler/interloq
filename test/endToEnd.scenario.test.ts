@@ -102,6 +102,8 @@ test("the seam: the runner is given the final commands the configuration decodes
     const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished], config });
     assert.equal(await run(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
     assert.deepEqual(probe.suite.runs.map((r) => r.command), expected, JSON.stringify(config));
+    // Issue #39 (S8): each final command is given a counts file of its own, its suite run's.
+    assert.deepEqual(probe.suite.runs.map((r) => r.countsFile), expected.map((_, i) => `${probe.dir}/suite-${i + 1}-counts.json`));
   }
 });
 

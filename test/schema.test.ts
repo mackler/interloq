@@ -49,7 +49,7 @@ const questionEntry: QuestionEntry = { id: "Q1", context: para("c"), history: pa
 // Issue #21 (Q6 follow-up) and issue #35 (Q5, Q6): the fields the interview turn has beyond the frozen legacy shape.
 type CurrentQuestion = { current_question: { id: string; context: Block[]; history: Block[]; text: Piece[]; explanations: Explanation[]; options: PieceOption[] } };
 const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQuestion = { message_to_user: "m", current_question: { id: "F1", context: para("c"), history: [], text: plain("q?"), explanations: [], options: [option("A", "a")] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete: false, summary: "" };
-const execReport = { status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks: [{ step: "S1", command: "npm run test:unit", seconds: 12.5 }] };
+const execReport = { status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks: [{ step: "S1", command: "npm run test:unit", seconds: 12.5, selection: false, counts: null }] };
 const execOutcome = { status: "needs_input", summary: "s", question: "q", remainingWork: "w", userInput: null, checks: [] };
 // Version 2 (Q5): three shapes tagged by source.
 const reviewEntry = { id: "A", phase: 1, round: 2, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null };
@@ -108,7 +108,8 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<Equals<DeepMutable<typeof S.InterviewTurn.Type>, DeepMutable<legacy.InterviewTurn & { asked_ids: readonly string[] } & CurrentQuestion>>>();
   // Issue #154 (Q2): the report's fourth status, continuing.
   // Issue #162: the report and the outcome carry the check commands run.
-  type Checks = { checks: { step: string; command: string; seconds: number }[] };
+  // Issue #39: and whether each ran a selection, and its counts or null.
+  type Checks = { checks: { step: string; command: string; seconds: number; selection: boolean; counts: { passed: number; failed: number; skipped: number } | null }[] };
   // Issue #186: the report's fifth status, not_refined, with what is missing; the outcome carries it in question.
   sameType<Equals<DeepMutable<typeof S.ExecReport.Type>, DeepMutable<Omit<legacy.ExecReport, "status"> & { status: legacy.ExecReport["status"] | "continuing" | "not_refined"; missing: string } & Checks>>>();
   sameType<Equals<DeepMutable<typeof S.ExecOutcome.Type>, DeepMutable<Omit<legacy.ExecOutcome, "status"> & { status: legacy.ExecOutcome["status"] | "not_refined" } & Checks>>>();

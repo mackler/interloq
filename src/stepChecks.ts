@@ -3,12 +3,12 @@
 // (a continued phase) is one group (P1-R1-1).
 import type { StepCheckRun } from "./schema.ts";
 
-/** One step's reported checks: its commands with their seconds, in order, and their sum. */
-export type StepCheckTotal = Readonly<{ step: string; commands: ReadonlyArray<Readonly<{ command: string; seconds: number }>>; seconds: number }>;
+/** One step's reported checks: its commands with their seconds (issue #39: and their selection and counts), in order, and their sum. */
+export type StepCheckTotal = Readonly<{ step: string; commands: ReadonlyArray<Omit<StepCheckRun, "step">>; seconds: number }>;
 
 /** The checks grouped by step id in first-seen order, with each step's commands and the sum of their seconds. */
 export const checkTotals = (checks: ReadonlyArray<StepCheckRun>): ReadonlyArray<StepCheckTotal> =>
   [...new Set(checks.map((check) => check.step))].map((step) => {
-    const commands = checks.filter((check) => check.step === step).map(({ command, seconds }) => ({ command, seconds }));
+    const commands = checks.filter((check) => check.step === step).map(({ command, seconds, selection, counts }) => ({ command, seconds, selection, counts }));
     return { step, commands, seconds: commands.reduce((sum, c) => sum + c.seconds, 0) };
   });

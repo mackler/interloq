@@ -3,7 +3,8 @@
 import { type SubjectId, subjectDir } from "./artifacts.ts";
 import type { LimitWaitBasis } from "./limitReset.ts";
 import type { NetworkCode } from "./transport.ts";
-import { agentReconnectingLine, cycleHeading, modelLine, type NamedModel, networkRetryLine, phaseLabel, runningNote, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
+import type { CommandReport } from "./testCounts.ts";
+import { agentReconnectingLine, commandReportsText, cycleHeading, modelLine, type NamedModel, networkRetryLine, phaseLabel, runningNote, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
 import type { PresentedQuestion } from "./question.ts";
 import type { LoopResponse } from "./schema.ts";
 import type { DecisionAnalysis, ExecOutcome, RecordedPlan, Review, UserQuestion, EffectReview } from "./schema.ts";
@@ -24,6 +25,8 @@ export type LoopResult = "converged" | "proceed" | "revise";
 export type UiEvent =
   | Readonly<{ _tag: "PhaseBegan"; phase: Phase }>
   | Readonly<{ _tag: "PhaseEnded"; phase: Phase; result: string }>
+  /** Issue #39: the commands a Full test suite's command reported, with their counts where its runners gave them. */
+  | Readonly<{ _tag: "SuiteCounted"; phase: Phase; commands: readonly CommandReport[] }>
   | Readonly<{ _tag: "RoundBegan"; subject: SubjectId; round: number; limit: number }>
   | Readonly<{ _tag: "ReviewReceived"; subject: SubjectId; round: number; review: Review | EffectReview; counted: number }>
   /** The question subject answers with its amended list besides (defect A of docs/page-question-phase-defects.md), a decision with its amended analysis (W2-R1-1), the plan with the whole plan (issue #6). */
@@ -155,6 +158,8 @@ export const describeEvent = (event: UiEvent): string => {
       return `${numberedName(event.phase)} began`;
     case "PhaseEnded":
       return `${numberedName(event.phase)} ended: ${event.result}`;
+    case "SuiteCounted":
+      return commandReportsText(event.commands);
     case "RoundBegan":
       return cycleHeading(subjectDir(event.subject), event.round);
     case "ReviewReceived":

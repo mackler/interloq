@@ -127,8 +127,8 @@ test("a step left started by a continuing call is still started when the continu
 // Issue #162 (P1-R1-1): the checks of every call of a continued phase reach the work review, a step reported in two
 // calls totaled once.
 test("issue #162: a continued phase's checks from both calls reach the work review, one step's total across them", async () => {
-  const first: ExecCallOutcome = { status: "continuing", summary: "part done", remainingWork: "S1", checks: [{ step: "S1", command: "npm run test:unit", seconds: 70 }] };
-  const second: ExecCallOutcome = { ...finished, checks: [{ step: "S1", command: "npm run test:unit", seconds: 60 }] };
+  const first: ExecCallOutcome = { status: "continuing", summary: "part done", remainingWork: "S1", checks: [{ step: "S1", command: "npm run test:unit", seconds: 70, selection: false, counts: null }] };
+  const second: ExecCallOutcome = { ...finished, checks: [{ step: "S1", command: "npm run test:unit", seconds: 60, selection: false, counts: null }] };
   const { layer, probe } = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [first, second] });
   assert.equal(await runTask(layer), 1);
   const workReview = probe.reviewer.prompts[1];

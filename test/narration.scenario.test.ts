@@ -24,7 +24,7 @@ test("no program-generated success appears on the page or in conversation.md unt
     suite: [{ gate: () => held, result: { _tag: "Passed", output: "all passed\n", ms: 1 } }],
     config: { suiteCommand: SUITE },
   });
-  const passed = suitePassedLine(FULL_SUITE_PHASE, SUITE);
+  const passed = suitePassedLine(FULL_SUITE_PHASE, SUITE, []);
   const conversation = (): string => {
     const file = path.join(probe.dir, "conversation.md");
     return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";

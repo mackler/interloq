@@ -48,7 +48,7 @@ for (const [name, ending] of [
 
 // Issue #162 (W1-R1-1): a continued phase whose later call's process ended keeps the checks its earlier calls reported.
 test("a continued phase whose process then ended gives the work review the checks of its earlier call", async () => {
-  const continuing: ExecCallOutcome = { status: "continuing", summary: "half", remainingWork: "S2 and S3", checks: [{ step: "S1", command: "npm run test:unit", seconds: 30 }] };
+  const continuing: ExecCallOutcome = { status: "continuing", summary: "half", remainingWork: "S2 and S3", checks: [{ step: "S1", command: "npm run test:unit", seconds: 30, selection: false, counts: null }] };
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [planWrite, { output: respond([["W1-R1-1", "rejected"]]) }, planWrite],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],

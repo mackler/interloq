@@ -27,6 +27,11 @@ export type Artifact =
   | Readonly<{ kind: "changes"; phase: number }>
   /** The output of suite run n, the whole suite Interloq runs after the review of the work finds nothing left to correct (issue #162). */
   | Readonly<{ kind: "suiteLog"; n: number }>
+  /**
+   * Issue #39: suite run n's counts, as the command itself writes them to the path Interloq names (written outside the
+   * store, so not a guarded record), and Interloq's record of them.
+   */
+  | Readonly<{ kind: "suiteCountsFile" | "suiteRecord"; n: number }>
   | Readonly<{ kind: "invalidReply"; agent: "claude" | "codex"; n: number }>
   /** Decision k: the question and its options, the reviewed analysis, the analysis call's raw output, the user's choice. */
   | Readonly<{ kind: "decisionQuestion" | "analysis" | "analysisWrite" | "chosen"; decision: number }>
@@ -192,6 +197,10 @@ export const pathOf = (artifact: Artifact): string => {
       return `work-review-${artifact.phase}/changes.diff`;
     case "suiteLog":
       return `suite-${artifact.n}.log`;
+    case "suiteCountsFile":
+      return `suite-${artifact.n}-counts.json`;
+    case "suiteRecord":
+      return `suite-${artifact.n}.json`;
     case "invalidReply":
       return `invalid-replies/${artifact.agent}-${artifact.n}.json`;
     case "decisionQuestion":
@@ -220,5 +229,7 @@ export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "update", "quest
  * written before a repair turn). Every other path is guarded, a kind added later included. No archive lives inside a
  * run's directory (issue #120).
  */
+/** Issue #39: a suite run's counts file, which the command writes outside the store's journal. */
+const SUITE_COUNTS_FILE = /^suite-\d+-counts\.json$/u;
 export const guardedRecord = (relPath: string): boolean =>
-  relPath !== pathOf({ kind: "usage" }) && relPath !== pathOf({ kind: "parked" }) && relPath !== "invalid-replies" && !relPath.startsWith("invalid-replies/");
+  relPath !== pathOf({ kind: "usage" }) && relPath !== pathOf({ kind: "parked" }) && !SUITE_COUNTS_FILE.test(relPath) && relPath !== "invalid-replies" && !relPath.startsWith("invalid-replies/");

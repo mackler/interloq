@@ -1,4 +1,5 @@
 import { ABANDONED, COMPLETED, HALTED, INTERRUPTED, SENT_BACK_PARKED, UNESTABLISHED_ENDING, endedEvent } from "../../test/endingFixtures.ts";
+import type { CommandReport } from "../../src/testCounts.ts";
 import { PREPARATION_VIEW_OFF, type PreparationStatus, type PreparationView } from "../../src/preparationSwitch.ts";
 import type { ListedItem } from "../../src/protocol.ts";
 import fc from "fast-check";
@@ -2082,7 +2083,7 @@ describe("the rail as a tree that collapses", () => {
         const base = emptyRun(1);
         const kinds = ["formulate", "terms", "clarification"] as const;
         const entry: TimelineEntry = {
-          phase: { kind: "execution", n: 1 }, label: "Implementation", state: "active" as const, began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null, result: null,
+          phase: { kind: "execution", n: 1 }, label: "Implementation", state: "active" as const, began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null, result: null, counts: [],
           groups: Array.from({ length: groups }, () => group),
           steps: steps.map((g, i) => ({ kind: kinds[i], label: kinds[i], state: "done" as const, count: null, base: { answered: 0, total: 0 }, groups: Array.from({ length: g }, () => group) })),
           plan: plan === null ? null : { stages: plan.map((n, k) => ({ key: `current-${k + 1}`, number: k + 1, title: `t${k}`, steps: Array.from({ length: n }, (_, j) => recorded(`S${k}-${j}`)) })) },
@@ -2390,6 +2391,27 @@ describe("the Full test suite phase (issue #162)", () => {
     expect([suite.label, suite.state, suite.result]).toEqual(["Full test suite", "active", null]);
     const ahead = fold(live(events.slice(0, 2)));
     expect(runOf(ahead, "implementation")!.timeline.find((e) => e.phase.kind === "suite")?.state).toBe("ahead");
+  });
+});
+
+// Issue #39 (S9): the counts of a Full test suite's commands are kept on its entry, live and in a replay alike.
+describe("the counts of a Full test suite (issue #39)", () => {
+  const commands: readonly CommandReport[] = [
+    { _tag: "Uncounted", name: "npm run check", outcome: "passed" },
+    { _tag: "Counted", name: "npm run test:unit", outcome: "passed", scope: "whole", counts: { passed: 10, failed: 0, skipped: 1 } },
+  ];
+  const events: RunEvent[] = [
+    started,
+    notified({ _tag: "PhaseBegan", phase: { kind: "suite", n: 1 } }),
+    notified({ _tag: "SuiteCounted", phase: { kind: "suite", n: 1 }, commands }),
+    notified({ _tag: "PhaseEnded", phase: { kind: "suite", n: 1 }, result: "passed" }),
+  ];
+  test("the entry holds the commands and its result", () => {
+    for (const s of [fold(live(events)), replayed(events)]) {
+      const suite = runOf(s, "implementation")!.timeline.find((e) => e.phase.kind === "suite")!;
+      expect([suite.counts, suite.result]).toEqual([commands, "passed"]);
+      expect(runOf(s, "implementation")!.timeline.filter((e) => e.phase.kind !== "suite").every((e) => e.counts.length === 0)).toBe(true);
+    }
   });
 });
 

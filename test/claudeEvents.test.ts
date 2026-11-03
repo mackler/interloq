@@ -210,7 +210,7 @@ test("reduceMessages keeps a stream failure's process ending, and none without a
 
 // Issue #162: the report's checks reach the outcome, and a stop keeps the checks its report gave.
 test("interpretExecution carries the report's checks to the outcome", () => {
-  const checks = [{ step: "S1", command: "npm run check", seconds: 9 }];
+  const checks = [{ step: "S1", command: "npm run check", seconds: 9, selection: false, counts: null }];
   assert.deepEqual(interpretExecution(complete({ status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks }), null).checks, checks);
   assert.deepEqual(interpretExecution(complete({ status: "continuing", summary: "s", question: "", remaining_work: "w", missing: "", checks }), null).checks, checks);
   assert.deepEqual(interpretExecution(complete({ status: "blocked", summary: "s", question: "q", remaining_work: "w", missing: "", checks }), { question: "q?", input: "a" }).checks, checks);

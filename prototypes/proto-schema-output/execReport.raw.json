@@ -33,12 +33,44 @@
           },
           "seconds": {
             "type": "number"
+          },
+          "selection": {
+            "type": "boolean"
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "passed": {
+                    "type": "integer"
+                  },
+                  "failed": {
+                    "type": "integer"
+                  },
+                  "skipped": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "passed",
+                  "failed",
+                  "skipped"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "step",
           "command",
-          "seconds"
+          "seconds",
+          "selection",
+          "counts"
         ],
         "additionalProperties": false
       }

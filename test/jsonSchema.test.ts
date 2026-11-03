@@ -75,7 +75,22 @@ const agentSchemas = {
       properties: {
         ...legacy.execReportSchema.properties,
         status: { type: "string", enum: ["finished", "continuing", "needs_input", "blocked", "not_refined"] },
-        checks: { type: "array", items: { type: "object", properties: { step: { type: "string" }, command: { type: "string" }, seconds: { type: "number" } }, required: ["step", "command", "seconds"], additionalProperties: false } },
+        // Issue #39: whether each check ran a selection, and its counts or null.
+        checks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              step: { type: "string" },
+              command: { type: "string" },
+              seconds: { type: "number" },
+              selection: { type: "boolean" },
+              counts: { anyOf: [{ type: "object", properties: { passed: { type: "integer" }, failed: { type: "integer" }, skipped: { type: "integer" } }, required: ["passed", "failed", "skipped"], additionalProperties: false }, { type: "null" }] },
+            },
+            required: ["step", "command", "seconds", "selection", "counts"],
+            additionalProperties: false,
+          },
+        },
         missing: { type: "string" },
       },
       required: [...legacy.execReportSchema.required, "checks", "missing"],

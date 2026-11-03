@@ -431,7 +431,7 @@ describe("QuestionPane", () => {
 });
 
 /** The fields of a timeline entry that its tests do not concern: the entry of a phase with no times yet. */
-const fresh = { began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null, result: null } as const;
+const fresh = { began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null, result: null, counts: [] } as const;
 
 /**
  * The rail with every node opened by the user (issue #63), so that the tests of what an open node shows are unchanged:

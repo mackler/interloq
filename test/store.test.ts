@@ -336,6 +336,7 @@ test("every write of the Store to a guarded record is in its journal, with the e
     ["saveQuestions", store.saveQuestions("task", [])],
     ["writeRequirements", store.writeRequirements("# R\n")],
     ["saveSuiteLog", store.saveSuiteLog(1, "all passed\n")],
+    ["saveSuiteRecord", store.saveSuiteRecord(1, { version: 2, suite: 1, command: "npm test", result: "passed", reported: { _tag: "NotReported" } })],
     ["savePlan", store.savePlan(plan)],
     ["saveLog", store.saveLog({ plan: 1 }, [])],
     ["appendDecision", store.appendDecision({ subject: "issue A", id: null, decision: "keep it", phase: 1, round: 1 })],
@@ -749,4 +750,31 @@ test("saveFigures writes each picture's markup to its content-named file, once, 
   assert.ok((await run(store.ownWritesSince(mark))).some((w) => w.path.endsWith(figureFileOf(figure))), "the write is journaled");
   await run(store.saveFigures([figure]));
   assert.deepEqual(fs.readdirSync(path.join(store.dir, "figures")), [path.basename(file)]);
+});
+
+// Issue #39 (S7): the counts file a final command writes, read back, and Interloq's record of a suite run's counts.
+import type { SuiteRecord } from "../src/testCounts.ts";
+
+test("readSuiteCounts reads the file the command wrote, and none where it wrote none; a suite record reads back unchanged", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  assert.ok(Option.isNone(await run(store.readSuiteCounts(1))));
+  fs.writeFileSync(path.join(store.dir, pathOf({ kind: "suiteCountsFile", n: 1 })), "{ written by the command }");
+  assert.deepEqual(await run(store.readSuiteCounts(1)), Option.some("{ written by the command }"));
+  assert.ok(Option.isNone(await run(store.loadSuiteRecord(2))));
+  const record: SuiteRecord = {
+    version: 2,
+    suite: 2,
+    command: "npm test",
+    result: "passed",
+    reported: { _tag: "Reported", commands: [{ _tag: "Counted", name: "npm run test:unit", outcome: "passed", scope: "whole", counts: { passed: 9, failed: 0, skipped: 1 } }] },
+  };
+  await run(store.saveSuiteRecord(2, record));
+  assert.equal(pathOf({ kind: "suiteRecord", n: 2 }), "suite-2.json");
+  assert.deepEqual(await run(store.loadSuiteRecord(2)), Option.some(record));
+  for (const reported of [{ _tag: "NotReported" as const }, { _tag: "Unreadable" as const, reason: "no JSON" }]) {
+    await run(store.saveSuiteRecord(3, { ...record, suite: 3, result: "failed", reported }));
+    assert.deepEqual(await run(store.loadSuiteRecord(3)), Option.some({ ...record, suite: 3, result: "failed", reported }));
+  }
 });

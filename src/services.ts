@@ -12,6 +12,7 @@ import type { Baseline, CheckpointPoint, RoundRecord, VerdictRecord } from "./re
 import type { EarlierPlan } from "./earlierPlan.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { SuiteResult } from "./suite.ts";
+import type { SuiteRecord } from "./testCounts.ts";
 import type { CommitCheck } from "./commitCheck.ts";
 import type { BranchName, GitState, LeftoverCommit, MergeOutcome, ParkRecord } from "./park.ts";
 import type { CommandLine, Config, DecisionAnalysis, IssueFile, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
@@ -205,8 +206,10 @@ export interface SuiteRunnerShape {
    * Runs `command` in `cwd`, a run past `ceilingMs` stopped and failed as timed out (issue #181: the run's own limit).
    * Issue #49: `onOutput` is called with each chunk of stdout or stderr in arrival order while the run lasts, never after
    * it settled; a plain callback, since the runner is an edge in Node's callbacks and a forked Effect per chunk could reorder them.
+   * Issue #39: `countsFile`, an absolute path, is given to the command in INTERLOQ_TEST_COUNTS_FILE beside the inherited
+   * environment, the file to which it may write its counts.
    */
-  run(command: CommandLine, cwd: string, ceilingMs: number, onOutput: (text: string) => void): Effect.Effect<SuiteResult>;
+  run(command: CommandLine, cwd: string, ceilingMs: number, onOutput: (text: string) => void, countsFile: string): Effect.Effect<SuiteResult>;
 }
 export class SuiteRunner extends Context.Service<SuiteRunner, SuiteRunnerShape>()("plan-review/SuiteRunner") {}
 
@@ -311,6 +314,11 @@ export interface StoreShape {
   writeRequirements(text: string): Effect.Effect<void, StoreError>;
   /** Issue #162: the whole output of suite run n, in suite-<n>.log. */
   saveSuiteLog(n: number, text: string): Effect.Effect<void, StoreError>;
+  /** Issue #39: the counts file suite run n's command wrote (suite-<n>-counts.json), none where it wrote none. */
+  readSuiteCounts(n: number): Effect.Effect<Option.Option<string>, StoreError>;
+  /** Issue #39: Interloq's record of suite run n's counts (suite-<n>.json), and that record read back, none where absent. */
+  saveSuiteRecord(n: number, record: SuiteRecord): Effect.Effect<void, StoreError>;
+  loadSuiteRecord(n: number): Effect.Effect<Option.Option<SuiteRecord>, StoreError>;
   /**
    * Issue #98: each picture's markup, byte for byte, in figures/<sha256 of its markup>.svg, before the record that links
    * it; journaled like every record. A picture written again changes no file, since its name is its content's hash.

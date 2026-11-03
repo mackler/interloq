@@ -1,10 +1,18 @@
 // The browser build of the web GUI and its component tests. Every path is relative to `root`, this directory:
 // `npm run build` writes web/dist (the server refuses to start without web/dist/index.html), and Vitest finds
 // the tests under src/.
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { functionsMixins } from "vite-plugin-functions-mixins";
 import { defineConfig } from "vitest/config";
+
+/**
+ * Issue #39: where INTERLOQ_STAGE_REPORT_DIR names a directory (npm test sets it), Vitest also writes its JSON report
+ * there as vitest.json, resolved against the caller's working directory, since Vitest resolves a relative outputFile
+ * against its root, this directory. Unset, the printed output alone, as before.
+ */
+const STAGE_REPORT_DIR = process.env.INTERLOQ_STAGE_REPORT_DIR;
 
 /** The components whose CSS Vitest injects, so that jsdom computes their styles. */
 const INJECTED_CSS = ["TimelineRail.svelte", "ItemList.svelte", "ScrollableTabs.svelte", "ModeTabs.svelte"];
@@ -30,5 +38,8 @@ export default defineConfig({
   // maxWorkers is half the cores because npm test runs this stage beside the others, and Vitest waits only a fixed 60 s
   // for a forked worker to start, which a fork per core missed under that load (the suite run of 18 Oct 2026 in issue
   // #172's implementation run); testTimeout does not govern that wait. test/ci.test.ts checks it is set here alone.
-  test: { environment: "jsdom", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"], testTimeout: 120_000, maxWorkers: "50%" },
+  test: {
+    environment: "jsdom", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"], testTimeout: 120_000, maxWorkers: "50%",
+    reporters: STAGE_REPORT_DIR === undefined || STAGE_REPORT_DIR === "" ? ["default"] : ["default", ["json", { outputFile: resolve(process.cwd(), STAGE_REPORT_DIR, "vitest.json") }]],
+  },
 });

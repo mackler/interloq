@@ -16,6 +16,7 @@ import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
 import { correctionCount } from "../../src/issueLog.ts";
 import { SUITE_OUTCOMES, type SuiteOutcome } from "../../src/suite.ts";
+import type { CommandReport } from "../../src/testCounts.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { LimitWaitBasis } from "../../src/limitReset.ts";
 import type { LimitPause } from "./notify.ts";
@@ -109,6 +110,8 @@ export type TimelineEntry = Readonly<{
   record: RecordedPlan | null;
   /** Issue #162: a Full test suite's result once it ended, as its PhaseEnded gives it; null for every other phase and before the end. */
   result: SuiteOutcome | null;
+  /** Issue #39: a Full test suite's commands with their counts, as its SuiteCounted gives them; empty for every other phase and where none were reported. */
+  counts: readonly CommandReport[];
 }>;
 /** An agent call that runs; calls nest when a decision is taken inside an execution call (P1-R2-1). */
 export type AgentCall = Readonly<{ agent: "claude" | "codex"; purpose: string; label: string; startedAt: string; callId: string }>;
@@ -639,6 +642,7 @@ const newEntry = (phase: Phase, state: TimelineState): TimelineEntry => ({
   acted: [],
   record: null,
   result: null,
+  counts: [],
 });
 /** Whether an entry has begun or ended (issue #173): an entry ahead, or not reached at a halt, has not. */
 export const begun = (e: TimelineEntry): boolean => e.state !== "ahead" && e.state !== "notReached";
@@ -857,6 +861,8 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "PhaseEnded":
       return reshow({ ...withoutHelp(withActivity(run, "")), expired: run.expired?.then === "extend" ? null : run.expired, busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
+    case "SuiteCounted":
+      return event.phase.kind === "suite" ? { ...run, timeline: run.timeline.map((e) => (samePhase(e.phase, event.phase) ? { ...e, counts: event.commands } : e)) } : run;
     case "RoundBegan":
       // A decision loop is a loop inside a phase that the progress panel does not show (D12 of the decision-support plan).
       // S17: the terms review's first round opens its own step of Gather Requirements, before the clarification.
