@@ -7,7 +7,7 @@ name: interloq-dev
 
 services:
   cc:
-    container_name: interloq-claude
+    container_name: interloq
     build:
       context: ./container
     image: claude-code-base
