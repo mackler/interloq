@@ -95,6 +95,20 @@ describe("the document under review on the dashboard", () => {
   });
 });
 
+describe("the parts of a draft analysis (issue #41)", () => {
+  test("a draft analysis shows the same groups, hidden names and marks, its symbols plain marks", () => {
+    const { target } = mountDashboard(withDocument({ _tag: "Analysis", analysis }, { decision: 1 }), { documentOpen: true });
+    const doc = body(target)!;
+    expect(doc.querySelector("ol.chain")?.getAttribute("aria-label")).toBe(prompts.ELEMENT_GROUP_NAMES.chain);
+    expect(doc.querySelector("ul.extent")?.getAttribute("aria-label")).toBe(prompts.ELEMENT_GROUP_NAMES.extent);
+    const names = [...doc.querySelectorAll(".element-text > .visually-hidden")].map((n) => n.textContent);
+    expect(names.slice(0, 10)).toEqual(Object.values(prompts.ELEMENT_ROLE_NAMES).map((n) => `${n}: `));
+    expect([...doc.querySelectorAll(".mark")].slice(0, 4).map((m) => m.textContent)).toEqual([prompts.CHAIN_START_MARK, prompts.CHAIN_LINK_MARK, prompts.CHAIN_LINK_MARK, prompts.REASON_MARK]);
+    expect(doc.querySelector(".argument a")).toBe(null);
+    expect(doc.querySelector(".argument [data-symbol]")?.textContent).toBe("*");
+  });
+});
+
 describe("the opposing texts of a draft analysis (W1-R1-1)", () => {
   test("each paragraph takes the error color from its own opposes alone: a disadvantage's counterargument is not colored, its reply is", () => {
     const counter = [{ id: "C2", text: "It is not true that a server is needed.", equivalent_to: "", replies: [{ id: "R2", text: "It is true.", equivalent_to: "", replies: [] }] }];
@@ -107,7 +121,7 @@ describe("the opposing texts of a draft analysis (W1-R1-1)", () => {
       recommendation: { option: "SQLite", reason: "Smaller." },
     };
     const { target } = mountDashboard(withDocument({ _tag: "Analysis", analysis: disputed }, { decision: 1 }), { documentOpen: true });
-    const paragraphs = [...(body(target)?.querySelectorAll("p") ?? [])];
+    const paragraphs = [...(body(target)?.querySelectorAll("p, .element-text, .argument") ?? [])];
     expect(paragraphs.length).toBeGreaterThan(0);
     for (const p of paragraphs) expect(p.closest(".opposes")).toBe(p.classList.contains("opposes") ? p : null);
     const level1 = [...(body(target)?.querySelectorAll("[data-argument-level='1']") ?? [])].find((e) => e.textContent?.includes("a server is needed"));

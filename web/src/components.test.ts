@@ -6,7 +6,7 @@ import { type Component, createRawSnippet, flushSync, mount, unmount } from "sve
 import { afterEach, describe, expect, test, vi } from "vitest";
 import * as prompts from "../../src/prompts.ts";
 import { promptOf } from "../../src/userPrompts.ts";
-import { viewOf } from "../../src/analysisView.ts";
+import { elementViewsOf, viewOf } from "../../src/analysisView.ts";
 import QuestionPane from "./components/QuestionPane.svelte";
 import ItemList from "./components/ItemList.svelte";
 import { startFrame } from "./tabs.ts";
@@ -2332,6 +2332,28 @@ describe("DecisionView", () => {
     expect(shown).toEqual(["conversation"]);
   });
 
+  // Issue #41: an opened entry shows its parts through AnalysisElements: the chain as a named ordered list, the extent's
+  // four statements, and the equivalence link of issue #133 unchanged.
+  test("an opened entry shows the chain of causes and the extent, and keeps its equivalence link (issue #41)", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    const column = [...root.querySelectorAll<HTMLElement>(".column")][0];
+    expect(column.querySelector("ol.chain")?.getAttribute("aria-label")).toBe(prompts.ELEMENT_GROUP_NAMES.chain);
+    expect(column.querySelectorAll("ul.extent > li").length).toBe(4);
+    const link = [...column.querySelectorAll<HTMLAnchorElement>(".argument a.equivalence")].find((a) => a.textContent === "*");
+    expect(link?.getAttribute("href")).toMatch(/^#/);
+    expect(link?.getAttribute("aria-label")).toBe(prompts.equivalenceLinkName("*", prompts.disadvantageLabel(1), "Title E2."));
+  });
+
+  test("a disadvantage's title keeps the error color, by DecisionView's own rule (issue #41)", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    const title = [...root.querySelectorAll<HTMLElement>(".column")][1].querySelector(".entry .title");
+    expect(title?.classList.contains("opposes")).toBe(true);
+    const source = (await import("./components/DecisionView.svelte?raw")).default;
+    expect(source).toMatch(/\.opposes \{ color: var\(--m3c-error\); \}/);
+  });
+
   // Issue #35: both headings, and the entries labeled within each heading.
   test("each column has the headings Advantages: and Disadvantages:, and each entry its label", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
@@ -2347,7 +2369,7 @@ describe("DecisionView", () => {
     const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
     const view = viewOf((event as { analysis: Parameters<typeof viewOf>[0] }).analysis);
     const expected = view.columns.flatMap((c) =>
-      c.kind === "unclear" ? [] : [...c.advantages, ...c.disadvantages].flatMap((e) => [e.opposes, ...e.elements.flatMap((el) => [el.opposes, ...el.arguments.map((a) => a.opposes)])]),
+      c.kind === "unclear" ? [] : [...c.advantages, ...c.disadvantages].flatMap((e) => [e.opposes, ...elementViewsOf(e).flatMap((el) => [el.opposes, ...el.arguments.map((a) => a.opposes)])]),
     );
     const marked = [...root.querySelectorAll<HTMLElement>(".title, .element-text, .argument")].map((n) => n.dataset.opposes === "true");
     expect(marked).toEqual(expected);

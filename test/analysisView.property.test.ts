@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { elementsOf, viewOf } from "../src/analysisView.ts";
+import { ELEMENT_ROLES, elementViewsOf, elementsOf, flatten, GROUP_KINDS, groupOf, viewOf } from "../src/analysisView.ts";
 import type { Argument, DecisionAnalysis, Entry } from "../src/schema.ts";
 
 // Issue #87: an entry is marked when it hides a contradicting position. The mark is `disputed` of EntryView, true
@@ -54,7 +54,45 @@ test("disputed holds exactly when some element of the entry has a counterargumen
 test("disputed holds exactly when some text under the entry argues the other side than the entry", () => {
   fc.assert(
     fc.property(arbAnalysis, (analysis) => {
-      for (const [, view] of pairs(analysis)) assert.equal(view.disputed, view.elements.some((el) => el.opposes !== view.opposes || el.arguments.some((a) => a.opposes !== view.opposes)), view.id);
+      for (const [, view] of pairs(analysis)) assert.equal(view.disputed, elementViewsOf(view).some((el) => el.opposes !== view.opposes || el.arguments.some((a) => a.opposes !== view.opposes)), view.id);
+    }),
+    RUNS,
+  );
+});
+
+// Issue #41: the roles follow elementsOf's order, and the groups partition them by groupOf.
+test("every element's role follows elementsOf's order, and its text is its source element's (issue #41)", () => {
+  fc.assert(
+    fc.property(arbAnalysis, (analysis) => {
+      for (const [source, view] of pairs(analysis)) {
+        assert.deepEqual(elementViewsOf(view).map((e) => e.role), [...ELEMENT_ROLES]);
+        assert.deepEqual(elementViewsOf(view).map((e) => e.text), elementsOf(source).map((e) => e.text));
+      }
+    }),
+    RUNS,
+  );
+});
+
+test("the groups are GROUP_KINDS in order, each holding exactly the roles groupOf assigns it (issue #41)", () => {
+  fc.assert(
+    fc.property(arbAnalysis, (analysis) => {
+      for (const [, view] of pairs(analysis)) {
+        assert.deepEqual(view.groups.map((g) => g.kind), [...GROUP_KINDS]);
+        for (const g of view.groups) for (const e of g.elements) assert.equal(groupOf(e.role), g.kind);
+        assert.deepEqual(view.groups[3].elements.map((e) => e.role), ["perPerson", "personsAffected", "likelihood", "timing"]);
+      }
+    }),
+    RUNS,
+  );
+});
+
+test("every element's arguments are its source element's counterarguments, flattened (issue #41)", () => {
+  fc.assert(
+    fc.property(arbAnalysis, (analysis) => {
+      for (const [source, view] of pairs(analysis)) {
+        const sources = elementsOf(source);
+        elementViewsOf(view).forEach((e, i) => assert.deepEqual(e.arguments.map((a) => [a.id, a.text, a.level]), flatten(sources[i].counterarguments).map((a) => [a.id, a.text, a.level])));
+      }
     }),
     RUNS,
   );

@@ -28,6 +28,8 @@
   // reasoning disputes it [visibility of system status]; which entries are open, and which heading, is the run's shared
   // state, the same in every tab [consistency and standards; user control and freedom]. An equivalence symbol is a link
   // that moves the focus to the entry it names, whose name says what it is (issue #133) [recognition rather than recall].
+  // Issue #41: an opened entry's parts are drawn by AnalysisElements, which marks the chain of causes and the parts that
+  // frame, qualify and measure it; this component keeps its own rule for the color of a disadvantage's title.
   // Below 390 px no column is laid out and a message asks for a wider window; the answers and the headings stay usable
   // [help users recognize and recover]. The conversation is one click away and back [user control and freedom].
   import type { Snippet } from "svelte";
@@ -40,6 +42,7 @@
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
   import Disclosure from "./Disclosure.svelte";
+  import AnalysisElements from "./AnalysisElements.svelte";
 
   /**
    * `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the
@@ -163,6 +166,12 @@
 </script>
 
 <svelte:window onresize={resized} />
+<!-- Issue #133: an equivalence symbol is a link that moves the focus to the entry it names. -->
+{#snippet link(argument: ArgumentView)}
+  {@const target = targetOf(argument)}
+  {#if argument.symbol !== null && target !== undefined}<a class="equivalence" href="#{entryButtonId(target.index)}" aria-label={equivalenceLinkName(argument.symbol.mark, target.label, target.title)} onclick={(e) => follow(e, target.index)}>{argument.symbol.mark}</a>{/if}
+{/snippet}
+
 {#snippet entryOf(entry: EntryView, bodyId: string)}
   {@const expanded = open(entry.id)}
   <div class="entry">
@@ -174,21 +183,7 @@
         <span class="title m3-font-title-small" class:opposes={entry.opposes} data-opposes={entry.opposes}><span class="label">{entry.label}</span> {marked(entry.title, entry.symbol)}</span>
         {#if entry.disputed}<span class="disputed" role="img" aria-label={ENTRY_DISPUTED_LABEL}>⚠</span>{/if}
       {/snippet}
-      <ul class="elements" id={bodyId}>
-        {#each entry.elements as element, i (i)}
-          <li class="element">
-            <span class="element-text" class:opposes={element.opposes} data-opposes={element.opposes}>{element.text}</span>
-            {#if element.arguments.length > 0}
-              <ul class="arguments">
-                {#each element.arguments as argument (argument.id)}
-                  {@const target = targetOf(argument)}
-                  <li class="argument" class:opposes={argument.opposes} data-opposes={argument.opposes} data-level={argument.level} style:margin-left="{(argument.level - 1) * 1.25}rem">{argument.text}{#if argument.symbol !== null && target !== undefined}{" "}<a class="equivalence" href="#{entryButtonId(target.index)}" aria-label={equivalenceLinkName(argument.symbol.mark, target.label, target.title)} onclick={(e) => follow(e, target.index)}>{argument.symbol.mark}</a>{/if}</li>
-                {/each}
-              </ul>
-            {/if}
-          </li>
-        {/each}
-      </ul>
+      <div class="elements" id={bodyId}><AnalysisElements {entry} symbol={link} /></div>
     </Disclosure>
   </div>
 {/snippet}
@@ -287,12 +282,10 @@
   @media (prefers-reduced-motion: reduce) {
     .elements { animation: none; }
   }
-  .elements { margin: 0.25rem 0 0.5rem; padding-left: 2.25rem; }
-  .element { margin-bottom: 0.25rem; }
-  .arguments { list-style: none; margin: 0.25rem 0 0.25rem 0.5rem; padding: 0; }
-  .argument { margin-top: 0.25rem; padding-left: 0.5rem; border-left: 2px solid var(--m3c-outline-variant); }
-  /* Issue #133: the symbol is a link to the entry it names, in the text's own color, underlined as a link. */
-  .equivalence { color: inherit; }
+  .elements { margin: 0.25rem 0 0.5rem; padding-left: 1rem; }
+  /* Issue #133: the symbol is a link to the entry it names, in the text's own color, underlined as a link. Global, since
+     the link is rendered inside AnalysisElements (issue #41). */
+  .elements :global(.equivalence) { color: inherit; }
   /* Issue #35 (Q7): what argues against the column's option, in the scheme's error color; the rest keeps the text color. */
   .opposes { color: var(--m3c-error); }
   .sections { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; }

@@ -1,8 +1,8 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
-import { TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
+import { ELEMENT_GROUP_NAMES, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
 import { markedTabName } from "../web/src/notify.ts";
-import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
+import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 
@@ -2032,3 +2032,139 @@ const contrastRatio = (a: readonly number[], b: readonly number[]): number => {
   const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
   return (light + 0.05) / (dark + 0.05);
 };
+
+// Issue #41: the representative example of an argument's structure, which the developer judges from the screenshots this
+// test writes to scratch/: the chain's marks in one column left of every interruption, each style on its own text, the
+// opposing texts in the error color, the screen-reader names hidden, and screenshots that together show the whole entry.
+type Band = Readonly<{ x: number; y: number; width: number; height: number; top: number; bottom: number }>;
+type Extent = Readonly<{ text: string; top: number; bottom: number }>;
+/** What of the column is visible now, in the page's and in the column's content coordinates, and every text's extent. */
+const visibleBand = (column: Locator) =>
+  column.evaluate((col) => {
+    const run = document.querySelector("main.run")!.getBoundingClientRect();
+    const c = col.getBoundingClientRect();
+    const h3 = col.querySelector("h3")?.getBoundingClientRect();
+    const top = Math.max(c.top, run.top, 0, h3?.bottom ?? c.top);
+    const bottom = Math.min(c.bottom, run.bottom, window.innerHeight);
+    const left = Math.max(c.left, run.left, 0);
+    const right = Math.min(c.right, run.right, window.innerWidth);
+    const content = (y: number) => y - c.top + col.scrollTop;
+    const texts = [...col.querySelectorAll<HTMLElement>(".entry .element-text, .entry .argument")].map((t) => {
+      const r = t.getBoundingClientRect();
+      return { text: (t.textContent ?? "").slice(0, 60), top: content(r.top), bottom: content(r.bottom) };
+    });
+    return { band: { x: left, y: top, width: right - left, height: bottom - top, top: content(top), bottom: content(bottom) }, texts, scrollTop: col.scrollTop, clientHeight: col.clientHeight, scrollHeight: col.scrollHeight };
+  });
+/** Scrolls the column through its content a band at a time, saving each band; asserts every text was wholly shown. */
+const captureColumn = async (page: Page, column: Locator, name: string, marker: string | null): Promise<readonly string[]> => {
+  await column.evaluate((col) => {
+    const run = document.querySelector<HTMLElement>("main.run")!;
+    run.scrollTop += col.getBoundingClientRect().top - run.getBoundingClientRect().top;
+    col.scrollTop = 0;
+  });
+  await settled(page);
+  const seen = new Map<string, [number, number][]>();
+  const files: string[] = [];
+  let extents: readonly Extent[] = [];
+  let lastText = "";
+  for (let k = 1; ; k++) {
+    await settled(page);
+    const m = await visibleBand(column);
+    expect(m.band.height, `${name}: the column's visible band is empty`).toBeGreaterThan(0);
+    extents = m.texts;
+    for (const t of m.texts) {
+      const from = Math.max(t.top, m.band.top);
+      const to = Math.min(t.bottom, m.band.bottom);
+      if (to > from) seen.set(t.text, [...(seen.get(t.text) ?? []), [from, to]]);
+    }
+    const file = `scratch/issue-41-argument-structure-${name}-${k}.png`;
+    const b: Band = m.band;
+    await page.screenshot({ path: file, clip: { x: b.x, y: b.y, width: b.width, height: b.height } });
+    files.push(file);
+    lastText = await column.evaluate((col, band) => [...col.querySelectorAll<HTMLElement>(".entry .element-text, .entry .argument")].filter((t) => {
+      const r = t.getBoundingClientRect();
+      return r.bottom > band.y && r.top < band.y + band.height;
+    }).map((t) => t.textContent ?? "").join(" "), b);
+    if (m.scrollTop + m.clientHeight >= m.scrollHeight - 1) break;
+    const step = Math.max(1, m.band.height - 2 * (await rootPx(page)));
+    await column.evaluate((col, s) => { col.scrollTop += s; }, step);
+  }
+  for (const t of extents) {
+    const intervals = [...(seen.get(t.text) ?? [])].sort((a, b) => a[0] - b[0]);
+    let reached = t.top;
+    for (const [from, to] of intervals) if (from <= reached + 1) reached = Math.max(reached, to);
+    expect(reached, `${name}: "${t.text}" was not wholly shown in any screenshot`).toBeGreaterThanOrEqual(t.bottom - 1);
+  }
+  if (marker !== null) expect(lastText, `${name}: the last screenshot lacks the timing statement's end`).toContain(marker);
+  console.log(`(L47) ${name}: ${files.join(", ")}`);
+  return files;
+};
+test.describe("the tests of the argumentStructure server, in order", () => {
+  test.describe.configure({ mode: "default" });
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L47) ${width}×${height}: an argument's chain of causes and its qualifying parts`, async ({ page }) => {
+      const size = `${width} × ${height}`;
+      const analysis = await openAnalysisAt(page, layoutUrl("argumentStructure"), width, height);
+      const columns = analysis.locator(".column");
+      await columns.nth(0).getByRole("button", { name: /^(Show|Hide) the reasoning of Advantage 1:/ }).click();
+      await columns.nth(1).getByRole("button", { name: /^(Show|Hide) the reasoning of Disadvantage 1:/ }).click();
+      const entry = columns.nth(0).locator(".entry").first();
+      await expect(entry.getByRole("list", { name: ELEMENT_GROUP_NAMES.chain })).toBeVisible();
+      await expect(entry.getByRole("list", { name: ELEMENT_GROUP_NAMES.extent })).toBeVisible();
+      await settled(page);
+      const m = await entry.evaluate((e) => {
+        const left = (n: Element) => n.getBoundingClientRect().left;
+        const probe = document.createElement("span");
+        probe.style.color = "var(--m3c-error)";
+        e.append(probe);
+        const error = getComputedStyle(probe).color;
+        probe.remove();
+        const style = (sel: string) => {
+          const n = e.querySelector(sel)!;
+          const cs = getComputedStyle(n);
+          return { weight: cs.fontWeight, style: cs.fontStyle, size: cs.fontSize, color: cs.color, opposes: n.classList.contains("opposes") };
+        };
+        const arrows = [...e.querySelectorAll(".chain .mark")].filter((n) => n.textContent === "➔").map(left);
+        const opposing = [...e.querySelectorAll<HTMLElement>(".opposes")].map((n) => getComputedStyle(n).color);
+        const title = e.closest(".columns")!.querySelectorAll(".column")[1].querySelector(".entry .title")!;
+        const hidden = [...e.querySelectorAll(".visually-hidden")].map((n) => {
+          const r = n.getBoundingClientRect();
+          return [r.width, r.height];
+        });
+        return {
+          arrows,
+          threshold: left(e.querySelector(".element-text.threshold")!),
+          argumentLefts: [...e.querySelectorAll(".argument")].map(left),
+          underThreshold: style("[data-role=threshold] .argument"),
+          underExtent: style("[data-role=personsAffected] .argument"),
+          extentText: style(".element-text.personsAffected"),
+          error,
+          opposing,
+          title: getComputedStyle(title).color,
+          hidden,
+          column: (() => {
+            const c = e.closest(".column")!;
+            return [c.scrollWidth, c.clientWidth];
+          })(),
+          page: [document.documentElement.scrollWidth, window.innerWidth],
+        };
+      });
+      expect(m.arrows.length, size).toBe(2);
+      expect(Math.abs(m.arrows[0] - m.arrows[1]), `${size}: the arrows stand in one column`).toBeLessThan(0.5);
+      expect(m.threshold, `${size}: the threshold's text is right of the arrows`).toBeGreaterThan(m.arrows[0]);
+      for (const l of m.argumentLefts) expect(l, `${size}: a counterargument is right of the arrows`).toBeGreaterThan(m.arrows[0]);
+      expect(m.underThreshold.weight, size).toBe("400");
+      expect(m.underThreshold.style, size).toBe("normal");
+      expect(m.underExtent.size, size).not.toBe(m.extentText.size);
+      expect(m.underExtent.size, size).toBe(m.underThreshold.size);
+      expect(m.opposing.length, size).toBeGreaterThan(0);
+      for (const c of m.opposing) expect(c, `${size}: an opposing text is not in the error color`).toBe(m.error);
+      expect(m.title, `${size}: the disadvantage's title`).toBe(m.error);
+      for (const [w, h] of m.hidden) expect(w <= 1 && h <= 1, `${size}: a hidden name is visible`).toBe(true);
+      expect(m.column[0], `${size}: the column overflows sideways`).toBeLessThanOrEqual(m.column[1] + 1);
+      expect(m.page[0], `${size}: the page overflows sideways`).toBeLessThanOrEqual(m.page[1] + 1);
+      await captureColumn(page, columns.nth(0), `${width}x${height}`, ARGUMENT_TIMING_MARKER);
+      if (width === 1280) await captureColumn(page, columns.nth(1), `${width}x${height}-postgresql`, null);
+    });
+  }
+});

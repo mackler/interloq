@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { platformLayer } from "../src/platform.ts";
 import { makeRunManager } from "../src/runManager.ts";
 import { makeWebServer } from "../src/webServer.ts";
-import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LIVE_TICK_MS, LONG_ANSWERS, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
+import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LIVE_TICK_MS, LONG_ANSWERS, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
 import type { OutputEvent, ProcessKey } from "../src/liveOutput.ts";
 import { E2E_ITEMS, PREPARED_ITEM } from "./ports.ts";
 import { NoTracker } from "../src/errors.ts";
@@ -75,6 +75,71 @@ const LONG_RECOMMENDATION = [
   ...Array.from({ length: 11 }, (_, i) => `Paragraph ${i + 1}: the advantage that developers set up the service sooner outweighs, for every developer and from the first day, the disadvantage that operators maintain one more server, because the service has one operator and many developers.`),
   "The last paragraph of the recommendation.",
 ].join("\n\n");
+/**
+ * Issue #41: the representative example the developer judges: long elements, a threshold disputed three levels deep, a
+ * counterargument under the steps and one under the persons affected, and all four statements of the extent long; the
+ * PostgreSQL column's disadvantage has a counterargument under its threshold, so the error color alternates both ways.
+ */
+const ARGUMENT_STRUCTURE_ANALYSIS = {
+  decision: "Which database should the service use?",
+  columns: [
+    {
+      kind: "argued" as const,
+      option: "SQLite",
+      advantages: [
+        {
+          id: "E1",
+          title: "Developers set up the service sooner, because no database server has to be installed or configured.",
+          comparative_condition: element("If the service keeps its data in SQLite, its database is one file beside the service, whereas with PostgreSQL it is a separate server that must be installed, started and given a user before the service can start. Nothing else about the service's setup differs between the two options."),
+          starting_cause: element("A developer who clones the repository can run the service at once, because the database file is created on its first start."),
+          intermediate_steps: element("No server has to be installed, no port opened and no password shared, so the developer's first hour goes to the service itself. Each new developer repeats the setup, so the saving recurs with every person who joins.", [
+            { id: "A1", text: "But the development container already includes a PostgreSQL server, so installing it costs nothing extra.", equivalent_to: "", replies: [] },
+          ]),
+          threshold: element("This matters only if setting up a database server takes long enough to delay the developer's first working run, which is the case when the server needs a configuration of its own.", [
+            {
+              id: "A2",
+              text: "But a configured server takes only a few minutes to start, which is too short to delay anyone's first run.",
+              equivalent_to: "",
+              replies: [
+                {
+                  id: "A3",
+                  text: "On the other hand, the configuration has to be written and kept in step with the service's settings, which takes far longer than starting the server.",
+                  equivalent_to: "",
+                  replies: [{ id: "A4", text: "Then again, the configuration is written once and committed, so later developers only copy it.", equivalent_to: "", replies: [] }],
+                },
+              ],
+            },
+          ]),
+          effect_on_persons: element("Each developer reaches a running service on the first day instead of spending part of it on a database server's setup."),
+          reason_the_effect_matters: element("A developer who sees the service run early understands it sooner and makes fewer mistakes in the first changes they write."),
+          extent: {
+            per_person: element("About one hour saved per developer, once, at the start; more where the developer has never configured PostgreSQL before, less where they have."),
+            persons_affected: element("Every developer who joins the project, which is three people this year and perhaps ten over the service's life.", [
+              { id: "A5", text: "But only one developer joins this year, so the number affected is small.", equivalent_to: "", replies: [] },
+            ]),
+            likelihood: element("Certain for every new developer, since every one of them has to reach a running service before changing it."),
+            timing: element(`At once, on each developer's first day, and for as long as the service keeps its data in one file. The saving does not grow or shrink later. ${ARGUMENT_TIMING_MARKER}`),
+          },
+        },
+      ],
+      disadvantages: [],
+    },
+    {
+      kind: "argued" as const,
+      option: "PostgreSQL",
+      advantages: [],
+      disadvantages: [
+        {
+          ...entry("E2", "Operators maintain one more server, so outages are more likely."),
+          threshold: element("This matters only if the server is run by the same people who run the service, which is the case on one machine.", [
+            { id: "B1", text: "But the hosting provider runs the database server, so no operator of the service maintains it.", equivalent_to: "", replies: [] },
+          ]),
+        },
+      ],
+    },
+  ],
+  recommendation: { option: "SQLite", reason: "Developers set up the service sooner." },
+};
 export const SCENARIOS: Record<string, TestOptions> = {
   converge: {
     steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "1. [ ] the step, amended\n" }],
@@ -392,6 +457,16 @@ SCENARIOS.liveOutput = {
 };
 // Issue #40: an execution whose one message was written while two commands ran, the second a long command line, then
 // hanging, so the dashboard holds the note under Claude Code's latest message.
+// Issue #41: the decide scenario's question, whose analysis is the representative example of an argument's structure.
+SCENARIOS.argumentStructure = askedInPlanReview({
+  steps: [
+    { output: { questions_for_user: [questionOf({ context: "The service keeps its data in a database.", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
+    { output: ARGUMENT_STRUCTURE_ANALYSIS },
+    { output: noQuestions },
+  ],
+  reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
+  execs: [finished],
+});
 SCENARIOS.narrationNote = {
   steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }],
   reviews: [{ issues: [] }],

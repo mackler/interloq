@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type ArguedColumnView, type ColumnView, type EntryView, entriesOf, symbolFor, viewOf } from "../src/analysisView.ts";
+import { type ArguedColumnView, type ColumnView, type EntryView, ELEMENT_ROLES, elementViewsOf, entriesOf, GROUP_KINDS, symbolFor, viewOf } from "../src/analysisView.ts";
 import * as prompts from "../src/prompts.ts";
 import type { Argument, DecisionAnalysis, Entry } from "../src/schema.ts";
 
@@ -44,11 +44,11 @@ test("columns in order; each entry's elements in the document's order; arguments
   assert.equal(argued(view.columns[0]).disadvantagesHeading, prompts.DISADVANTAGES_HEADING);
   assert.equal(prompts.DISADVANTAGES_HEADING, "Disadvantages:");
   const e1 = argued(view.columns[0]).advantages[0];
-  assert.deepEqual(e1.elements.map((x) => x.text), ["c E1", "s E1", "i E1", "t E1", "e E1", "r E1", "pp E1", "pa E1", "l E1", "w E1"]);
-  assert.deepEqual(e1.elements[0].arguments.map((a) => [a.id, a.level, a.symbol?.mark ?? null]), [["A1", 1, null], ["A2", 2, null], ["A3", 3, "†"]]);
+  assert.deepEqual(elementViewsOf(e1).map((x) => x.text), ["c E1", "s E1", "i E1", "t E1", "e E1", "r E1", "pp E1", "pa E1", "l E1", "w E1"]);
+  assert.deepEqual(elementViewsOf(e1)[0].arguments.map((a) => [a.id, a.level, a.symbol?.mark ?? null]), [["A1", 1, null], ["A2", 2, null], ["A3", 3, "†"]]);
   // E2 (first referenced in column order) gets *, E3 gets †; unreferenced entries get none.
   assert.deepEqual(view.columns.map(argued).flatMap((c) => [...c.advantages, ...c.disadvantages]).map((e) => [e.id, e.symbol]), [["E1", null], ["E2", "*"], ["E3", "†"], ["E4", null]]);
-  assert.equal(argued(view.columns[1]).advantages[0].elements[0].arguments[0].symbol?.mark, "*");
+  assert.equal(elementViewsOf(argued(view.columns[1]).advantages[0])[0].arguments[0].symbol?.mark, "*");
   assert.equal(view.recommendation, null);
 });
 
@@ -91,11 +91,11 @@ test("opposes: a disadvantage and its elements, a counterargument to an advantag
   const [advantage, disadvantage] = [argued(view.columns[0]).advantages[0], argued(view.columns[0]).disadvantages[0]];
   assert.equal(advantage.opposes, false);
   assert.equal(disadvantage.opposes, true);
-  assert.ok(advantage.elements.every((e) => !e.opposes));
-  assert.ok(disadvantage.elements.every((e) => e.opposes));
+  assert.ok(elementViewsOf(advantage).every((e) => !e.opposes));
+  assert.ok(elementViewsOf(disadvantage).every((e) => e.opposes));
   // Level:                                        1 (counterargument)  2 (defense)  3 (counterargument)  4 (defense)
-  assert.deepEqual(advantage.elements[0].arguments.map((a) => [a.level, a.opposes]), [[1, true], [2, false], [3, true], [4, false]]);
-  assert.deepEqual(disadvantage.elements[0].arguments.map((a) => [a.level, a.opposes]), [[1, false], [2, true], [3, false], [4, true]]);
+  assert.deepEqual(elementViewsOf(advantage)[0].arguments.map((a) => [a.level, a.opposes]), [[1, true], [2, false], [3, true], [4, false]]);
+  assert.deepEqual(elementViewsOf(disadvantage)[0].arguments.map((a) => [a.level, a.opposes]), [[1, false], [2, true], [3, false], [4, true]]);
 });
 
 // Issue #35, decision Q8: an unclear column shows its statement in place of the two headings.
@@ -142,7 +142,7 @@ test("every entry's index is its position in entriesOf, unique and dense", () =>
 
 test("every argument's symbol names, by index, the entry whose own symbol has the same mark", () => {
   const entries = viewEntries(linked);
-  const symbols = entries.flatMap((e) => e.elements.flatMap((el) => el.arguments.flatMap((a) => (a.symbol === null ? [] : [a.symbol]))));
+  const symbols = entries.flatMap((e) => elementViewsOf(e).flatMap((el) => el.arguments.flatMap((a) => (a.symbol === null ? [] : [a.symbol]))));
   assert.equal(symbols.length, 3);
   for (const s of symbols) {
     const target = entries.find((e) => e.index === s.entry);
@@ -161,5 +161,33 @@ test("entries whose ids differ only in characters a DOM id would lose get distin
   });
   const [dot, slash, e9] = view;
   assert.notEqual(dot.index, slash.index);
-  assert.equal(e9.elements[0].arguments[0].symbol?.entry, slash.index);
+  assert.equal(elementViewsOf(e9)[0].arguments[0].symbol?.entry, slash.index);
+});
+
+// Issue #41: every element carries its role, and an entry's elements are the four groups in GROUP_KINDS' order.
+test("an entry's view has the groups premise, chain, reason and extent, each element with its role and text (issue #41)", () => {
+  const view = viewOf({ decision: "d", columns: [{ kind: "argued", option: "A", advantages: [entry("E1")], disadvantages: [] }], recommendation: { option: "", reason: "" } });
+  const e1 = argued(view.columns[0]).advantages[0];
+  assert.deepEqual(e1.groups.map((g) => g.kind), [...GROUP_KINDS]);
+  assert.deepEqual(
+    e1.groups.map((g) => g.elements.map((e) => [e.role, e.text])),
+    [
+      [["comparativeCondition", "c E1"]],
+      [["startingCause", "s E1"], ["intermediateSteps", "i E1"], ["threshold", "t E1"], ["effectOnPersons", "e E1"]],
+      [["reasonTheEffectMatters", "r E1"]],
+      [["perPerson", "pp E1"], ["personsAffected", "pa E1"], ["likelihood", "l E1"], ["timing", "w E1"]],
+    ],
+  );
+  assert.deepEqual(elementViewsOf(e1).map((e) => e.role), [...ELEMENT_ROLES]);
+});
+
+test("a counterargument under the threshold or the extent's likelihood stays on that element, with its levels and sides (issue #41)", () => {
+  const base = entry("E1");
+  const source: Entry = { ...base, threshold: el("t E1", [arg("T1", "", [arg("T2")])]), extent: { ...base.extent, likelihood: el("l E1", [arg("L1")]) } };
+  const view = viewOf({ decision: "d", columns: [{ kind: "argued", option: "A", advantages: [], disadvantages: [source] }], recommendation: { option: "", reason: "" } });
+  const elements = elementViewsOf(argued(view.columns[0]).disadvantages[0]);
+  const byRole = (role: string) => elements.find((e) => e.role === role)!;
+  assert.deepEqual(byRole("threshold").arguments.map((a) => [a.id, a.level, a.opposes]), [["T1", 1, false], ["T2", 2, true]]);
+  assert.deepEqual(byRole("likelihood").arguments.map((a) => [a.id, a.level, a.opposes]), [["L1", 1, false]]);
+  assert.ok(elements.filter((e) => e.role !== "threshold" && e.role !== "likelihood").every((e) => e.arguments.length === 0));
 });

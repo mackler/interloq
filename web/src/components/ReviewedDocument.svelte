@@ -5,9 +5,11 @@
   // equivalence symbols and opposing texts are what docs/decision-making.md requires of every representation of an
   // analysis, the opposing texts in the error color. The symbols are plain marks here: the link of issue #133 belongs to
   // the decision page. The region has a bounded height and scrolls inside itself, so a long document never takes the
-  // dashboard [aesthetic and minimalist design].
+  // dashboard [aesthetic and minimalist design]. Issue #41: an entry's parts are drawn by AnalysisElements, with the same
+  // marks and screen-reader names as on the decision page.
   import { render } from "../markdown.ts";
-  import { viewOf, type EntryView } from "../../../src/analysisView.ts";
+  import { type ArgumentView, viewOf, type EntryView } from "../../../src/analysisView.ts";
+  import AnalysisElements from "./AnalysisElements.svelte";
   import { recommendedOption } from "../../../src/prompts.ts";
   import type { ShownDocument } from "../../../src/reviewedDocument.ts";
 
@@ -15,15 +17,12 @@
   const view = $derived(document._tag === "Analysis" ? viewOf(document.analysis) : null);
 </script>
 
+{#snippet plain(argument: ArgumentView)}{#if argument.symbol !== null}<span data-symbol>{argument.symbol.mark}</span>{/if}{/snippet}
+
 {#snippet entryOf(entry: EntryView)}
   <li class="entry">
     <p class="title" class:opposes={entry.opposes}><strong>{entry.label}</strong> {entry.title}{#if entry.symbol !== null} <span data-symbol>{entry.symbol}</span>{/if}</p>
-    {#each entry.elements as element, i (i)}
-      <p class:opposes={element.opposes}>{element.text}</p>
-      {#each element.arguments as argument (argument.id)}
-        <p class="argument" class:opposes={argument.opposes} data-argument-level={argument.level} style:margin-inline-start="{argument.level}rem">{argument.text}{#if argument.symbol !== null} <span data-symbol>{argument.symbol.mark}</span>{/if}</p>
-      {/each}
-    {/each}
+    <AnalysisElements {entry} symbol={plain} />
   </li>
 {/snippet}
 

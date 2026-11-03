@@ -4,9 +4,10 @@
 // "Disadvantages:", the numbered labels of the entries (issue #35), the nesting of counterarguments under the element
 // they dispute, the equivalence symbols, and which texts oppose the column's option (decision Q7 of issue #35: the page
 // colors them), and which entries hide a contradicting position (`disputed`, issue #87: the page
-// marks them beside the collapsed entry).
+// marks them beside the collapsed entry), and each element's role and group (issue #41: the page marks the chain of causes
+// and the parts that frame, qualify and measure it).
 
-import { ADVANTAGES_HEADING, advantageLabel, DISADVANTAGES_HEADING, disadvantageLabel } from "./prompts.ts";
+import { ADVANTAGES_HEADING, advantageLabel, DISADVANTAGES_HEADING, disadvantageLabel, ELEMENT_ROLES, type ElementRole } from "./prompts.ts";
 import type { Argument, DecisionAnalysis, Element, Entry } from "./schema.ts";
 
 /**
@@ -17,15 +18,49 @@ import type { Argument, DecisionAnalysis, Element, Entry } from "./schema.ts";
 export type SymbolView = Readonly<{ mark: string; entry: number }>;
 /** `opposes`: the text argues against the column's option (decision Q7 of issue #35). */
 export type ArgumentView = Readonly<{ id: string; text: string; level: number; symbol: SymbolView | null; opposes: boolean }>;
-export type ElementView = Readonly<{ text: string; opposes: boolean; arguments: readonly ArgumentView[] }>;
+export { ELEMENT_ROLES, type ElementRole };
+/** `role` (issue #41): which part of the entry the element is, by which the page marks it. */
+export type ElementView = Readonly<{ role: ElementRole; text: string; opposes: boolean; arguments: readonly ArgumentView[] }>;
+/** The groups of an entry's parts, in the order the page shows them (issue #41). */
+export const GROUP_KINDS = ["premise", "chain", "reason", "extent"] as const;
+export type GroupKind = (typeof GROUP_KINDS)[number];
+export type ElementGroup = Readonly<{ kind: GroupKind; elements: readonly ElementView[] }>;
+/**
+ * The group a part belongs to (issue #41): the comparative condition is the premise; the starting cause, the steps, the
+ * threshold and the effect are the chain, the threshold between the steps and the effect as in `elementsOf`; the reason
+ * the effect matters stands apart; the four statements of the extent are one group.
+ */
+export const groupOf = (role: ElementRole): GroupKind => {
+  switch (role) {
+    case "comparativeCondition":
+      return "premise";
+    case "startingCause":
+    case "intermediateSteps":
+    case "threshold":
+    case "effectOnPersons":
+      return "chain";
+    case "reasonTheEffectMatters":
+      return "reason";
+    case "perPerson":
+    case "personsAffected":
+    case "likelihood":
+    case "timing":
+      return "extent";
+  }
+};
 /**
  * `disputed` (issue #87): some element of the entry has a counterargument, so a text under it argues the other side.
  * `index` (issue #133): the entry's position in entriesOf, unique in the analysis; `symbol` is its own mark.
  */
-export type EntryView = Readonly<{ id: string; index: number; label: string; title: string; symbol: string | null; opposes: boolean; disputed: boolean; elements: readonly ElementView[] }>;
+export type EntryView = Readonly<{ id: string; index: number; label: string; title: string; symbol: string | null; opposes: boolean; disputed: boolean; groups: readonly ElementGroup[] }>;
+/** An entry's elements in `elementsOf`'s order, its groups joined (issue #41). */
+export const elementViewsOf = (entry: EntryView): readonly ElementView[] => entry.groups.flatMap((g) => g.elements);
 export type ArguedColumnView = Readonly<{ kind: "argued"; option: string; advantagesHeading: string; advantages: readonly EntryView[]; disadvantagesHeading: string; disadvantages: readonly EntryView[] }>;
 export type ColumnView = ArguedColumnView | Readonly<{ kind: "unclear"; option: string; unclear: string }>;
 export type AnalysisView = Readonly<{ decision: string; columns: readonly ColumnView[]; recommendation: Readonly<{ option: string; reason: string }> | null }>;
+
+/** An entry's elements partitioned by `groupOf` into the groups of `GROUP_KINDS`, in its order (issue #41). */
+const groupsOf = (elements: readonly ElementView[]): readonly ElementGroup[] => GROUP_KINDS.map((kind) => ({ kind, elements: elements.filter((e) => groupOf(e.role) === kind) }));
 
 /** The elements of an entry, in the order of docs/decision-making.md ("Elements of an advantage or disadvantage"). */
 export const elementsOf = (entry: Entry): readonly Element[] => [
@@ -74,11 +109,14 @@ export const viewOf = (analysis: DecisionAnalysis): AnalysisView => {
     symbol: symbols.get(e.id) ?? null,
     opposes: disadvantage,
     disputed: elementsOf(e).some((el) => el.counterarguments.length > 0),
-    elements: elementsOf(e).map((el) => ({
-      text: el.text,
-      opposes: disadvantage,
-      arguments: flatten(el.counterarguments).map((a) => ({ id: a.id, text: a.text, level: a.level, symbol: symbolOf(a.equivalent_to), opposes: disadvantage !== (a.level % 2 === 1) })),
-    })),
+    groups: groupsOf(
+      elementsOf(e).map((el, i) => ({
+        role: ELEMENT_ROLES[i],
+        text: el.text,
+        opposes: disadvantage,
+        arguments: flatten(el.counterarguments).map((a) => ({ id: a.id, text: a.text, level: a.level, symbol: symbolOf(a.equivalent_to), opposes: disadvantage !== (a.level % 2 === 1) })),
+      })),
+    ),
   });
   return {
     decision: analysis.decision,

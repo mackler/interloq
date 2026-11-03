@@ -3247,6 +3247,51 @@ export function advantageLabel(n: number): string {
 export function disadvantageLabel(n: number): string {
   return `Disadvantage ${n}:`;
 }
+/**
+ * The parts of an advantage or disadvantage, in the order of `elementsOf` of src/analysisView.ts (issue #41). Declared
+ * here and re-exported by src/analysisView.ts, because src/analysisView.ts imports this module and this module must
+ * import nothing from it.
+ */
+export const ELEMENT_ROLES = [
+  "comparativeCondition",
+  "startingCause",
+  "intermediateSteps",
+  "threshold",
+  "effectOnPersons",
+  "reasonTheEffectMatters",
+  "perPerson",
+  "personsAffected",
+  "likelihood",
+  "timing",
+] as const;
+export type ElementRole = (typeof ELEMENT_ROLES)[number];
+/**
+ * The name of each part, which screen readers announce and the screen does not show (issue #41, the developer's decision
+ * Q1 of its refinement); the agent writes no names.
+ */
+export const ELEMENT_ROLE_NAMES: Readonly<Record<ElementRole, string>> = {
+  comparativeCondition: "Why this option",
+  startingCause: "Starting cause",
+  intermediateSteps: "Steps",
+  threshold: "Threshold",
+  effectOnPersons: "Effect on people",
+  reasonTheEffectMatters: "Why it matters",
+  perPerson: "How much for each person",
+  personsAffected: "Who and how many",
+  likelihood: "How likely",
+  timing: "How soon and for how long",
+};
+/** The accessible names of the two lists of an entry's parts (issue #41). */
+export const ELEMENT_GROUP_NAMES: Readonly<Record<"chain" | "extent", string>> = {
+  chain: "Chain of causes",
+  extent: "How much, for whom, how likely, how soon",
+};
+/** The mark of a link of the chain of causes: the intermediate steps and the effect on persons (issue #41). */
+export const CHAIN_LINK_MARK = "➔";
+/** The mark of the chain's starting cause (issue #41). */
+export const CHAIN_START_MARK = "•";
+/** The mark of the reason the effect matters (issue #41, proposed; judged on a rendered example). */
+export const REASON_MARK = "∴";
 /** The start of a decision page's heading, before the question (issue #133, the developer's instruction of 11 Oct 2026). */
 export const YOUR_CHOICE = "Your Choice:";
 /** The accessible name of a decision's analysis: its heading, "Your Choice: " and the question (issue #133). */

@@ -29,3 +29,6 @@ export const LIVE_RED_TEXT = "red line";
 export const LIVE_LONG_LINE = 700;
 /** How often the scripted process prints a tick, in milliseconds. */
 export const LIVE_TICK_MS = 300;
+
+/** Issue #41: the sentence that ends the timing statement of the argumentStructure scenario, which L47 looks for last. */
+export const ARGUMENT_TIMING_MARKER = "This is the last sentence of the timing statement.";
