@@ -727,7 +727,7 @@ describe("issue #186: how a send-back ends", () => {
     const { wiring, probe } = testWiring(tempRepo(), verdictMidWork);
     const { code, conclusion } = await ended(probe, wiring);
     assert.equal(code, 0);
-    assert.equal(conclusion?.code, 0);
+    assert.equal(conclusion?.ending._tag, "SentBack");
     assert.equal(conclusion?.parked?._tag, "Parked");
     assert.ok(probe.ui.said.includes(sentBackLine(scriptedItem.id, 1)), said(probe));
     assert.equal(await stateOf(probe), "unrefined");
@@ -738,7 +738,8 @@ describe("issue #186: how a send-back ends", () => {
     const { wiring, probe } = testWiring(tempRepo(), { ...verdictAtFirstPlan, tracker });
     const { code, conclusion } = await ended(probe, wiring);
     assert.equal(code, 1);
-    assert.deepEqual(conclusion, { code: 1, parked: { _tag: "NothingParked" }, abandoned: null });
+    assert.deepEqual(conclusion?.parked, { _tag: "NothingParked" });
+    assert.equal(conclusion?.ending._tag, "Halted");
     assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes("**Halted (exit code 1):**"));
     assert.equal(await stateOf(probe), "implementing");
   });
@@ -764,7 +765,9 @@ describe("issue #186: how a send-back ends", () => {
       await waitFor(probe, "TrackerRetrying");
       await Effect.runPromise(Fiber.interrupt(fiber));
       assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
-      assert.deepEqual(Option.getOrNull(Effect.runSync(Ref.get(concluded))), { code: 130, parked: { _tag: "NothingParked" }, abandoned: null }, `asked: ${asked}`);
+      const concludedNow = Option.getOrNull(Effect.runSync(Ref.get(concluded)));
+      assert.deepEqual(concludedNow?.parked, { _tag: "NothingParked" }, `asked: ${asked}`);
+      assert.equal(concludedNow?.ending._tag, "Interrupted", `asked: ${asked}`);
       assert.equal(await stateOf(probe), "implementing", `asked: ${asked}`);
     }
   });
@@ -778,7 +781,7 @@ describe("issue #186: how a send-back ends", () => {
     const { wiring, probe } = testWiring(repo, { ...verdictMidWork, tracker });
     const { code, conclusion } = await ended(probe, wiring);
     assert.equal(code, 1);
-    assert.equal(conclusion?.code, 1);
+    assert.equal(conclusion?.ending._tag, "Halted");
     const parked = conclusion?.parked;
     assert.ok(parked?._tag === "Parked", JSON.stringify(parked));
     assert.notEqual(git(repo, "rev-parse", parked.branch), start, "the run's commit is on the item's branch");
@@ -808,7 +811,7 @@ describe("issue #186: how a send-back ends", () => {
     await interrupted;
     assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
     const conclusion = Option.getOrNull(Effect.runSync(Ref.get(concluded)));
-    assert.equal(conclusion?.code, 130);
+    assert.equal(conclusion?.ending._tag, "Interrupted");
     const parked = conclusion?.parked;
     assert.ok(parked?._tag === "Parked", JSON.stringify(parked));
     assert.equal(JSON.parse(fs.readFileSync(path.join(probe.dir, "parked.json"), "utf8"))._tag, "Parked");
@@ -826,7 +829,7 @@ describe("issue #186: how a send-back ends", () => {
     await waitFor(probe, "TrackerRetrying");
     await Effect.runPromise(Deferred.fail(signal.fault, new ServerFault({ message: "write EPIPE" })));
     assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 1);
-    assert.equal(Option.getOrNull(Effect.runSync(Ref.get(concluded)))?.code, 1);
+    assert.equal(Option.getOrNull(Effect.runSync(Ref.get(concluded)))?.ending._tag, "Halted");
     assert.equal(await stateOf(probe), "implementing");
   });
 });

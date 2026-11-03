@@ -77,6 +77,8 @@ export const implementationRootsOf = (names: readonly string[], item: string, ow
 /** A root with the suffix that the store adds when the name exists: `-2` for k = 2. */
 export const suffixedRoot = (root: RunRoot, k: number): RunRoot => (k <= 1 ? root : (`${root}-${k}` as RunRoot));
 /** The path of an artifact of a run as messages and prompts name it, relative to the project: `plan-review/<root>/<path>`. */
+/** Issue #44: a run's records directory in its project, `<project>/plan-review/<root>`, which the store and the run manager share. */
+export const recordsDirOf = (project: string, root: RunRoot): string => `${project}/${RECORDS_DIR}/${root}`;
 export const recordPath = (root: RunRoot, artifact: Artifact): string => `${RECORDS_DIR}/${root}/${pathOf(artifact)}`;
 
 /** The phase recorded in a subject's log entries: 0 for the question list and the requirements. */

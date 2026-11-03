@@ -1,7 +1,9 @@
+import { COMPLETED, HALTED, SENT_BACK_PARKED, endedMark } from "../../test/endingFixtures.ts";
+import { arbEnding } from "../../test/endingArbitraries.ts";
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { ownName } from "../../src/hostDir.ts";
-import { endMarkOf, LIMIT_PAUSED_MARK, RUNNING_MARK, TITLE_ENDED_MARK, TITLE_UNFINISHED_MARK, TITLE_WAITING_MARK } from "../../src/prompts.ts";
+import { endingMarkOf, LIMIT_PAUSED_MARK, RUNNING_MARK, TITLE_ENDED_MARK, TITLE_UNFINISHED_MARK, TITLE_WAITING_MARK } from "../../src/prompts.ts";
 import { type Mark, markGlyph } from "./notify.ts";
 import { tabTitle } from "./title.ts";
 
@@ -33,13 +35,13 @@ const mark = fc.oneof(
   fc.constant<Mark>(WAITING),
   fc.constant<Mark>({ _tag: "Running" }),
   fc.constant<Mark>({ _tag: "LimitPaused", pause: { fromMs: 0, untilMs: 60_000, known: true } }),
-  fc.constantFrom(0, 1, 130).map((code): Mark => ({ _tag: "Ended", code })),
+  arbEnding.map((ending): Mark => ({ _tag: "Ended", ending })),
 );
 describe("tabTitle's marker", () => {
   it("puts the marker before the title it would have without one", () => {
     const path = "/home/mackler/work/interloq-dev";
     expect(tabTitle(path, WAITING)).toBe(`${TITLE_WAITING_MARK} ${tabTitle(path)}`);
-    expect(tabTitle(path, { _tag: "Ended", code: 0 })).toBe(`${TITLE_ENDED_MARK} ${tabTitle(path)}`);
+    expect(tabTitle(path, endedMark(COMPLETED))).toBe(`${TITLE_ENDED_MARK} ${tabTitle(path)}`);
     expect(tabTitle(null, WAITING)).toBe(`${TITLE_WAITING_MARK} ${tabTitle(null)}`);
     expect(TITLE_WAITING_MARK).not.toBe(TITLE_ENDED_MARK);
   });
@@ -49,11 +51,13 @@ describe("tabTitle's marker", () => {
     expect(tabTitle("/p", { _tag: "LimitPaused", pause: { fromMs: 0, untilMs: 1, known: false } })).toBe(`${LIMIT_PAUSED_MARK} ${tabTitle("/p")}`);
   });
   // Issue #209: ✓ for a finished run, ✕ for any other end.
-  it("marks a finished end ✓ and a halted, abandoned or stopped one ✕", () => {
+  it("marks each ending with its own glyph: ✓ for a completion, ✕ for a halt, ↩ for a send-back, never ✓", () => {
     const path = "/p";
-    expect(tabTitle(path, { _tag: "Ended", code: 0 }).startsWith(`${TITLE_ENDED_MARK} `)).toBe(true);
-    for (const code of [1, 2, 130]) expect(tabTitle(path, { _tag: "Ended", code })).toBe(`${TITLE_UNFINISHED_MARK} ${tabTitle(path)}`);
-    fc.assert(fc.property(fc.integer(), (code) => tabTitle(path, { _tag: "Ended", code }) === `${endMarkOf(code)} ${tabTitle(path)}`), { numRuns: 100 });
+    expect(tabTitle(path, endedMark(COMPLETED)).startsWith(`${TITLE_ENDED_MARK} `)).toBe(true);
+    expect(tabTitle(path, endedMark(HALTED))).toBe(`${TITLE_UNFINISHED_MARK} ${tabTitle(path)}`);
+    expect(tabTitle(path, endedMark(SENT_BACK_PARKED))).toBe(`↩ ${tabTitle(path)}`);
+    expect(tabTitle(path, endedMark(SENT_BACK_PARKED))).not.toContain(TITLE_ENDED_MARK);
+    fc.assert(fc.property(arbEnding, (ending) => tabTitle(path, endedMark(ending)) === `${endingMarkOf(ending)} ${tabTitle(path)}`), { numRuns: 100 });
   });
   it("property: keeps the project's title, begins with the mark's glyph, and is unchanged without a mark", () => {
     fc.assert(

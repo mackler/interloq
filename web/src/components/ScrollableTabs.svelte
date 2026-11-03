@@ -5,9 +5,15 @@
   // its whole name on one line, the indicator is an element inside the selected tab, and the selected tab is scrolled
   // into view (tabScrollLeft, which moves the row alone and never the page). The DOM keeps m3-svelte's shape (a radio,
   // then its label holding a span), which the end-to-end fixtures find tabs by.
+  // Issue #44: an item with an ending shows its glyph hidden from assistive technology, in the error color for a halt
+  // or an abandonment, its plain name, and the ending in words for assistive technology alone; the visible text is
+  // the composed name as before.
   import { tabScrollLeft } from "../tabRow.ts";
+  import { type Ending, endingAlerts } from "../../../src/ending.ts";
+  import { endingMarkOf, runEndedText } from "../../../src/prompts.ts";
 
-  let { tab = $bindable(), items }: { tab: string; items: readonly { name: string; value: string }[] } = $props();
+  type Item = Readonly<{ name: string; value: string; plain?: string; ending?: Ending | null }>;
+  let { tab = $bindable(), items }: { tab: string; items: readonly Item[] } = $props();
   const name = $props.id();
   let row: HTMLDivElement | undefined = $state();
 
@@ -27,7 +33,11 @@
     {@const id = name + item.value}
     <input type="radio" {name} {id} value={item.value} bind:group={tab} />
     <label for={id} class="m3-layer" data-value={item.value}>
-      <span>{item.name}</span>
+      {#if item.ending !== undefined && item.ending !== null}
+        <span><span class:alert={endingAlerts(item.ending)} aria-hidden="true">{endingMarkOf(item.ending)}</span> {item.plain ?? item.name}<span class="visually-hidden">, {runEndedText(item.ending)}</span></span>
+      {:else}
+        <span>{item.name}</span>
+      {/if}
       {#if item.value === tab}
         <span class="indicator" aria-hidden="true"></span>
       {/if}
@@ -45,6 +55,20 @@
     overscroll-behavior-x: contain;
     background-color: var(--m3c-surface);
     box-shadow: inset 0 -1px var(--m3c-surface-container-highest);
+  }
+  .alert {
+    color: var(--m3c-error);
+  }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
   }
   input {
     position: absolute;

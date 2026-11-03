@@ -5,15 +5,17 @@
 // implementation run: a refinement run builds no temporary git index (no baseline tree, no work-review diff) and compares
 // no project snapshot (behavior 3), and each run has its own records directory, allocated exclusively.
 
-import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Ref, Result, type Scope, Semaphore, Stream } from "effect";
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Ref, Result, type Scope, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
-import { type Conclusion, exitCodeOf, type FaultSignal, makeFaultSignal, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
+import * as path from "node:path";
+import { type ConcludedEnding, exitCodeOfEnding } from "./ending.ts";
+import { type Conclusion, defectMessage, type FaultSignal, makeFaultSignal, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
 import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainReselectText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
+import { defectText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainReselectText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
 import { type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
@@ -37,7 +39,7 @@ import { digestOf, markOf, preparationOf } from "./preparedComments.ts";
 import { makeStore } from "./store.ts";
 import { EMPTY_SLOT, endedIn, refusalOf, reserved, runsOf, type Slot as RunSlot } from "./runSlots.ts";
 import { parkHalted } from "./parking.ts";
-import type { RunRoot } from "./artifacts.ts";
+import { recordsDirOf, type RunRoot } from "./artifacts.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { type AnswerTiming, makeWebUi, type WebUi } from "./webUi.ts";
 import type { OutputEvent } from "./liveOutput.ts";
@@ -173,7 +175,8 @@ export const makeStepper = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<Readonly
   );
 
 /** A run: its events (the record), its web Ui and fiber, and beside the record the shared state of its page (issue #87). */
-type Run = Readonly<{ id: number; item: ItemId; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; signal: FaultSignal }>;
+/** Issue #44: `allocated`, the run's records directory once allocated, which an ending the manager publishes names. */
+type Run = Readonly<{ id: number; item: ItemId; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; signal: FaultSignal; allocated: Ref.Ref<Option.Option<RunRoot>> }>;
 /** A mode's runs in progress and its ended runs kept for the replay (issue #191, src/runSlots.ts). */
 type Slot = RunSlot<Run>;
 /**
@@ -228,6 +231,21 @@ const markFor = (kept: PreparationKept, preparing: ItemId | null, item: TrackerI
  * Issue #120 (the developer's answer to question Q1 of 9 Oct 2026): the project of both tabs is `cwd`, the directory the
  * server was started in. The tracker is reached through `access`: the configuration of `cwd` and the tracker it names.
  */
+/**
+ * Issue #44: a run's ending as the manager publishes it. A run the server's fault halted is halted with the fault's
+ * text, unless the program concluded that halt itself; otherwise the program's conclusion. Where none was concluded,
+ * an interruption is a stop and anything else a defect, with the defect's text; neither claims a parking or a return.
+ */
+const endingOfExit = (exit: Exit.Exit<number>, conclusion: Conclusion | null, fault: ServerFault | null, records: string | null): ConcludedEnding => {
+  if (fault !== null && conclusion?.ending._tag !== "Halted") return { _tag: "Halted", reason: describe(fault), records, park: null, item: null };
+  if (conclusion !== null) return conclusion.ending;
+  if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return { _tag: "Interrupted", park: null, item: null };
+  const message = Exit.isFailure(exit) ? defectMessage(Cause.squash(exit.cause)) : "the run ended without concluding its ending";
+  return { _tag: "Halted", reason: defectText(message), records, park: null, item: null };
+};
+/** Issue #44: the ending the manager publishes for a run that did not end within haltAll's bounds. */
+const stuckEnding = (message: string, records: string | null): ConcludedEnding => ({ _tag: "Halted", reason: describe(new ServerFault({ message })), records, park: null, item: null });
+
 export const makeRunManager = (
   wiring: (ui: UiShape, mode: RunMode) => Wiring,
   cwd: string,
@@ -296,16 +314,23 @@ export const makeRunManager = (
      * of its run's end, unless the server is ending after a fault (issue #158), when the chain is left as it is, so that
      * the restart finds the run cut off and starts nothing.
      */
+    /** Issue #44: the records directory of a run's allocated root, null where none was allocated. */
+    const recordsOf = (root: Option.Option<RunRoot>): string | null => Option.getOrNull(Option.map(root, (r) => recordsDirOf(path.resolve(cwd), r)));
     /** Issue #186: `parked`, the run's own parking (its Conclusion), which the chain takes as given. */
-    /** Issue #185: `abandoned`, the label of a run abandoned for want of an answer (its Conclusion). */
-    const end = (id: number, code: number, root: RunRoot | null = null, parked: ParkNote | null = null, abandoned: AbandonLabel | null = null): Effect.Effect<void> =>
+    /**
+     * Issue #44: `ending`, the run's ending as the program concluded it or as the manager decided it where none was
+     * concluded; the event's code and the chain's code and abandoned label are derived from it.
+     */
+    const end = (id: number, ending: ConcludedEnding, root: RunRoot | null = null, parked: ParkNote | null = null): Effect.Effect<void> =>
       now.pipe(
         Effect.flatMap((time) =>
           step((s): readonly [Readonly<{ changed: boolean; command: ChainCommand | null }>, readonly Broadcast[], State] => {
             const mode = modeOf(s, id, ["current"]);
             const run = mode === null ? null : runIn(s, mode, id, "current");
             if (mode === null || run === null) return [{ changed: false, command: null }, [], s];
-            const event: RunEvent = { _tag: "Ended", code };
+            const code = exitCodeOfEnding(ending);
+            const abandoned = ending._tag === "Abandoned" ? ending.label : null;
+            const event: RunEvent = { _tag: "Ended", code, ending };
             const moved = withSlot(s, mode, endedIn(mode, s.runs[mode], id, (r) => ({ ...r, events: [...r.events, { time, event }] })));
             const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root, parked, abandoned });
             return [{ changed: chain !== s.chain, command }, [{ _tag: "event", run: id, seq: run.events.length, time, event }, ...chainChange(s.chain, chain)], { ...moved, chain }];
@@ -610,7 +635,7 @@ export const makeRunManager = (
         // Issue #147: the run's records directory once allocated, which the chain needs at the run's end, however it ends.
         const allocated = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
         // W2-R1-1 of issue #192: the code the program computed, which a Stop task during its uninterruptible ending
-        // cannot overrule; a run ended before its records or by a defect leaves it empty, and exitCodeOf decides.
+        // cannot overrule; a run ended by a defect leaves it empty, and endingOfExit decides (issue #44).
         const concluded = yield* Ref.make(Option.none<Conclusion>());
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))), answerTimingOf(mode, seconds, idRef), (event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => emitOutput(rid, event))), allocateWait);
         // Issue #192: a halted run asks the chain to park its leftovers in one serialized step, so the program's choice
@@ -640,13 +665,12 @@ export const makeRunManager = (
               Effect.onExit((exit: Exit.Exit<number>) =>
                 Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault), Ref.get(allocated), Ref.get(concluded)]).pipe(
                   Effect.flatMap(([rid, faulted, root, conclusion]) =>
-                    end(
-                      rid,
-                      faulted ? 1 : Option.getOrElse(Option.map(conclusion, (c) => c.code), () => exitCodeOf(exit)),
-                      Option.getOrNull(root),
-                      Option.getOrNull(Option.map(conclusion, (c) => c.parked)),
-                      Option.getOrNull(Option.map(conclusion, (c) => c.abandoned)),
-                    ),
+                    Effect.gen(function* () {
+                      const records = recordsOf(root);
+                      const fault = faulted ? Option.some(yield* Effect.flip(Deferred.await(signal.fault))) : Option.none<ServerFault>();
+                      const ending = endingOfExit(exit, Option.getOrNull(conclusion), Option.getOrNull(fault), records);
+                      yield* end(rid, ending, Option.getOrNull(root), Option.getOrNull(Option.map(conclusion, (c) => c.parked)));
+                    }),
                   ),
                 ),
               ),
@@ -678,7 +702,7 @@ export const makeRunManager = (
               // Issue #196: a started item leaves the queue, manual or chained, the mode on or off.
               const kept = mode === "implementation" ? consumed(s.chain, item.id) : s.chain;
               const chain = mode !== "implementation" ? s.chain : origin._tag === "chain" ? chainStarted(kept, origin.generation, id, item.id, item.title) : begun(kept, id, item.id, item.title);
-              const next = withSlot({ ...s, nextId: id + 1, chain }, mode, reserved(mode, s.runs[mode], { id, item: item.id, events: [], ui, fiber, shared: emptyUiState, signal }));
+              const next = withSlot({ ...s, nextId: id + 1, chain }, mode, reserved(mode, s.runs[mode], { id, item: item.id, events: [], ui, fiber, shared: emptyUiState, signal, allocated }));
               return [{ id, consumed: kept !== s.chain }, chainChange(s.chain, chain), next];
             });
             if (typeof reservation === "string") {
@@ -750,7 +774,7 @@ export const makeRunManager = (
         const interrupted = yield* Effect.forEach(late, within(bounds.interruptMs), { concurrency: "unbounded" });
         const stuck = late.filter((_, i) => !interrupted[i]);
         // Every tab sees a stuck run ended; its own onExit, if it ever comes, then finds no run to end.
-        yield* Effect.forEach(stuck, (r) => end(r.id, 1), { discard: true });
+        yield* Effect.forEach(stuck, (r) => Effect.flatMap(Ref.get(r.allocated), (root) => end(r.id, stuckEnding(message, recordsOf(root)))), { discard: true });
         // A run is halted only when it ended and its record was written (P2-R1-1); read once its fiber ended.
         const recorded = yield* Effect.forEach(runs, (r) => (stuck.includes(r) ? Effect.succeed(false) : Deferred.isDone(r.signal.recorded)));
         return { halted: runs.filter((_, i) => recorded[i]).map((r) => r.id), unconfirmed: runs.filter((_, i) => !recorded[i]).map((r) => r.id) };

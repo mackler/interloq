@@ -4,11 +4,12 @@
 // variant is at once the reason and what the title marker and the favicon badge show; the interrupt to fire now (a
 // desktop notification, a sound) exists only inside the variant of its reason. Firing it is an edge (web/src/alerts.ts).
 
+import { type Ending, endingAlerts } from "../../src/ending.ts";
 import { type DraftKey, sameKey } from "./draft.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import {
   endedTabName,
-  endMarkOf,
+  endingMarkOf,
   LIMIT_PAUSED_MARK,
   limitPauseText,
   RUN_WAITING_TEXT,
@@ -30,7 +31,7 @@ export const defaultPreferences: Preferences = { desktop: "off", sound: "off" };
 export type Permission = "default" | "granted" | "denied" | "unsupported";
 
 /**
- * What the page observes: the pending prompt's key, the shown run and its exit code (null while it runs), whether the
+ * What the page observes: the pending prompt's key, the shown run and its ending (null while it runs; issue #44), whether the
  * document is visible, whether the prompt is on screen (not the conversation chosen instead), and (issue #209) whether
  * the run is the one the selected primary tab's second row shows, whatever the document's visibility.
  */
@@ -39,7 +40,7 @@ export type Observation = Readonly<{
   /** Issue #139: the shown run's usage-limit wait while it runs, null otherwise. */
   limit: LimitPause | null;
   run: RunKey | null;
-  ended: number | null;
+  ended: Ending | null;
   visible: boolean;
   promptShown: boolean;
   onScreen: boolean;
@@ -70,28 +71,30 @@ export type Activity = Readonly<{ _tag: "None" }> | Readonly<{ _tag: "Running" }
 export type Decision =
   | Readonly<{ _tag: "Idle"; state: NotifyState; activity: Activity }>
   | Readonly<{ _tag: "Waiting"; state: NotifyState; key: DraftKey; raise: Interrupt | null }>
-  | Readonly<{ _tag: "Ended"; state: NotifyState; key: RunKey; code: number; raise: Interrupt | null }>;
+  | Readonly<{ _tag: "Ended"; state: NotifyState; key: RunKey; ending: Ending; raise: Interrupt | null }>;
 
 /**
  * What a run's tab, the title marker and the favicon badge show, derived from a decision and never stored (issue #139:
- * five states). Finished is `Ended` with code 0, halted `Ended` with any other code, as `endMarkOf` divides them.
+ * five states). Issue #44: an `Ended` mark carries the run's ending, whose own glyph it shows (`endingMarkOf`).
  */
 export type Mark =
   | Readonly<{ _tag: "Clear" }>
   | Readonly<{ _tag: "Running" }>
   | Readonly<{ _tag: "LimitPaused"; pause: LimitPause }>
   | Readonly<{ _tag: "Waiting" }>
-  | Readonly<{ _tag: "Ended"; code: number }>;
+  | Readonly<{ _tag: "Ended"; ending: Ending }>;
 
 const activityMark = (activity: Activity): Mark =>
   activity._tag === "None" ? { _tag: "Clear" } : activity._tag === "Running" ? { _tag: "Running" } : { _tag: "LimitPaused", pause: activity.pause };
 
 export const markOf = (decision: Decision): Mark =>
-  decision._tag === "Idle" ? activityMark(decision.activity) : decision._tag === "Waiting" ? { _tag: "Waiting" } : { _tag: "Ended", code: decision.code };
+  decision._tag === "Idle" ? activityMark(decision.activity) : decision._tag === "Waiting" ? { _tag: "Waiting" } : { _tag: "Ended", ending: decision.ending };
 
 /**
- * Issue #139: the precedence of the marks when several runs share one tab, title or icon: Waiting 5 > halted (`Ended`,
- * code not 0) 4 > finished (`Ended` 0) 3 > `LimitPaused` 2 > `Running` 1 > `Clear` 0.
+ * Issue #139: the precedence of the marks when several runs share one tab, title or icon: Waiting 5 > halted (`Ended`
+ * whose ending alerts) 4 > any other end 3 > `LimitPaused` 2 > `Running` 1 > `Clear` 0. Issue #44: an abandonment
+ * alerts as a halt does, since no answer came and the user has to look; a send-back, an interruption and an end not
+ * established rank with a completion, since none says that something went wrong which the user did not already know.
  * Waiting is first because it is the only state whose meaning expires: in a chain a question counts down and an
  * unanswered one abandons the run (issue #185), while a halt is final and its mark stays until the run is seen (issue
  * #209), so being outranked delays it and loses nothing; it also keeps issue #16's order. Halted outranks every report
@@ -109,7 +112,7 @@ export const markRank = (mark: Mark): number => {
     case "LimitPaused":
       return 2;
     case "Ended":
-      return mark.code === 0 ? 3 : 4;
+      return endingAlerts(mark.ending) ? 4 : 3;
     case "Waiting":
       return 5;
   }
@@ -131,7 +134,7 @@ export const markGlyph = (mark: Mark): string | null => {
     case "Waiting":
       return TITLE_WAITING_MARK;
     case "Ended":
-      return endMarkOf(mark.code);
+      return endingMarkOf(mark.ending);
   }
 };
 
@@ -149,7 +152,7 @@ export const markedTabName = (name: string, mark: Mark): string => {
     case "Waiting":
       return waitingTabName(name);
     case "Ended":
-      return endedTabName(name, mark.code);
+      return endedTabName(name, mark.ending);
   }
 };
 
@@ -165,7 +168,7 @@ export const markStateText = (mark: Mark): string | null => {
     case "Waiting":
       return RUN_WAITING_TEXT;
     case "Ended":
-      return runEndedText(mark.code);
+      return runEndedText(mark.ending);
   }
 };
 
@@ -203,7 +206,7 @@ export const decide = (state: NotifyState, observed: Observation): Decision => {
     const raise = fresh ? interruptOf(observed.visible && observed.promptShown, observed) : null;
     return { _tag: "Waiting", state: { ...next, prompt: observed.pending }, key: observed.pending, raise };
   }
-  if (endMark !== null && observed.ended !== null) return { _tag: "Ended", state: next, key: endMark, code: observed.ended, raise: raisedEnd ? interruptOf(false, observed) : null };
+  if (endMark !== null && observed.ended !== null) return { _tag: "Ended", state: next, key: endMark, ending: observed.ended, raise: raisedEnd ? interruptOf(false, observed) : null };
   const activity: Activity = run === null || observed.ended !== null ? { _tag: "None" } : observed.limit !== null ? { _tag: "LimitPaused", pause: observed.limit } : { _tag: "Running" };
   return { _tag: "Idle", state: next, activity };
 };

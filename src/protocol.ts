@@ -2,6 +2,7 @@
 // the same way. Pure: no Node import (the browser imports this module).
 
 import { FigureSchema } from "./figure.ts";
+import { type Ending, EndingSchema, UNESTABLISHED } from "./ending.ts";
 import { Effect, Option, Result, Schema } from "effect";
 import { type PreparationMark, PreparationMarkSchema, type PreparationView, PreparationViewSchema } from "./preparationSwitch.ts";
 import * as S from "./schema.ts";
@@ -79,7 +80,8 @@ export type RunEvent =
    */
   | Readonly<{ _tag: "PromptClosed"; prompt: number }>
   | Readonly<{ _tag: "Notified"; event: UiEvent }>
-  | Readonly<{ _tag: "Ended"; code: number }>;
+  /** Issue #44: the run's ending as the program concluded it, its exit code derived from it. */
+  | Readonly<{ _tag: "Ended"; code: number; ending: Ending }>;
 /**
  * An event with the time of its publication (issue #1), an ISO string read from the Clock where the event gets its
  * seq. seq is the order; the times of events published concurrently may differ slightly in order from their seq.
@@ -315,7 +317,8 @@ export const RunEventSchema = Schema.Union([
   tagged("PromptWithdrawn", { prompt: Int }),
   tagged("PromptClosed", { prompt: Int }),
   tagged("Notified", { event: UiEventSchema }),
-  tagged("Ended", { code: Int }),
+  // Issue #44: an Ended recorded before the ending was kept decodes as not established (G-R1-1).
+  tagged("Ended", { code: Int, ending: EndingSchema.pipe(Schema.withDecodingDefaultKey(Effect.succeed(UNESTABLISHED))) }),
 ]);
 export const StampedSchema = Schema.Struct({ time: Str, event: RunEventSchema });
 const RunRecordSchema = Schema.Struct({ id: Int, events: Schema.Array(StampedSchema) });

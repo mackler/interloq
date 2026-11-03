@@ -2,7 +2,8 @@
 // in any page of the test's context fails the test, the second tab of a scenario included.
 
 import { test as base, expect, type Page } from "@playwright/test";
-import { endedOutcome, LIST_TAB, runTabsLabel, TAB_TEXTS } from "../src/prompts.ts";
+import type { Ending } from "../src/ending.ts";
+import { LIST_TAB, runTabsLabel, TAB_TEXTS } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 
 export const test = base.extend<{ pageErrors: string[] }>({
@@ -27,8 +28,8 @@ export { expect };
 // Issue #22: the "You and Interloq" panel is a dashboard, and a run's end is its ended line.
 /** The dashboard, the region named "You and Interloq"; its compact form under a question has a name of its own. */
 export const dashboard = (page: Page) => page.locator(`section[aria-label="You and Interloq"]`);
-/** Waits for the run's ended line, `This task has ended (<outcome>).`, with the outcome of its exit code. */
-export const toHaveEnded = (page: Page, code: number) => expect(page.getByText(`This task has ended (${endedOutcome(code)}).`, { exact: true })).toBeVisible();
+/** Issue #44: waits for the run's ended line, the status region of its ending, by the ending's kind (never an exit code). */
+export const toHaveEnded = (page: Page, tag: Ending["_tag"]) => expect(page.locator(`[role=status][data-ending="${tag}"]`)).toBeVisible();
 
 // Issue #120: a run is started from an item of a tab's list; there is no form.
 /** The label of a mode's tab, whose radio input m3-svelte's Tabs hides. */

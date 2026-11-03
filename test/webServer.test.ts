@@ -273,7 +273,7 @@ test("a connection kept open across two runs receives run 2 from its Started, wi
     assert.deepEqual(timesOf(late), timesOf(a));
     assert.ok(atConnect > 0 && timesOf(late).length > atConnect, "run 1 reached the late tab both by replay and live");
     const ended1 = (perRun(a).get(1) ?? []).find((e) => e.event._tag === "Ended")?.event;
-    assert.deepEqual(ended1, { _tag: "Ended", code: 130 });
+    assert.deepEqual(ended1, { _tag: "Ended", code: 130, ending: { _tag: "Interrupted", park: null, item: { _tag: "Returned" } } });
     a.close();
     late.close();
   });
@@ -764,7 +764,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
     const retry = events.find((e) => e._tag === "Notified" && e.event._tag === "TransportRetrying");
     assert.ok(retry !== undefined && retry._tag === "Notified" && retry.event._tag === "TransportRetrying" && retry.event.agent === "codex", "the Codex turn was retried");
     assert.match(retry.event.fault, /EPIPE/);
-    assert.deepEqual(events.find((e) => e._tag === "Ended"), { _tag: "Ended", code: 0 });
+    assert.deepEqual(events.find((e) => e._tag === "Ended"), { _tag: "Ended", code: 0, ending: { _tag: "Completed", work: { _tag: "Refined" } } });
     a.close();
     assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
     const b = await connect(port);

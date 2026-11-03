@@ -1,3 +1,4 @@
+import type { Ending } from "../src/ending.ts";
 import type { Locator, Page, WebSocketRoute } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
 import { phaseName } from "../src/uiEvents.ts";
@@ -69,7 +70,7 @@ test.describe("the tests of the converge server, in order", () => {
     await expect(rail(page).getByText("Code review", { exact: true })).toBeVisible();
     await expect(right(page).getByText("The step names no file.")).toBeVisible();
     await expect(right(page).getByText(/accepted: rationale P1-R1-1/)).toBeVisible();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
     // Issues #14 and #28: a finished loop is one line with what its cycles resolved, and no limit is shown.
     await expect(rail(page).getByText(loopSummary(2, 1, "converged"), { exact: true })).toBeVisible();
     await expect(rail(page).getByText(loopSummary(1, 0, "converged"), { exact: true })).toBeVisible();
@@ -141,7 +142,7 @@ test.describe("the tests of the decision server, in order", () => {
     await expect(pane(page).locator("h2 .question-text")).toHaveText(DATABASE);
     await continueWithoutDeciding(page).click();
     await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]").getByText(CONTINUE_WITHOUT_DECIDING)).toBeVisible();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 
   test("(3) a reload during a run shows the same dashboard and the pending prompt", async ({ page }) => {
@@ -153,7 +154,7 @@ test.describe("the tests of the decision server, in order", () => {
     expect(await dashboard(page).textContent()).toEqual(before);
     await expect(continueWithoutDeciding(page)).toBeVisible();
     await continueWithoutDeciding(page).click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 
   test("(11) Enter while an input method is composing does not answer", async ({ page }) => {
@@ -166,7 +167,7 @@ test.describe("the tests of the decision server, in order", () => {
     await expect(page.locator("[data-last-answer]")).toHaveCount(0);
     await expect(field).toHaveValue("unfinished composition");
     await continueWithoutDeciding(page).click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 
   // S24, S25: q typed at a question asks for confirmation; confirmed, the run ends as interrupted, with exit code 130.
@@ -177,8 +178,8 @@ test.describe("the tests of the decision server, in order", () => {
     await page.locator("[name=answer]").press("Enter");
     await expect(page.locator("dialog[open]")).toContainText(confirmEndText("endRun"));
     await confirmEnd(page);
-    await toHaveEnded(page, 130);
-    await toHaveEnded(page, 130);
+    await toHaveEnded(page, "Interrupted");
+    await toHaveEnded(page, "Interrupted");
   });
   // Issue #16: a pause at a hidden tab marks the title, keeping the project, and raises one desktop notification; the
   // run's end there marks it again and notifies, and the tab seen clears the marker. The stub records and logs nothing.
@@ -208,9 +209,11 @@ test.describe("the tests of the decision server, in order", () => {
     await expect(page).toHaveTitle(tabTitle(repo, { _tag: "Waiting" }));
     expect(await shown()).toEqual([pauseNotificationTitle(name)]);
     await continueWithoutDeciding(page).click();
-    await toHaveEnded(page, 0);
-    await expect(page).toHaveTitle(tabTitle(repo, { _tag: "Ended", code: 0 }));
-    expect(await shown()).toEqual([pauseNotificationTitle(name), endNotificationTitle(name, 0)]);
+    await toHaveEnded(page, "Completed");
+    // Issue #44: the scenario's run completes with no suite command configured.
+    const completed: Ending = { _tag: "Completed", work: { _tag: "Implemented", finalCommands: [] } };
+    await expect(page).toHaveTitle(tabTitle(repo, { _tag: "Ended", ending: completed }));
+    expect(await shown()).toEqual([pauseNotificationTitle(name), endNotificationTitle(name, completed)]);
     await page.evaluate(() => {
       (window as unknown as { visibility: string }).visibility = "visible";
       document.dispatchEvent(new Event("visibilitychange"));
@@ -242,7 +245,7 @@ test.describe("the tests of the decision server, in order", () => {
     const light = await colors();
     expect(light.badge).toBe(light.error);
     await continueWithoutDeciding(page).click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 });
 
@@ -260,7 +263,7 @@ test.describe("the tests of the stop server, in order", () => {
     await expect(page.locator("button[name=stop]")).toBeEnabled();
     await page.locator("button[name=stop]").click();
     await confirmEnd(page);
-    await toHaveEnded(page, 130);
+    await toHaveEnded(page, "Interrupted");
     await expect(page.locator("button[name=stop]")).toBeDisabled();
     await page.locator("button[name=new]").click();
     await expect(listOf(page)).toBeVisible();
@@ -303,7 +306,7 @@ test.describe("the tests of the interview server, in order", () => {
     // Issue #138: the summary is written to requirements.md as it arrives, with no question; Claude Code's closing
     // message is its latest. Issue #120: a refinement run ends after the requirements review, its requirements
     // written back to its item.
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
     await expect(dashboard(page).locator("[data-claude]")).toContainText("That is all I need.");
     // Bring Up to Date then Gather Requirements (issue #216), as test (23) asserts.
     await expect(rail(page).locator("li.entry")).toHaveCount(2);
@@ -330,7 +333,7 @@ test.describe("the tests of the emptyQuestions server, in order", () => {
     await expect(listOf(page).locator(`button[name=start][data-item="${id}"]`)).toHaveCount(0);
     await tabOf(page, "refinement").click();
     await item.locator("button[name=start]").click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
     await expect(pane(page)).toHaveCount(0);
     // The rail holds Bring Up to Date then Gather Requirements (issue #216), both done, and no entry not reached, which would mean a halt.
     await expect(rail(page).locator("li.entry")).toHaveCount(2);
@@ -358,7 +361,7 @@ test.describe("the tests of the workCorrection server, in order", () => {
 
   test("(6) a work correction runs planning, execution and the work review a second time", async ({ page }) => {
     await startTask(page, "workCorrection");
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
     for (const phase of ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]) await expect(rail(page).getByText(phase, { exact: true })).toBeVisible();
     // Issue #14 (G-R1-1): the work review that led to the second planning phase names its corrections due.
     await expect(rail(page).getByText(loopSummary(1, 1, "revise"), { exact: true })).toBeVisible();
@@ -389,7 +392,7 @@ test.describe("the tests of the tabs server, in order", () => {
     await expect(other.locator("[name=answer]")).toHaveValue("");
     await expect(other.getByText(/answered in another tab; your unsent text was discarded: «an unsent answer»/)).toBeVisible();
     await continueWithoutDeciding(other).click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 
   // S34 (the stop of execution phase 5): test 7 once failed because startTask found a run left on the shared "tabs" server,
@@ -428,7 +431,7 @@ test.describe("the tests of the drop server, in order", () => {
     await expect(page.getByText("reconnecting…", { exact: true })).toBeVisible();
     await continueWithoutDeciding(page).click();
     hold = false;
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
     await expect(dashboard(page).locator("[data-answers-heading]")).toContainText(allAnswersHeading(1));
     await expect(dashboard(page).locator("[data-last-answer]").filter({ hasText: DATABASE })).toHaveCount(1);
     await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]")).toHaveText(CONTINUE_WITHOUT_DECIDING);
@@ -479,7 +482,7 @@ test.describe("the tests of the questionReview server, in order", () => {
     // Issue #138: the summary is written with no confirmation, and the requirements review follows.
     await expect(right(page).getByText(/Requirements review, cycle 1/)).toBeVisible();
     // Issue #120: a refinement run ends after the requirements review.
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 });
 
@@ -512,7 +515,7 @@ test.describe("the tests of the decide server, in order", () => {
     await option(page, /PostgreSQL/).click();
     await expect(analysis).toBeHidden();
     await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]").getByText("PostgreSQL — a database server")).toBeVisible();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 
   // Issue #87 (decision G-R1-1): two tabs of one run show the same entries open; the state survives a reload, and the
@@ -559,7 +562,7 @@ test.describe("the tests of the decide server, in order", () => {
     }
     await other.close();
     await option(page, /PostgreSQL/).click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 });
 
@@ -584,7 +587,7 @@ test.describe("the tests of the decideWait server, in order", () => {
     await expect(page.getByRole("tooltip")).toContainText("The program this task builds.");
     await option(page, /PostgreSQL/).click();
     await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]").getByText("PostgreSQL — a database server")).toBeVisible();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
     await expect(page.getByRole("region", { name: DECISION_REGION })).toHaveCount(0);
   });
 });
@@ -605,7 +608,7 @@ test.describe("the tests of the decideRevise server, in order", () => {
     await expect(right(page).getByText(/D1-R1-1/).first()).toBeVisible();
     await page.getByRole("button", { name: SHOW_QUESTION }).click();
     await option(page, /SQLite/).click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 });
 
@@ -636,7 +639,7 @@ test.describe("the tests of the decideBlank server, in order", () => {
     await option(page, /1\. PostgreSQL/).click();
     await expect(analysis).toBeHidden();
     // Issue #120: a refinement run ends after the requirements review.
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
     // Once the run has ended the full dashboard is shown, and its count includes the refused empty reply
     // (Help me decide, the empty reply, PostgreSQL).
     await expect(page.locator("[data-answers-heading]:visible")).toContainText(allAnswersHeading(3));
@@ -749,7 +752,7 @@ test.describe("the tests of the transportRetry server, in order", () => {
     await expect(dashboard(page).locator("[data-status]")).toContainText("retry 1 of 3");
     // Issue #63: while the program waits to retry, the determinate indicator counts the known wait down.
     await expect(page.locator("[data-retry-wait] [role=progressbar]")).toHaveAttribute("aria-valuenow", /^\d+$/);
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 });
 
@@ -762,7 +765,7 @@ test.describe("the tests of the unchangedPause server, in order", () => {
     await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]").getByText(UNCHANGED_PROCEED)).toBeVisible();
     // Issue #19: the pause reached the user as prose; the dashboard's answer holds no JSON of the records.
     await expect(dashboard(page).getByText(/"duplicate_of"|\{\s*"/)).toHaveCount(0);
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 });
 
@@ -789,7 +792,7 @@ test.describe("the tests of the longQuestion server, in order", () => {
     await plural.hover();
     await expect(page.getByRole("tooltip")).toContainText("The database of this task");
     await continueWithoutDeciding(page).click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 
   // S42 (W2-R1-5, P3-R1-3): Tab enters a term's tooltip, the keyboard scrolls it, the next Tab reaches the next term, and
@@ -832,7 +835,7 @@ test.describe("the tests of the longQuestion server, in order", () => {
     await expect(asking(page, DATABASE)).toBeVisible();
     await expect(page.locator("[data-last-answer]")).toHaveCount(0);
     await continueWithoutDeciding(page).click();
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 });
 
@@ -869,7 +872,7 @@ test.describe("the tests of the twoModes server, in order", () => {
     // The implementation's question is answered in its tab; the refinement's still waits.
     await pane(page).locator("input[name=answer], textarea[name=answer]").fill("PostgreSQL");
     await pane(page).locator("input[name=answer], textarea[name=answer]").press("Enter");
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
     await expect(tabOf(page, "refinement")).toHaveText(waitingTabName(TAB_TEXTS.refinement.tab));
     await expect(tabOf(page, "implementation")).toHaveText(TAB_TEXTS.implementation.tab);
     await tabOf(page, "refinement").click();
@@ -879,7 +882,7 @@ test.describe("the tests of the twoModes server, in order", () => {
     await expect(pane(page).getByText("Anything else?")).toBeVisible();
     await page.locator("button[name=stop]").click();
     await confirmEnd(page);
-    await toHaveEnded(page, 130);
+    await toHaveEnded(page, "Interrupted");
   });
 
   // Issue #191 (requirements Q1 and Q2): two refinements at once, each waiting in its own tab of the second row.
@@ -919,7 +922,7 @@ test.describe("the tests of the twoModes server, in order", () => {
       await runTabOf(page, item).click();
       await page.locator("button[name=stop]").click();
       await confirmEnd(page);
-      await toHaveEnded(page, 130);
+      await toHaveEnded(page, "Interrupted");
     }
     await page.getByRole("button", { name: CLOSE_RUN_TAB }).click();
     await expect(listOf(page)).toBeVisible();
@@ -962,7 +965,9 @@ test.describe("the tests of the twoModes server, in order", () => {
     const second = await startNext();
     await expect(asking(page, DATABASE)).toBeVisible();
     const repo = (await page.locator("header .location").textContent())!.trim();
-    const ended = endNotificationTitle(ownName(repo), 130);
+    // Issue #44: a stopped refinement concludes Interrupted, with no parking and no item return.
+    const interrupted: Ending = { _tag: "Interrupted", park: null, item: null };
+    const ended = endNotificationTitle(ownName(repo), interrupted);
     const other = await page.context().newPage();
     await other.goto(url("twoModes"));
     await expect(other.getByText("connected", { exact: true })).toBeVisible();
@@ -971,19 +976,19 @@ test.describe("the tests of the twoModes server, in order", () => {
     await expect(asking(other, DATABASE)).toBeVisible();
     await other.locator("button[name=stop]").click();
     await confirmEnd(other);
-    await toHaveEnded(other, 130);
+    await toHaveEnded(other, "Interrupted");
     await other.close();
     const shown = () => page.evaluate(() => (window as unknown as { shown: string[] }).shown);
     await expect.poll(async () => (await shown()).filter((t) => t === ended)).toHaveLength(1);
-    await expect(runTabOf(page, first)).toHaveText(new RegExp(`^\\s*${endedTabName("", 130)}`));
+    await expect(runTabOf(page, first)).toHaveText(new RegExp(`^\\s*${endedTabName("", interrupted)}`));
     await expect(page).toHaveTitle(tabTitle(repo, { _tag: "Waiting" }));
     await runTabOf(page, first).click();
-    await expect(runTabOf(page, first)).not.toHaveText(new RegExp(`^\\s*${endedTabName("", 130)}`));
+    await expect(runTabOf(page, first)).not.toHaveText(new RegExp(`^\\s*${endedTabName("", interrupted)}`));
     expect((await shown()).filter((t) => t === ended)).toHaveLength(1);
     await runTabOf(page, second).click();
     await page.locator("button[name=stop]").click();
     await confirmEnd(page);
-    await toHaveEnded(page, 130);
+    await toHaveEnded(page, "Interrupted");
   });
 
   // Issue #144: the Implementation tab's list is reachable while its run is in progress, and the run's tab returns to it.
@@ -1000,7 +1005,7 @@ test.describe("the tests of the twoModes server, in order", () => {
     await expect(asking(page, DATABASE)).toBeVisible();
     await page.locator("button[name=stop]").click();
     await confirmEnd(page);
-    await toHaveEnded(page, 130);
+    await toHaveEnded(page, "Interrupted");
   });
 });
 
@@ -1120,7 +1125,7 @@ test.describe("the tests of the termsWait server, in order", () => {
     await field.fill("");
     await option(page, /PostgreSQL/).click();
     await expect(dashboard(page).locator("[data-last-answer]")).toContainText("PostgreSQL");
-    await toHaveEnded(page, 0);
+    await toHaveEnded(page, "Completed");
   });
 });
 
@@ -1139,6 +1144,6 @@ test.describe("the tests of the tabStates server, in order", () => {
     await implementation.click();
     await page.locator("button[name=stop]").click();
     await confirmEnd(page);
-    await toHaveEnded(page, 130);
+    await toHaveEnded(page, "Interrupted");
   });
 });

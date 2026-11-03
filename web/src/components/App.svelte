@@ -29,9 +29,10 @@
   // absent while the decision page spans both panels.
   import { Button, ConnectedButtons } from "m3-svelte";
   import ScrollableTabs from "./ScrollableTabs.svelte";
+  import EndedLine from "./EndedLine.svelte";
   import ModeTabs from "./ModeTabs.svelte";
   import { untrack } from "svelte";
-  import { BACK_TO_LIST, CLOSE_RUN_TAB, PANEL_SPLIT_LABEL, panelSplitText, RAIL_WIDTH_LABEL, railWidthText, runTabsLabel, TAB_TEXTS, TABS_LABEL, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
+  import { BACK_TO_LIST, CLOSE_RUN_TAB, PANEL_SPLIT_LABEL, panelSplitText, RAIL_WIDTH_LABEL, railWidthText, runTabsLabel, TAB_TEXTS, TABS_LABEL, CONNECTION_FAILED_NOTICE, endNotificationBody, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
@@ -437,7 +438,7 @@
     }
     if (decision._tag === "Idle" || decision.raise === null || reason === null) return;
     const name = ownName(view.location ?? "");
-    const [title, body] = decision._tag === "Waiting" ? [pauseNotificationTitle(name), PAUSE_NOTIFICATION_BODY] : [endNotificationTitle(name, decision.code), ""];
+    const [title, body] = decision._tag === "Waiting" ? [pauseNotificationTitle(name), PAUSE_NOTIFICATION_BODY] : [endNotificationTitle(name, decision.ending), endNotificationBody(decision.ending)];
     if (decision.raise === "desktop" || decision.raise === "desktopAndSound") {
       closers[m] = showDesktop(title, body, reason);
       shownFor[m] = reason;
@@ -597,7 +598,7 @@
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}
           <div class="ended">
-            <span class="m3-font-body-medium">This task has ended ({endedOutcome(run.ended)}).</span>
+            <EndedLine ending={run.ended} />
             <span class="ended-actions">
               {#if mode === "refinement"}<Button variant="text" type="button" name="close" onclick={() => closeRunTab(run.id)}>{CLOSE_RUN_TAB}</Button>{/if}
               <Button variant="filled" type="button" name="new" onclick={backToList}>{BACK_TO_LIST}</Button>

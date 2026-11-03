@@ -1,3 +1,5 @@
+import { ABANDONED, COMPLETED, ENDINGS, HALTED, INTERRUPTED, SENT_BACK_PARKED, UNESTABLISHED_ENDING, endedMark } from "../../test/endingFixtures.ts";
+import { arbEnding } from "../../test/endingArbitraries.ts";
 import { PREPARATION_VIEW_OFF } from "../../src/preparationSwitch.ts";
 import { describe, expect, test } from "vitest";
 import fc from "fast-check";
@@ -42,7 +44,7 @@ const raiseOf = (d: Decision): string | null => (d._tag === "Idle" ? null : d.ra
 const step = fc.record({
   bump: fc.constantFrom(0, 0, 1, 1, 2, 3),
   pending: fc.boolean(),
-  ended: fc.option(fc.constantFrom(0, 1, 130), { nil: null }),
+  ended: fc.option(fc.constantFrom(COMPLETED, HALTED, INTERRUPTED, SENT_BACK_PARKED), { nil: null }),
   visible: fc.boolean(),
   promptShown: fc.boolean(),
   onScreen: fc.boolean(),
@@ -114,7 +116,7 @@ describe("decide: properties", () => {
         foldDecisions(os).forEach((d, i) => {
           expect(d._tag === "Waiting").toBe(os[i]!.pending !== null);
           const idle = (a: typeof d & { _tag: "Idle" }): Mark => (a.activity._tag === "None" ? { _tag: "Clear" } : a.activity._tag === "Running" ? { _tag: "Running" } : { _tag: "LimitPaused", pause: a.activity.pause });
-          expect(markOf(d)).toEqual(d._tag === "Idle" ? idle(d) : d._tag === "Waiting" ? { _tag: "Waiting" } : { _tag: "Ended", code: d.code });
+          expect(markOf(d)).toEqual(d._tag === "Idle" ? idle(d) : d._tag === "Waiting" ? { _tag: "Waiting" } : { _tag: "Ended", ending: d.ending });
         });
       }),
       { numRuns: NUM_RUNS },
@@ -184,22 +186,22 @@ describe("decide: examples", () => {
   });
 
   test("a watched run's end at a hidden tab is Ended until seen on screen, or another run", () => {
-    const ended = foldDecisions([observation({}), observation({ ended: 0 })]);
-    expect(last(ended)).toMatchObject({ _tag: "Ended", key: RUN, code: 0, raise: "desktopAndSound" });
-    expect(markOf(last(ended))).toEqual({ _tag: "Ended", code: 0 });
+    const ended = foldDecisions([observation({}), observation({ ended: COMPLETED })]);
+    expect(last(ended)).toMatchObject({ _tag: "Ended", key: RUN, ending: COMPLETED, raise: "desktopAndSound" });
+    expect(markOf(last(ended))).toEqual(endedMark(COMPLETED));
     const state = last(ended).state;
-    expect(decide(state, observation({ ended: 0 }))).toMatchObject({ _tag: "Ended", raise: null });
-    expect(decide(state, observation({ ended: 0, visible: true }))._tag).toBe("Idle");
-    expect(decide(state, observation({ ended: 0, onScreen: false }))).toMatchObject({ _tag: "Ended", raise: null });
+    expect(decide(state, observation({ ended: COMPLETED }))).toMatchObject({ _tag: "Ended", raise: null });
+    expect(decide(state, observation({ ended: COMPLETED, visible: true }))._tag).toBe("Idle");
+    expect(decide(state, observation({ ended: COMPLETED, onScreen: false }))).toMatchObject({ _tag: "Ended", raise: null });
     expect(decide(state, observation({ run: { incarnation: "a", run: 2 } }))._tag).toBe("Idle");
   });
 
   test("a page whose first observation is an ended run alerts nothing", () => {
-    expect(decide(initialNotifyState, observation({ ended: 0 }))).toEqual({ _tag: "Idle", state: expect.anything(), activity: { _tag: "None" } });
+    expect(decide(initialNotifyState, observation({ ended: COMPLETED }))).toEqual({ _tag: "Idle", state: expect.anything(), activity: { _tag: "None" } });
   });
 
   test("a run that ends on screen in a visible page is seen at once: Idle, and still Idle when hidden or left later", () => {
-    const ds = foldDecisions([observation({ visible: true }), observation({ ended: 0, visible: true }), observation({ ended: 0, visible: false }), observation({ ended: 0, visible: true, onScreen: false })]);
+    const ds = foldDecisions([observation({ visible: true }), observation({ ended: COMPLETED, visible: true }), observation({ ended: COMPLETED, visible: false }), observation({ ended: COMPLETED, visible: true, onScreen: false })]);
     expect(ds.slice(1).map((d) => d._tag)).toEqual(["Idle", "Idle", "Idle"]);
     expect(ds.map(raiseOf)).toEqual([null, null, null, null]);
   });
@@ -208,32 +210,32 @@ describe("decide: examples", () => {
   test("a run that ends off screen in a visible page raises once and is Ended until shown", () => {
     const ds = foldDecisions([
       observation({ visible: true, onScreen: false }),
-      observation({ ended: 130, visible: true, onScreen: false }),
-      observation({ ended: 130, visible: true, onScreen: false }),
-      observation({ ended: 130, visible: false, onScreen: true }),
-      observation({ ended: 130, visible: true, onScreen: true }),
-      observation({ ended: 130, visible: true, onScreen: false }),
+      observation({ ended: INTERRUPTED, visible: true, onScreen: false }),
+      observation({ ended: INTERRUPTED, visible: true, onScreen: false }),
+      observation({ ended: INTERRUPTED, visible: false, onScreen: true }),
+      observation({ ended: INTERRUPTED, visible: true, onScreen: true }),
+      observation({ ended: INTERRUPTED, visible: true, onScreen: false }),
     ]);
-    expect(ds[1]).toMatchObject({ _tag: "Ended", key: RUN, code: 130, raise: "desktopAndSound" });
-    expect(markOf(ds[1]!)).toEqual({ _tag: "Ended", code: 130 });
+    expect(ds[1]).toMatchObject({ _tag: "Ended", key: RUN, ending: INTERRUPTED, raise: "desktopAndSound" });
+    expect(markOf(ds[1]!)).toEqual(endedMark(INTERRUPTED));
     expect(ds[2]).toMatchObject({ _tag: "Ended", raise: null });
     expect(ds[3]).toMatchObject({ _tag: "Ended", raise: null });
     expect(ds[4]!._tag).toBe("Idle");
     expect(ds[5]!._tag).toBe("Idle");
   });
 
-  test("an end's code is carried, halted and abandoned alike", () => {
-    for (const code of [1, 2]) {
-      const ds = foldDecisions([observation({ onScreen: false, visible: true }), observation({ ended: code, onScreen: false, visible: true })]);
-      expect(last(ds)).toMatchObject({ _tag: "Ended", code });
+  test("an end's ending is carried, halted, abandoned and sent back alike", () => {
+    for (const ending of [HALTED, ABANDONED, SENT_BACK_PARKED]) {
+      const ds = foldDecisions([observation({ onScreen: false, visible: true }), observation({ ended: ending, onScreen: false, visible: true })]);
+      expect(last(ds)).toMatchObject({ _tag: "Ended", ending });
     }
   });
 
   test("property: an end raises once exactly when its first ended observation is not on screen in a visible page, and is Ended until it is", () => {
     const seenArb = fc.array(fc.record({ visible: fc.boolean(), onScreen: fc.boolean() }), { minLength: 1, maxLength: 8 });
     fc.assert(
-      fc.property(fc.constantFrom(0, 1, 2, 130), seenArb, (code, views) => {
-        const ds = foldDecisions([observation({}), ...views.map((v) => observation({ ...v, ended: code }))]).slice(1);
+      fc.property(fc.constantFrom(COMPLETED, HALTED, ABANDONED, INTERRUPTED, SENT_BACK_PARKED), seenArb, (ending, views) => {
+        const ds = foldDecisions([observation({}), ...views.map((v) => observation({ ...v, ended: ending }))]).slice(1);
         const seen = (v: { visible: boolean; onScreen: boolean }) => v.visible && v.onScreen;
         const raised = ds.filter((d) => raiseOf(d) !== null);
         expect(raised.length).toBe(seen(views[0]!) ? 0 : 1);
@@ -266,7 +268,7 @@ const markArb = fc.oneof(
   fc.constant<Mark>({ _tag: "Running" }),
   fc.record({ fromMs: fc.nat(), untilMs: fc.nat(), known: fc.boolean() }).map((pause): Mark => ({ _tag: "LimitPaused", pause })),
   fc.constant<Mark>({ _tag: "Waiting" }),
-  fc.integer({ min: 0, max: 255 }).map((code): Mark => ({ _tag: "Ended", code })),
+  arbEnding.map((ending): Mark => ({ _tag: "Ended", ending })),
 );
 describe("combinedMark", () => {
   test("property: an element of maximal rank, the first such, Clear for none", () => {
@@ -287,15 +289,20 @@ describe("combinedMark", () => {
     const clear: Mark = { _tag: "Clear" };
     const running: Mark = { _tag: "Running" };
     const paused: Mark = { _tag: "LimitPaused", pause: PAUSE };
-    const finished: Mark = { _tag: "Ended", code: 0 };
-    const halted: Mark = { _tag: "Ended", code: 1 };
+    const finished: Mark = endedMark(COMPLETED);
+    const halted: Mark = endedMark(HALTED);
     const waiting: Mark = { _tag: "Waiting" };
     expect(combinedMark([clear, running])).toBe(running);
     expect(combinedMark([running, paused])).toBe(paused);
     expect(combinedMark([paused, finished])).toBe(finished);
     expect(combinedMark([finished, halted])).toBe(halted);
     expect(combinedMark([halted, waiting])).toBe(waiting);
-    expect(combinedMark([{ _tag: "Ended", code: 130 }, finished])).toEqual({ _tag: "Ended", code: 130 });
+    expect(combinedMark([endedMark(INTERRUPTED), finished])).toEqual(endedMark(INTERRUPTED));
+    // Issue #44: a send-back is no alert and ranks below a halt; an abandonment ranks with a halt.
+    expect(markGlyph(endedMark(SENT_BACK_PARKED))).toBe("↩");
+    expect(markRank(endedMark(SENT_BACK_PARKED))).toBeLessThan(markRank(halted));
+    expect(markRank(endedMark(ABANDONED))).toBe(markRank(halted));
+    expect(markRank(endedMark(UNESTABLISHED_ENDING))).toBe(markRank(finished));
     expect(combinedMark([])).toEqual(clear);
   });
 });
@@ -310,28 +317,28 @@ describe("decide: the activity of a run in progress (issue #139)", () => {
   });
   test("waiting wins over a pending limit; an end wins over activity; a seen end is none", () => {
     expect(decide(initialNotifyState, observation({ pending: KEY, limit: PAUSE }))._tag).toBe("Waiting");
-    const ended = foldDecisions([observation({}), observation({ ended: 1 })]);
+    const ended = foldDecisions([observation({}), observation({ ended: HALTED })]);
     expect(last(ended)._tag).toBe("Ended");
-    const seen = decide(last(ended).state, observation({ ended: 1, visible: true }));
+    const seen = decide(last(ended).state, observation({ ended: HALTED, visible: true }));
     expect(seen).toMatchObject({ _tag: "Idle", activity: { _tag: "None" } });
     expect(markOf(seen)).toEqual({ _tag: "Clear" });
   });
 });
 
 describe("the glyphs and words of the marks (issue #139)", () => {
-  const all: Mark[] = [{ _tag: "Running" }, { _tag: "LimitPaused", pause: PAUSE }, { _tag: "Waiting" }, { _tag: "Ended", code: 0 }, { _tag: "Ended", code: 1 }];
+  const all: Mark[] = [{ _tag: "Running" }, { _tag: "LimitPaused", pause: PAUSE }, { _tag: "Waiting" }, endedMark(COMPLETED), endedMark(HALTED)];
   test("five distinct glyphs, none for Clear", () => {
     expect(markGlyph({ _tag: "Clear" })).toBe(null);
     expect(new Set(all.map(markGlyph)).size).toBe(5);
     expect(markGlyph({ _tag: "Running" })).toBe(prompts.RUNNING_MARK);
     expect(markGlyph({ _tag: "LimitPaused", pause: PAUSE })).toBe(prompts.LIMIT_PAUSED_MARK);
   });
-  test("property: any pause and any halted code still give five distinct glyphs, none for Clear", () => {
+  test("property: any pause and any ending but a completion still give five distinct glyphs, none for Clear", () => {
     const pauseArb = fc.record({ fromMs: fc.integer({ min: 0, max: 4_102_444_800_000 }), untilMs: fc.integer({ min: 0, max: 4_102_444_800_000 }), known: fc.boolean() });
-    const haltedCode = fc.integer({ min: -255, max: 255 }).filter((c) => c !== 0);
+    const other = arbEnding.filter((e) => e._tag !== "Completed");
     fc.assert(
-      fc.property(pauseArb, haltedCode, (pause, code) => {
-        const glyphs = ([{ _tag: "Running" }, { _tag: "LimitPaused", pause }, { _tag: "Waiting" }, { _tag: "Ended", code: 0 }, { _tag: "Ended", code }] as Mark[]).map(markGlyph);
+      fc.property(pauseArb, other, (pause, ending) => {
+        const glyphs = ([{ _tag: "Running" }, { _tag: "LimitPaused", pause }, { _tag: "Waiting" }, endedMark(COMPLETED), endedMark(ending)] as Mark[]).map(markGlyph);
         expect(glyphs.every((g) => g !== null)).toBe(true);
         expect(new Set(glyphs).size).toBe(5);
         expect(markGlyph({ _tag: "Clear" })).toBe(null);
@@ -342,7 +349,8 @@ describe("the glyphs and words of the marks (issue #139)", () => {
   test("markedTabName agrees with the second row's names, and carries the pause's end", () => {
     expect(markedTabName("Tab", { _tag: "Clear" })).toBe("Tab");
     expect(markedTabName("Tab", { _tag: "Waiting" })).toBe(prompts.waitingTabName("Tab"));
-    for (const code of [0, 1, 2, 130]) expect(markedTabName("Tab", { _tag: "Ended", code })).toBe(prompts.endedTabName("Tab", code));
+    for (const ending of ENDINGS) expect(markedTabName("Tab", endedMark(ending))).toBe(prompts.endedTabName("Tab", ending));
+    expect(markedTabName("Tab", endedMark(SENT_BACK_PARKED))).toBe("↩ Tab");
     expect(markedTabName("Tab", { _tag: "Running" })).toBe(`${prompts.RUNNING_MARK} Tab`);
     expect(markedTabName("Tab", { _tag: "LimitPaused", pause: PAUSE })).toBe(`${prompts.LIMIT_PAUSED_MARK} Tab ${prompts.limitPauseText(0, 3_600_000, true)}`);
   });
@@ -350,7 +358,8 @@ describe("the glyphs and words of the marks (issue #139)", () => {
     expect(markStateText({ _tag: "Clear" })).toBe(null);
     expect(markStateText({ _tag: "Running" })).toBe(prompts.RUN_WORKING_TEXT);
     expect(markStateText({ _tag: "Waiting" })).toBe(prompts.RUN_WAITING_TEXT);
-    expect(markStateText({ _tag: "Ended", code: 1 })).toBe(prompts.runEndedText(1));
+    expect(markStateText(endedMark(HALTED))).toBe(prompts.runEndedText(HALTED));
+    expect(markStateText(endedMark(SENT_BACK_PARKED))).toBe("a run sent back");
     expect(markStateText({ _tag: "LimitPaused", pause: PAUSE })).toBe(prompts.runLimitPausedText(prompts.limitPauseText(0, 3_600_000, true)));
   });
   test("marksByMode: each mode's combined mark", () => {

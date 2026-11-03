@@ -1,3 +1,4 @@
+import { ENDINGS, endedEvent } from "./endingFixtures.ts";
 import { PREPARATION_VIEW_OFF } from "../src/preparationSwitch.ts";
 import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
@@ -193,7 +194,7 @@ const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("AnswerExpired" as const), prompt: nat, seconds: nat, then: fc.constantFrom(...ON_EXPIRIES) }),
   fc.record({ _tag: fc.constant("Answered" as const), prompt: nat, text }),
   uiEvent.map((event) => ({ _tag: "Notified" as const, event })),
-  fc.record({ _tag: fc.constant("Ended" as const), code: fc.constantFrom(0, 1, 2, 130) }),
+  fc.constantFrom(...ENDINGS.flatMap((e) => (e._tag === "Unestablished" ? [] : [endedEvent(e)]))),
 );
 // Issue #1: every event carries the time of its publication, beside its seq, not inside the variant.
 const stamped: fc.Arbitrary<Stamped> = fc.record({ time: text, event: runEvent });
@@ -686,4 +687,17 @@ test("the queue frame round-trips for each change, refuses a blank item or edit 
   assert.deepEqual(decoded(decodeServer(JSON.stringify({ type: "chain", state: old }))), { type: "chain", state: initialState(DEFAULT_SETTINGS) });
   const hello = { type: "hello", location: "/p", current: { refinement: [], implementation: null }, incarnation: "i", chain: state, preparation: PREPARATION_VIEW_OFF };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(hello))), hello);
+});
+
+// Issue #44 (S5): Ended carries the run's ending; one recorded before it decodes as not established.
+test("an Ended without its ending decodes as unestablished, and every ending round-trips", async () => {
+  const { StampedSchema } = await import("../src/protocol.ts");
+  const decode = Schema.decodeUnknownSync(StampedSchema);
+  const encode = Schema.encodeSync(StampedSchema);
+  assert.deepEqual(decode({ time: "t", event: { _tag: "Ended", code: 0 } }).event, { _tag: "Ended", code: 0, ending: { _tag: "Unestablished" } });
+  for (const ending of ENDINGS) {
+    if (ending._tag === "Unestablished") continue;
+    const stamped = { time: "t", event: endedEvent(ending) };
+    assert.deepEqual(decode(JSON.parse(JSON.stringify(encode(stamped)))), stamped);
+  }
 });

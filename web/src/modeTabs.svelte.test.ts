@@ -1,3 +1,4 @@
+import { ABANDONED, COMPLETED, HALTED, INTERRUPTED, SENT_BACK_PARKED, endedMark } from "../../test/endingFixtures.ts";
 // Issue #139: the primary tabs, each with its run's mark. jsdom does no layout, so the CSS that keeps a label on one
 // row is asserted, not the row.
 import { flushSync, mount, unmount } from "svelte";
@@ -19,8 +20,8 @@ const MARKS: readonly Mark[] = [
   { _tag: "Running" },
   { _tag: "LimitPaused", pause: PAUSE },
   { _tag: "Waiting" },
-  { _tag: "Ended", code: 0 },
-  { _tag: "Ended", code: 1 },
+  endedMark(COMPLETED),
+  endedMark(HALTED),
 ];
 
 const show = (mark: Mark, tab = "a") => {
@@ -53,9 +54,20 @@ describe("ModeTabs", () => {
     }
   });
   test("halted is the alert; finished is not", () => {
-    expect(show({ _tag: "Ended", code: 1 }).label.querySelector(".alert")).not.toBe(null);
+    expect(show(endedMark(HALTED)).label.querySelector(".alert")).not.toBe(null);
     document.body.innerHTML = "";
-    expect(show({ _tag: "Ended", code: 0 }).label.querySelector(".alert")).toBe(null);
+    expect(show(endedMark(COMPLETED)).label.querySelector(".alert")).toBe(null);
+  });
+  // Issue #44 (decision Q2): a halt and an abandonment are drawn in the error color; any other ending is not.
+  test("an abandonment is the alert too; a send-back and an interruption are not", () => {
+    expect(show(endedMark(ABANDONED)).label.querySelector(".alert")).not.toBe(null);
+    document.body.innerHTML = "";
+    for (const ending of [SENT_BACK_PARKED, INTERRUPTED]) {
+      const { label } = show(endedMark(ending));
+      expect(label.querySelector(".alert")).toBe(null);
+      expect(label.dataset["ending"]).toBe(ending._tag);
+      document.body.innerHTML = "";
+    }
   });
   test("a paused run shows when the pause ends", () => {
     const { label } = show({ _tag: "LimitPaused", pause: PAUSE });

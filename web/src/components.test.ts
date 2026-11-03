@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import { COMPLETED, HALTED, INTERRUPTED, SENT_BACK_NOTHING, endedEvent, endedMark } from "../../test/endingFixtures.ts";
 import { PREPARATION_VIEW_OFF, type PreparationStatus } from "../../src/preparationSwitch.ts";
 import { runRootOf } from "../../src/artifacts.ts";
 import { type Component, createRawSnippet, flushSync, mount, unmount } from "svelte";
@@ -577,7 +578,7 @@ describe("TopBar", () => {
     const idle = show(TopBar, { run: null, location: null, connection: "reconnecting", onStop: () => undefined });
     expect((one(idle, "button[name=stop]") as HTMLButtonElement).disabled).toBe(true);
     expect(idle.textContent).toMatch(/reconnecting/);
-    const ended = show(TopBar, { run: { ...run, ended: 0 }, location: null, connection: "open", onStop: () => undefined });
+    const ended = show(TopBar, { run: { ...run, ended: COMPLETED }, location: null, connection: "open", onStop: () => undefined });
     expect((one(ended, "button[name=stop]") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -598,7 +599,7 @@ describe("TopBar", () => {
   // W1-R1-1: once a run has ended the bar shows the server's identification, as above the form for a new task.
   test("an ended run gives way to the server's identification; a run in progress keeps its own", () => {
     const run = { ...emptyRun(3), project: "/workspace", location: "/host/other", task: "the task" };
-    const ended = show(TopBar, { run: { ...run, ended: 0 }, location: "/host/server", connection: "open", onStop: () => undefined });
+    const ended = show(TopBar, { run: { ...run, ended: COMPLETED }, location: "/host/server", connection: "open", onStop: () => undefined });
     expect(one(ended, "h1 .project-name").textContent?.trim()).toBe("server");
     expect(one(ended, ".location").textContent?.trim()).toBe("/host/server");
     const during = show(TopBar, { run, location: "/host/server", connection: "open", onStop: () => undefined });
@@ -790,7 +791,7 @@ describe("App and the draft", () => {
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
     ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/host/server", current: { refinement: [], implementation: null }, incarnation: "a" });
-    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/elsewhere", location: "/host/other", task: "t", mode: "refinement", item: { id: "11", title: "t" } }, { _tag: "Ended", code: 0 }]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/elsewhere", location: "/host/other", task: "t", mode: "refinement", item: { id: "11", title: "t" } }, endedEvent(COMPLETED)]) }] });
     expect(one(root, "button[name=new]").textContent?.trim()).toBe(prompts.BACK_TO_LIST);
     one(root, "button[name=new]").click();
     flushSync();
@@ -1166,14 +1167,14 @@ describe("App and the draft", () => {
         expect(implLabel(root).querySelectorAll("[role=progressbar]").length).toBe(0);
       });
       test("(d) a run that finishes off screen: finished; (e) one that halts: halted, the alert", async () => {
-        for (const code of [0, 1]) {
+        for (const ending of [COMPLETED, HALTED]) {
           const { root, ws } = await begin();
           ws.receive({ type: "replay", ui: [], runs: [{ id: 2, events: stamp([startedIn("implementation", "1")]) }] });
           select(root, "refinement");
-          ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: { _tag: "Ended", code } });
+          ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: endedEvent(ending) });
           flushSync();
-          shows(root, { _tag: "Ended", code });
-          expect(implLabel(root).querySelector(".alert") !== null).toBe(code !== 0);
+          shows(root, endedMark(ending));
+          expect(implLabel(root).querySelector(".alert") !== null).toBe(ending._tag === "Halted");
           document.body.innerHTML = "";
         }
       });
@@ -1233,7 +1234,7 @@ describe("App and the draft", () => {
 
     test("a notice of no mode shows once in the list view after Back to the list from an ended run", async () => {
       const { root, ws } = await begin();
-      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("refinement", "11"), { _tag: "Ended", code: 0 }]) }] });
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("refinement", "11"), endedEvent(COMPLETED)]) }] });
       one(root, "button[name=new]").click();
       flushSync();
       expect(root.querySelector("section.items")).not.toBe(null);
@@ -1314,9 +1315,9 @@ describe("App and the draft", () => {
       const { root, ws } = await openPage();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("refinement", "11")]) }, { id: 2, events: stamp([startedOf("implementation", "1")]) }] });
       selectTab(root, "refinement");
-      ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
-      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle(name, 0)]);
-      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
+      ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: endedEvent(COMPLETED) });
+      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle(name, COMPLETED)]);
+      expect(document.title).toBe(tabTitle("/p", endedMark(COMPLETED)));
     });
 
     test("the title shows the waiting marker while either tab's run waits (S17)", async () => {
@@ -1350,11 +1351,10 @@ describe("App and the draft", () => {
       begin("hidden");
       const { root, ws } = await openPage();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
-      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
-      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle(name, 0)]);
-      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
-      expect(root.textContent).toContain(`This task has ended (${prompts.endedOutcome(0)}).`);
-      expect([0, 130, 1].map(prompts.endedOutcome)).toEqual(["finished", "interrupted", "halted"]);
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(COMPLETED) });
+      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle(name, COMPLETED)]);
+      expect(document.title).toBe(tabTitle("/p", endedMark(COMPLETED)));
+      expect(root.textContent).toContain(prompts.endingLine(COMPLETED));
       setVisibility("visible");
       expect(document.title).toBe(tabTitle("/p"));
     });
@@ -1364,18 +1364,18 @@ describe("App and the draft", () => {
       begin("hidden");
       const { root, ws } = await openPage();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
-      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
-      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(COMPLETED) });
+      expect(document.title).toBe(tabTitle("/p", endedMark(COMPLETED)));
       one(root, "button[name=new]").click();
       flushSync();
-      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
+      expect(document.title).toBe(tabTitle("/p", endedMark(COMPLETED)));
     });
 
     test("a run that ends at a visible tab: no notification and no marker", async () => {
       begin("visible");
       const { ws } = await openPage();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
-      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(COMPLETED) });
       expect(NotificationStub.calls).toHaveLength(0);
       expect(document.title).toBe(tabTitle("/p"));
     });
@@ -1448,7 +1448,7 @@ describe("App and the draft", () => {
         begin("hidden", SOUND);
         const { ws } = await openPage();
         ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
-        ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+        ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(COMPLETED) });
         expect(AudioContextStub.started).toBe(CHIME_TONES.length);
       });
     });
@@ -1528,7 +1528,7 @@ describe("App and the draft", () => {
     flushSync();
     expect(root.querySelector('section[aria-label^="Your Choice: "]')).toBe(null);
     ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [2], implementation: null }, incarnation: "a" });
-    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1), { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1), endedEvent(INTERRUPTED)]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
   });
 
@@ -1938,7 +1938,13 @@ describe("App: several refinement runs", () => {
   const question = (text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null } } });
   const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt), countdown: null });
   const secondRow = (root: HTMLElement) => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.RUN_TABS_LABEL}"]`);
-  const runTabNames = (root: HTMLElement) => [...(secondRow(root)?.querySelectorAll("label") ?? [])].map((l) => l.textContent?.trim());
+  /** Issue #44: each tab's visible text, without the words a tab says to assistive technology alone. */
+  const runTabNames = (root: HTMLElement) =>
+    [...(secondRow(root)?.querySelectorAll("label") ?? [])].map((l) => {
+      const shown = l.cloneNode(true) as HTMLElement;
+      for (const hidden of shown.querySelectorAll(".visually-hidden")) hidden.remove();
+      return shown.textContent?.trim();
+    });
   const clickRunTab = (root: HTMLElement, value: string) => {
     (one(secondRow(root)!, `input[type=radio][value="${value}"]`) as HTMLInputElement).click();
     flushSync();
@@ -2006,7 +2012,7 @@ describe("App: several refinement runs", () => {
     field(root).value = "typed before the end";
     field(root).dispatchEvent(new Event("input", { bubbles: true }));
     flushSync();
-    ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: { _tag: "Ended", code: 130 } });
+    ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: endedEvent(INTERRUPTED) });
     expect(root.textContent).not.toContain(prompts.draftWithdrawnNotice("typed before the end"));
     one(root, "button[name=close]").click();
     flushSync();
@@ -2025,7 +2031,7 @@ describe("App: several refinement runs", () => {
 
   test("on an ended run, Back to the list keeps its tab, and Close removes it; both show the items", async () => {
     const { root, ws } = await open([]);
-    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11"), { _tag: "Ended", code: 130 }]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11"), endedEvent(INTERRUPTED)]) }] });
     one(root, "button[name=new]").click();
     flushSync();
     expect(root.querySelector("section.items")).not.toBe(null);
@@ -2071,30 +2077,46 @@ describe("App: several refinement runs", () => {
     });
 
     // Issue #209: a run's end raises whenever the run is not on screen, and its tab carries the end's mark until shown.
-    for (const code of [0, 130]) {
-      test(`issue #209: a run that ends while another is shown in a visible page notifies once and marks its tab (code ${code})`, async () => {
+    for (const ending of [COMPLETED, INTERRUPTED]) {
+      test(`issue #209: a run that ends while another is shown in a visible page notifies once and marks its tab (${ending._tag})`, async () => {
         begin("visible");
         const { root, ws } = await open([1, 2]);
         ws.receive(twoRuns);
         expect(headline(root)).toBe(prompts.itemHeadline("12", "title 12"));
-        ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code } });
-        expect(NotificationStub.calls.filter((c) => c.title === prompts.endNotificationTitle("p", code))).toHaveLength(1);
+        ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(ending) });
+        expect(NotificationStub.calls.filter((c) => c.title === prompts.endNotificationTitle("p", ending))).toHaveLength(1);
         const first = prompts.runTabName({ id: "11", title: "title 11" });
-        expect(runTabNames(root)[1]).toBe(prompts.endedTabName(first, code));
+        expect(runTabNames(root)[1]).toBe(prompts.endedTabName(first, ending));
         expect(document.title).toBe(tabTitle("/p", { _tag: "Waiting" }));
         clickRunTab(root, "run-1");
         expect(runTabNames(root)[1]).toBe(first);
-        expect(NotificationStub.calls.filter((c) => c.title === prompts.endNotificationTitle("p", code))).toHaveLength(1);
+        expect(NotificationStub.calls.filter((c) => c.title === prompts.endNotificationTitle("p", ending))).toHaveLength(1);
       });
     }
+
+    // Issue #44: a send-back with exit code 0 is announced as sent back, never as completed, and its screen says so.
+    test("issue #44: a send-back at a hidden page: one notification titled sent back, and its screen shows the sent-back line", async () => {
+      begin("hidden");
+      const { root, ws } = await open([1]);
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
+      clickRunTab(root, "run-1");
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(SENT_BACK_NOTHING) });
+      expect(NotificationStub.calls.map((c) => c.title)).toEqual(["p: the task was sent back"]);
+      expect(NotificationStub.calls[0]?.options?.body).toBe(prompts.endingLine(SENT_BACK_NOTHING));
+      const status = root.querySelector<HTMLElement>("[role=status][data-ending]");
+      expect(status?.dataset["ending"]).toBe("SentBack");
+      expect(status?.textContent).toContain(prompts.endingLine(SENT_BACK_NOTHING));
+      expect(status?.textContent).not.toContain("Completed");
+      expect(document.title.startsWith("↩ ")).toBe(true);
+    });
 
     test("issue #209: with no run waiting, the title carries the unseen end's mark until the run is shown", async () => {
       begin("visible");
       const { root, ws } = await open([1, 2]);
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }, { id: 2, events: stamp([startedOf("12")]) }] });
       clickRunTab(root, "run-2");
-      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
-      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(COMPLETED) });
+      expect(document.title).toBe(tabTitle("/p", endedMark(COMPLETED)));
       clickRunTab(root, "run-1");
       // Issue #139: run 2 is still working.
       expect(document.title).toBe(tabTitle("/p", { _tag: "Running" }));
@@ -2105,7 +2127,7 @@ describe("App: several refinement runs", () => {
       const { root, ws } = await open([1]);
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
       clickRunTab(root, "run-1");
-      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(COMPLETED) });
       expect(NotificationStub.calls).toHaveLength(0);
       expect(runTabNames(root)[1]).toBe(prompts.runTabName({ id: "11", title: "title 11" }));
       expect(document.title).toBe(tabTitle("/p"));
@@ -2116,9 +2138,9 @@ describe("App: several refinement runs", () => {
       const { root, ws } = await open([1]);
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
       clickRunTab(root, "list");
-      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 1 } });
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(HALTED) });
       expect(NotificationStub.calls).toHaveLength(1);
-      expect(runTabNames(root)[1]).toBe(prompts.endedTabName(prompts.runTabName({ id: "11", title: "title 11" }), 1));
+      expect(runTabNames(root)[1]).toBe(prompts.endedTabName(prompts.runTabName({ id: "11", title: "title 11" }), HALTED));
       clickRunTab(root, "run-1");
       one(root, "button[name=close]").click();
       flushSync();
@@ -2133,8 +2155,8 @@ describe("App: several refinement runs", () => {
       clickRunTab(root, "run-1");
       expect(headline(root)).toBe(prompts.itemHeadline("11", "title 11"));
       expect(NotificationStub.calls).toHaveLength(0);
-      ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
-      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle("p", 0)]);
+      ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: endedEvent(COMPLETED) });
+      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle("p", COMPLETED)]);
     });
   });
 });
@@ -3634,7 +3656,13 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
   const question = (text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null } } });
   const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt), countdown: null, deciding: null });
   const secondRow = (root: HTMLElement) => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.IMPLEMENTATION_RUN_TABS_LABEL}"]`);
-  const runTabNames = (root: HTMLElement) => [...(secondRow(root)?.querySelectorAll("label") ?? [])].map((l) => l.textContent?.trim());
+  /** Issue #44: each tab's visible text, without the words a tab says to assistive technology alone. */
+  const runTabNames = (root: HTMLElement) =>
+    [...(secondRow(root)?.querySelectorAll("label") ?? [])].map((l) => {
+      const shown = l.cloneNode(true) as HTMLElement;
+      for (const hidden of shown.querySelectorAll(".visually-hidden")) hidden.remove();
+      return shown.textContent?.trim();
+    });
   const clickRunTab = (root: HTMLElement, value: string) => {
     (one(secondRow(root)!, `input[type=radio][value="${value}"]`) as HTMLInputElement).click();
     flushSync();
@@ -3698,8 +3726,8 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
     try {
       const { root, ws } = await open([startedOf("21")]);
       clickRunTab(root, "list");
-      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 1 } });
-      expect(runTabNames(root)).toEqual([prompts.LIST_TAB, prompts.endedTabName(runName, 1)]);
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: endedEvent(HALTED) });
+      expect(runTabNames(root)).toEqual([prompts.LIST_TAB, prompts.endedTabName(runName, HALTED)]);
       clickRunTab(root, "run-1");
       expect(runTabNames(root)).toEqual([prompts.LIST_TAB, runName]);
     } finally {
@@ -3726,7 +3754,7 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
   });
 
   test("on an ended run, Back to the list shows the list and the run's tab stays", async () => {
-    const { root } = await open([startedOf("21"), { _tag: "Ended", code: 0 }], null);
+    const { root } = await open([startedOf("21"), endedEvent(COMPLETED)], null);
     select(root, "implementation");
     one(root, "button[name=new]").click();
     flushSync();

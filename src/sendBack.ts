@@ -5,6 +5,7 @@
 // src/runEnding.ts, so the three endings that park are stated once.
 import { Clock, Effect } from "effect";
 import type { ParkNote } from "./chain.ts";
+import type { KeptPark } from "./ending.ts";
 import { isTrackerError, NotRefinedStopped, type RunError, SendBackIncomplete, SendBackNotParked, SendBackUnanswered, TrackerStepFailed, trackerFailureText, describe } from "./errors.ts";
 import { commentDateOf, commentText, lastRefinementAsked, runCommentKey, sentBackCount } from "./itemComments.ts";
 import { rootName } from "./park.ts";
@@ -16,8 +17,22 @@ import type { ItemId } from "./tracker.ts";
 import { readCommentsWithRetry, runTrackerEnv, type TrackerWrite, writeWithRetry } from "./trackerRetry.ts";
 
 
-/** What a send-back leaves: the parking's note, for the chain (the run parked its own work), and the verdict. */
-export type SentBack = Readonly<{ park: ParkNote; missing: string }>;
+/** What a send-back leaves: the parking's note, for the chain (the run parked its own work), and the verdict; issue #44:
+ * only a note that kept the work or found none, since a parking that failed is SendBackNotParked. */
+export type SentBack = Readonly<{ park: KeptPark; missing: string }>;
+
+/** Issue #44: the parking's note narrowed to one that kept the work or found none; any other is SendBackNotParked. */
+const keptOrFailed = (item: ItemId, note: ParkNote): Effect.Effect<KeptPark, RunError> => {
+  switch (note._tag) {
+    case "Parked":
+    case "NothingParked":
+      return Effect.succeed(note);
+    case "ParkFailed":
+      return Effect.fail(new SendBackNotParked({ item, message: note.message, park: note }));
+    case "Pending":
+      return Effect.fail(new SendBackNotParked({ item, message: "the parking did not finish", park: note }));
+  }
+};
 
 /**
  * Sends item `item` back for verdict `n`, in this order: the item's comments read (whether its last refinement asked
@@ -35,8 +50,8 @@ export const sendBack = (item: ItemId, n: number, missing: string): Effect.Effec
       Effect.mapError((e): RunError => (isTrackerError(e) ? new TrackerStepFailed({ item, step: "readComments", cause: trackerFailureText(e), done: null, check: null }) : e)),
     );
     const ending: ParkedEnding = lastRefinementAsked(comments) ? "sentBack" : "stoppedUnrefined";
-    const park = yield* Effect.uninterruptible(parkWork(store, item, ending));
-    if (park._tag === "ParkFailed") return yield* Effect.fail(new SendBackNotParked({ item, message: park.message, park }));
+    const note = yield* Effect.uninterruptible(parkWork(store, item, ending));
+    const park = yield* keptOrFailed(item, note);
     // A stop by the developer during a tracker step's question stays a stop (130), and one left unanswered (issue #185)
     // stays its own ending; every other failure is incomplete.
     const incomplete = (error: RunError): RunError => (error._tag === "UserStopped" || error._tag === "SendBackUnanswered" ? error : new SendBackIncomplete({ item, ending, park, cause: describe(error) }));

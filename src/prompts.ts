@@ -7,6 +7,7 @@ import { type GitState, type MergeRefusal, PARK_NO_VERIFY, type ParkedRecord, pa
 import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote, SkipReason } from "./chain.ts";
 import type { ChainSource } from "./chainQueue.ts";
 import type { ParkedEnding } from "./runEnding.ts";
+import type { CompletedWork, Ending, ItemReturn } from "./ending.ts";
 import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -1555,8 +1556,9 @@ export const TAB_TEXTS = {
 export const TABS_LABEL = "Modes";
 /** A tab whose run waits for the user's answer: its name with the title's waiting mark in front (issue #16's mark). */
 export const waitingTabName = (name: string): string => `${TITLE_WAITING_MARK} ${name}`;
-/** Issue #209: a run tab whose end has not been seen: its end's mark in front of the name, as `waitingTabName` puts ●. */
-export const endedTabName = (name: string, code: number): string => `${endMarkOf(code)} ${name}`;
+/** Issue #209: a run tab whose end has not been seen: its end's mark in front of the name, as `waitingTabName` puts ●;
+ * issue #44: the mark of the ending the run concluded. */
+export const endedTabName = (name: string, ending: Ending): string => `${endingMarkOf(ending)} ${name}`;
 export const ITEMS_REFRESH = "Refresh";
 /** Issue #142: the label of the request for the explanations of the terms of the question on the screen. */
 export const EXPLAIN_TERMS = "Explain the terms";
@@ -2276,15 +2278,149 @@ export const limitPauseText = (fromMs: number, untilMs: number, known: boolean):
 export const RUN_WORKING_TEXT = "a run is working";
 export const runLimitPausedText = (pause: string): string => `a run is paused for a usage limit, ${pause}`;
 export const RUN_WAITING_TEXT = "a run waits for your answer";
-export const runEndedText = (code: number): string => `a run ${endedOutcome(code)}`;
+/** Issue #44: the words of a run's ending, for the accessible names of its marks. */
+export const runEndedText = (ending: Ending): string => `a run ${endingWord(ending)}`;
 /** Issue #209: the mark of a run that finished its work (exit 0) and whose end has not been seen since. */
 export const TITLE_ENDED_MARK = "✓";
 /** Issue #209: the mark of a run that ended without doing its work (halted 1, abandoned 2, stopped 130, any code but 0)
  * and whose end has not been seen since. It asserts that, and nothing more. */
 export const TITLE_UNFINISHED_MARK = "✕";
-/** Issue #209: the one choice of an end's mark by its exit code, shared by a run's tab, the browser title and the icon. */
-export const endMarkOf = (code: number): string => (code === 0 ? TITLE_ENDED_MARK : TITLE_UNFINISHED_MARK);
-/** How a run ended, by its exit code: the words of "This task has ended (…)" and of the end's notification. */
+/** Issue #44 (decision Q1): each ending's own mark, a text glyph like the rail's, shared by the ended line, a run's tab,
+ * the browser title and the icon. */
+export const ENDING_MARKS: Readonly<Record<Ending["_tag"], string>> = {
+  Completed: TITLE_ENDED_MARK,
+  SentBack: "↩",
+  Halted: TITLE_UNFINISHED_MARK,
+  Interrupted: "■",
+  Abandoned: "⧗",
+  Unestablished: "–",
+};
+export const endingMarkOf = (ending: Ending): string => ENDING_MARKS[ending._tag];
+/** Issue #44: the word of an ending, for the accessible names of the marks. */
+export const endingWord = (ending: Ending): string => {
+  switch (ending._tag) {
+    case "Completed":
+      return "completed";
+    case "SentBack":
+      return "sent back";
+    case "Halted":
+      return "halted";
+    case "Interrupted":
+      return "interrupted";
+    case "Abandoned":
+      return "abandoned";
+    case "Unestablished":
+      return "ended";
+  }
+};
+const quotedList = (commands: readonly string[]): string => {
+  const quoted = commands.map((c) => `"${c}"`);
+  return quoted.length <= 1 ? quoted.join("") : `${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
+};
+const completedLine = (work: CompletedWork): string => {
+  switch (work._tag) {
+    case "Refined":
+      return "Completed: the requirements were written back to the item, which is now refined.";
+    case "Obsolete":
+      return work.labeled
+        ? "Completed: Bring Up to Date found the issue already built or replaced, and the item was labeled obsolete."
+        : "Completed: Bring Up to Date found the issue already built or replaced; the item stays unrefined, since no obsolete label is configured.";
+    case "Implemented":
+      return work.finalCommands.length === 0
+        ? "Completed: the execution finished, the code review found nothing left to correct, every change is committed, and the item is now implemented. No suite command is configured, so Interloq ran no test suite."
+        : `Completed: the execution finished, the code review found nothing left to correct, ${quotedList(work.finalCommands)} passed, every change is committed, and the item is now implemented.`;
+  }
+};
+/**
+ * Issue #44: the line the run's screen shows first, stating what was observed and no more: a completion names the
+ * commands that passed and claims no suite where none is configured; a halt states its reason and nothing about whether
+ * the work is unfinished. Plain text.
+ */
+export const endingLine = (ending: Ending): string => {
+  switch (ending._tag) {
+    case "Completed":
+      return completedLine(ending.work);
+    case "SentBack":
+      return "Sent back: the run found the item not refined and returned it to unrefined, with a comment saying what is missing.";
+    case "Halted":
+      return `Halted: the run could not complete. ${ending.reason}`;
+    case "Interrupted":
+      return "Interrupted: you stopped the run.";
+    case "Abandoned":
+      return `Abandoned: no answer came within the wait. ${ending.reason}`;
+    case "Unestablished":
+      return "Ended: this run was recorded before Interloq kept a run's ending, so how it ended is not known.";
+  }
+};
+/** Issue #44: what became of the run's work, as its parking's note records it; nothing where it parked nothing. */
+const parkDetail = (park: ParkNote | null): readonly string[] => {
+  if (park === null) return [];
+  switch (park._tag) {
+    case "Parked":
+      return [`The work was moved to branch ${park.branch} (commit ${park.commit.slice(0, 12)}).`];
+    case "NothingParked":
+      return ["There was no work to keep, so no branch was made."];
+    case "ParkFailed":
+      return [`The work could not be moved to a branch (${park.message}) and stays on the working branch.`];
+    case "Pending":
+      return ["Moving the work to a branch did not finish."];
+  }
+};
+/** Issue #44: the item's return to refined (issue #192), never asserting a state the read-back did not find. */
+const itemReturnDetail = (item: ItemReturn | null): readonly string[] => {
+  if (item === null) return [];
+  if (item._tag === "Returned") return ["The item was labeled refined again, so it is listed in the Implementation tab."];
+  switch (item.check._tag) {
+    case "NotSent":
+      return [`The item could not be labeled refined again (${item.cause}); Interloq did not change its label.`];
+    case "Unchecked":
+      return [`The item could not be confirmed as labeled refined again (${item.cause}), and whether its label changed could not be checked.`];
+    case "Held":
+      return [`The item could not be labeled refined again (${item.cause}); after the last attempt it carried the label ${item.check.state}.`];
+  }
+};
+const withCause = (cause: string): string => (cause.trim() === "" ? "" : ` (${cause})`);
+/** Issue #44: an abandoned item's label (issue #185), read from the variants of `AbandonLabel`. */
+const abandonLabelDetail = (label: AbandonLabel): string => {
+  switch (label._tag) {
+    case "SetRefined":
+      return "The item's label was set to refined and confirmed.";
+    case "StillHeld":
+      return `The item's label could not be set to refined${withCause(label.cause)}; it still carries ${label.state}.`;
+    case "Unconfirmed":
+      return `The item's label could not be read back after it was set${withCause(label.cause)}, so whether it is refined is not confirmed.`;
+    case "KeptImplementing":
+      return "The item keeps the label implementing, since its work was not moved.";
+    case "Unchanged":
+      return "The item's label was not changed.";
+    case "SendBackUnfinished":
+      return `The send-back's ${label.step} step was not done, and no label was set after it.`;
+  }
+};
+/** Issue #44: the disposition of the work and the item, shown apart from the ending's line, each stated as confirmed. */
+export const endingDetails = (ending: Ending): readonly string[] => {
+  switch (ending._tag) {
+    case "Completed":
+    case "Unestablished":
+      return [];
+    case "SentBack":
+      return [`What is missing: ${ending.missing}`, ...parkDetail(ending.park)];
+    case "Halted":
+      return [
+        ...parkDetail(ending.park),
+        ...itemReturnDetail(ending.item),
+        ending.records === null ? "No records directory was created." : `The records are in ${ending.records}.`,
+      ];
+    case "Interrupted":
+      return [...parkDetail(ending.park), ...itemReturnDetail(ending.item)];
+    case "Abandoned":
+      return [...parkDetail(ending.park), abandonLabelDetail(ending.label)];
+  }
+};
+/** Issue #44: the body of the desktop notification of a run's end: its ending's line. */
+export const endNotificationBody = (ending: Ending): string => endingLine(ending);
+/** How a run ended, by its exit code: since issue #44 the word of the conversation.md records alone (`endingRecord`,
+ * `haltRecord`, behavior 11 and issue #193); the page shows the ending's own words. */
 /** Issue #185: the exit code of a run that got no answer within the wait, neither a stop (130) nor a halt (1). */
 export const ABANDONED_EXIT_CODE = 2;
 export const endedOutcome = (code: number): "finished" | "interrupted" | "halted" | "abandoned" =>
@@ -2293,7 +2429,23 @@ export const endedOutcome = (code: number): "finished" | "interrupted" | "halted
 export const pauseNotificationTitle = (name: string): string => `${name}: Interloq is waiting for you`;
 export const PAUSE_NOTIFICATION_BODY = "The run is paused until you answer its question.";
 /** The desktop notification of a run's end. */
-export const endNotificationTitle = (name: string, code: number): string => `${name}: the task has ${endedOutcome(code)}`;
+/** Issue #44: by the ending the run concluded. */
+export const endNotificationTitle = (name: string, ending: Ending): string => {
+  switch (ending._tag) {
+    case "Completed":
+      return `${name}: the task has completed`;
+    case "SentBack":
+      return `${name}: the task was sent back`;
+    case "Halted":
+      return `${name}: the task has halted`;
+    case "Interrupted":
+      return `${name}: the task was interrupted`;
+    case "Abandoned":
+      return `${name}: the task was abandoned`;
+    case "Unestablished":
+      return `${name}: the task has ended`;
+  }
+};
 /** The switch of desktop notifications in the top bar. */
 export const DESKTOP_ALERTS_LABEL = "Desktop alerts";
 /** The switch of the sound in the top bar. */
@@ -3324,7 +3476,11 @@ export function abandonedRecord(text: string): string {
 }
 /** Issue #193 (requirements Q2): the record of a run ended by a defect, an error of Interloq that is not a typed error. */
 export function defectRecord(message: string): string {
-  return endingRecord(1, `an internal error of Interloq ended the run (${message}).`);
+  return endingRecord(1, defectText(message));
+}
+/** Issue #44: the text of a defect's halt, which its record carries and the page shows as the halt's reason. */
+export function defectText(message: string): string {
+  return `an internal error of Interloq ended the run (${message}).`;
 }
 export const serverEndingText = "the server is ending after an error it could not trace to one run; start it again with bin/ilcli web";
 export function unrecordedHaltLine(ids: readonly number[]): string {

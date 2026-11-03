@@ -4,6 +4,7 @@
 // the same fold, so a tab that joins mid-run shows what a tab that watched from the start shows. The dashboard keeps no
 // timed list: the publication times (issue #1) and phase bands (issue #15) are the right panel's alone.
 
+import { type Ending, endsAtItsEnd } from "../../src/ending.ts";
 import { type PreparationMark, type PreparationView, preparingItemOf } from "../../src/preparationSwitch.ts";
 import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
@@ -243,7 +244,8 @@ export type RunView = Readonly<{
   /** A wait for a usage limit while it lasts (issue #68): from its start to its scheduled end, both known. */
   limitWait: LimitWait | null;
   timeline: readonly TimelineEntry[];
-  ended: number | null;
+  /** Issue #44: the run's ending as the program concluded it, null while it runs. */
+  ended: Ending | null;
   /** Internal to the fold: the lines said for the last interview turn still to absorb, and the options of the last question presented (S5). */
   absorb: readonly string[];
   questionOptions: readonly Choice[];
@@ -505,12 +507,19 @@ export const modeWaiting = (state: ViewState, mode: RunMode): boolean => tabRuns
  * since it ended, `unseenEnds` of web/src/notify.ts) carries its end's mark, ✓ or ✕; a waiting run has not ended, so a
  * tab never carries both.
  */
-export const runTabs = (state: ViewState, mode: RunMode, unseen: ReadonlySet<number>): readonly Readonly<{ value: string; name: string }>[] => [
-  { value: "list", name: LIST_TAB },
-  ...tabRuns(state, mode).map((r) => {
+/**
+ * Issue #44: a tab of the second row: `name` its whole text with any mark; `plain` the run's name before any mark (the
+ * list's name for the list's tab); `ending` the run's ending exactly where its end's mark is shown, null otherwise, so
+ * the row can hide the glyph from assistive technology and say the ending in words.
+ */
+export type RunTab = Readonly<{ value: string; name: string; plain: string; ending: Ending | null }>;
+export const runTabs = (state: ViewState, mode: RunMode, unseen: ReadonlySet<number>): readonly RunTab[] => [
+  { value: "list", name: LIST_TAB, plain: LIST_TAB, ending: null },
+  ...tabRuns(state, mode).map((r): RunTab => {
     const name = runTabName(r.item ?? { id: `${r.id}`, title: "" });
-    const shown = waits(r) ? waitingTabName(name) : r.ended !== null && unseen.has(r.id) ? endedTabName(name, r.ended) : name;
-    return { value: `run-${r.id}`, name: shown };
+    if (waits(r)) return { value: `run-${r.id}`, name: waitingTabName(name), plain: name, ending: null };
+    if (r.ended !== null && unseen.has(r.id)) return { value: `run-${r.id}`, name: endedTabName(name, r.ended), plain: name, ending: r.ended };
+    return { value: `run-${r.id}`, name, plain: name, ending: null };
   }),
 ];
 /** Which listed items can be started (issue #191): none, or every item except those named. */
@@ -810,11 +819,13 @@ const plus = (a: StepCount, b: StepCount): StepCount => ({ answered: a.answered 
  * An entry when the run ends with `code`: the active one done or stopped; after a halt, what is ahead not reached (issue #6);
  * after success, the active one's steps never begun skipped (`endSteps`).
  */
-const endEntry = (e: TimelineEntry, code: number, time: string): TimelineEntry => {
-  const end = code === 0 ? "done" : "stopped";
-  const unreached = (st: TimelineStep): TimelineStep => (code !== 0 && st.state === "ahead" ? { ...st, state: "notReached" } : st);
+/** Issue #44: by the run's ending, so an end not established claims nothing and leaves what it did not begin not reached. */
+const endEntry = (e: TimelineEntry, ending: Ending, time: string): TimelineEntry => {
+  const atItsEnd = endsAtItsEnd(ending);
+  const end = atItsEnd ? "done" : "stopped";
+  const unreached = (st: TimelineStep): TimelineStep => (!atItsEnd && st.state === "ahead" ? { ...st, state: "notReached" } : st);
   if (e.state === "active") return endSteps({ ...e, state: end, steps: e.steps.map(unreached), ended: time, currentStep: null }, end);
-  return code !== 0 && e.state === "ahead" ? { ...e, state: "notReached", steps: e.steps.map(unreached) } : e;
+  return !atItsEnd && e.state === "ahead" ? { ...e, state: "notReached", steps: e.steps.map(unreached) } : e;
 };
 /** The entry with its active steps ended in `state`, and the steps it never began skipped: its phase is over. */
 const endSteps = (e: TimelineEntry, state: "done" | "stopped"): TimelineEntry => ({ ...e, steps: e.steps.map((st) => (st.state === "active" ? { ...st, state } : st.state === "ahead" ? { ...st, state: "skipped" } : st)) });
@@ -1206,7 +1217,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         return notifiedEvent(r, event.event, time);
       case "Ended": {
         const quiet = withoutHelp(withActivity(r, ""));
-        const ended: RunView = { ...quiet, dashboard: { ...quiet.dashboard, draft: null, preparing: null }, explaining: null, deciding: [], termsRequested: [], ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
+        const ended: RunView = { ...quiet, dashboard: { ...quiet.dashboard, draft: null, preparing: null }, explaining: null, deciding: [], termsRequested: [], ended: event.ending, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.ending, time), r.plan) : endEntry(e, event.ending, time))) };
         return reshow(ended);
       }
     }

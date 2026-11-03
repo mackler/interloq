@@ -3,6 +3,9 @@
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test } from "vitest";
 import ScrollableTabs from "./components/ScrollableTabs.svelte";
+import type { Ending } from "../../src/ending.ts";
+import { ABANDONED, HALTED, INTERRUPTED, SENT_BACK_PARKED } from "../../test/endingFixtures.ts";
+import { endedTabName, runEndedText } from "../../src/prompts.ts";
 
 let mounted: ReturnType<typeof mount>[] = [];
 afterEach(() => {
@@ -53,5 +56,46 @@ describe("ScrollableTabs", () => {
   test("every tab shows its whole name", () => {
     const { root } = show("list");
     expect([...root.querySelectorAll("label")].map((label) => label.textContent?.trim())).toEqual(items.map((item) => item.name));
+  });
+});
+
+// Issue #44: an ended run's tab hides its glyph from assistive technology and says its ending in words; a halt and an
+// abandonment are drawn in the error color (decision Q2), and the visible text is the composed name as before.
+describe("an ended run's tab", () => {
+  const endedItems = (ending: Ending) => [{ name: "Items", value: "list" }, { name: endedTabName("#11 item", ending), value: "run-1", plain: "#11 item", ending }];
+  const showEnded = (ending: Ending): HTMLLabelElement => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mounted.push(mount(ScrollableTabs, { target: root, props: { tab: "list", items: endedItems(ending) } }));
+    flushSync();
+    return root.querySelectorAll("label")[1]!;
+  };
+  test("a halt and an abandonment: the glyph hidden and in the alert's color, the ending in words", () => {
+    for (const ending of [HALTED, ABANDONED]) {
+      const label = showEnded(ending);
+      const glyph = label.querySelector("[aria-hidden=true].alert");
+      expect(glyph).not.toBe(null);
+      expect(label.textContent).toContain(runEndedText(ending));
+      expect(label.querySelector(".visually-hidden")?.textContent).toBe(`, ${runEndedText(ending)}`);
+      document.body.innerHTML = "";
+    }
+  });
+  test("a send-back and an interruption: the glyph hidden, not the alert, the ending in words", () => {
+    for (const ending of [SENT_BACK_PARKED, INTERRUPTED]) {
+      const label = showEnded(ending);
+      expect(label.querySelector("[aria-hidden=true]:not(.indicator)")?.classList.contains("alert")).toBe(false);
+      expect(label.textContent).toContain(runEndedText(ending));
+      document.body.innerHTML = "";
+    }
+    expect(runEndedText(SENT_BACK_PARKED)).toBe("a run sent back");
+    expect(runEndedText(INTERRUPTED)).toBe("a run interrupted");
+  });
+  test("the visible text is the composed name; a tab with no ending renders as before", () => {
+    const label = showEnded(SENT_BACK_PARKED);
+    const shown = [...label.querySelectorAll("span")].filter((s) => !s.classList.contains("visually-hidden") && s.closest(".visually-hidden") === null);
+    expect(shown.map((s) => s.textContent).join("").startsWith("↩ #11 item")).toBe(true);
+    const list = label.parentElement!.querySelectorAll("label")[0]!;
+    expect(list.querySelector("span")?.textContent).toBe("Items");
+    expect(list.querySelector(".visually-hidden")).toBe(null);
   });
 });

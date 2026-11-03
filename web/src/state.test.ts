@@ -1,3 +1,4 @@
+import { ABANDONED, COMPLETED, HALTED, INTERRUPTED, SENT_BACK_PARKED, UNESTABLISHED_ENDING, endedEvent } from "../../test/endingFixtures.ts";
 import { PREPARATION_VIEW_OFF, type PreparationStatus, type PreparationView } from "../../src/preparationSwitch.ts";
 import type { ListedItem } from "../../src/protocol.ts";
 import fc from "fast-check";
@@ -101,7 +102,7 @@ describe("the status line (issue #22)", () => {
   });
 
   test("after Ended the run's last line of Interloq stays the status", () => {
-    for (const s of both([started, call, said("Usage: Claude Code 3 calls"), { _tag: "Ended", code: 0 }])) expect(runOf(s, "implementation")?.dashboard.status).toEqual({ _tag: "Interloq", text: "Usage: Claude Code 3 calls" });
+    for (const s of both([started, call, said("Usage: Claude Code 3 calls"), endedEvent(COMPLETED)])) expect(runOf(s, "implementation")?.dashboard.status).toEqual({ _tag: "Interloq", text: "Usage: Claude Code 3 calls" });
   });
 
   test("a retry's and a usage limit's wait give the status the activity line's text", () => {
@@ -284,7 +285,7 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
     for (const s of both([started, opened, reviewRound])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
     const phaseEnded = notified({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "done" });
     for (const s of both([started, opened, phaseEnded])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
-    for (const s of both([started, opened, { _tag: "Ended", code: 130 }])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
+    for (const s of both([started, opened, endedEvent(INTERRUPTED)])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
   });
 
   test("ModelNamed sets the agent's model line, and a later model of that agent replaces it", () => {
@@ -379,10 +380,10 @@ describe("activity and timeline", () => {
   });
 
   test("phases appear in order with their rounds; an interrupted run stops the active phase", () => {
-    const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 2, limit: 5 }), { _tag: "Ended", code: 130 }]));
+    const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 2, limit: 5 }), endedEvent(INTERRUPTED)]));
     expect(runOf(s, "implementation")?.timeline.map((e) => [e.label, e.state])).toEqual([["Planning", "stopped"]]);
     expect(runOf(s, "implementation")?.timeline[0].groups[0].rounds.map((r) => r.round)).toEqual([1, 2]);
-    expect(runOf(s, "implementation")?.ended).toBe(130);
+    expect(runOf(s, "implementation")?.ended).toEqual(INTERRUPTED);
   });
 });
 
@@ -562,7 +563,7 @@ describe("the steps of Gather Requirements", () => {
   });
 
   test("a run that ends during a clarification stops that step with its phase; the earlier steps stay done", () => {
-    const events = [...through, { _tag: "Ended", code: 130 } as RunEvent];
+    const events = [...through, endedEvent(INTERRUPTED) as RunEvent];
     const s = fold(live(events));
     expect(runOf(s, "implementation")?.timeline[0].state).toBe("stopped");
     expect(steps(s)?.map((st) => st[1])).toEqual(["done", "stopped"]);
@@ -676,7 +677,7 @@ describe("the compact progress line", () => {
 
 describe("runs, replay and gaps", () => {
   test("a seq that does not follow sets the reconnect flag; a new run's Started at seq 0 after Ended is not a gap", () => {
-    const one = fold(live([started, { _tag: "Ended", code: 0 }]));
+    const one = fold(live([started, endedEvent(COMPLETED)]));
     expect(one.needsReconnect).toBe(false);
     const two = fold([{ type: "event", run: 2, seq: 0, time: at(0), event: started }], one);
     expect(two.needsReconnect).toBe(false);
@@ -841,7 +842,7 @@ describe("runs, replay and gaps", () => {
   test("property: the replay of two runs equals their incremental folding", () => {
     fc.assert(
       fc.property(fc.array(eventArb, { maxLength: 12 }), fc.array(eventArb, { maxLength: 12 }), gapsArb, gapsArb, (a, b, gapsA, gapsB) => {
-        const first = timed([started, ...a, { _tag: "Ended", code: 0 }], gapsA);
+        const first = timed([started, ...a, endedEvent(COMPLETED)], gapsA);
         const second = timed([started, ...b], gapsB);
         const incremental = fold([hello(null), { type: "replay", ui: [], runs: [] }, ...first.map(({ time, event }, seq): ServerMessage => ({ type: "event", run: 1, seq, time, event })), ...second.map(({ time, event }, seq): ServerMessage => ({ type: "event", run: 2, seq, time, event }))]);
         const replay = fold([hello(2), { type: "replay", ui: [], runs: [{ id: 1, events: first }, { id: 2, events: second }] }]);
@@ -1020,7 +1021,7 @@ describe("the time of a message", () => {
   test("an event that makes no message there (a line of Interloq, Ended) does not count as the message before", () => {
     const between = fold(live([started, review, said("a"), review], 1, [0, 0, 60, 170]));
     expect(shown(between)).toEqual([true, true]);
-    const ended = fold(live([started, review, { _tag: "Ended", code: 0 }], 1, [0, 0, 500]));
+    const ended = fold(live([started, review, endedEvent(COMPLETED)], 1, [0, 0, 500]));
     expect(runOf(ended, "implementation")?.right.map((m) => [m.time, m.showTime])).toEqual([[at(0), true]]);
   });
 
@@ -1282,9 +1283,9 @@ describe("the whole run in the timeline", () => {
   });
 
   test("a phase that begins turns its entry active; a run that halts leaves the phases ahead not reached", () => {
-    const s = fold(live([started, foreseen(false, 1), began({ kind: "planning", n: 1 }), { _tag: "Ended", code: 1 }]));
+    const s = fold(live([started, foreseen(false, 1), began({ kind: "planning", n: 1 }), endedEvent(HALTED)]));
     expect(entries(s)).toEqual([["Planning", "stopped"], ["Implementation", "notReached"], ["Code review", "notReached"]]);
-    const finished = fold(live([started, foreseen(false, 1), began({ kind: "planning", n: 1 }), { _tag: "Ended", code: 0 }]));
+    const finished = fold(live([started, foreseen(false, 1), began({ kind: "planning", n: 1 }), endedEvent(COMPLETED)]));
     expect(entries(finished)[1]).toEqual(["Implementation", "ahead"]);
   });
 
@@ -1310,7 +1311,7 @@ describe("the whole run in the timeline", () => {
     const afterPhase = fold(live(questionPhase));
     expect(stepStates(afterPhase)[0]).toEqual([["formulate", "done"]]);
     expect(labels(afterPhase)).toEqual([prompts.NO_UNANSWERED_QUESTIONS]);
-    const events: RunEvent[] = [...questionPhase, ...phaseDone({ kind: "planning", n: 1 }), ...phaseDone({ kind: "execution", n: 1 }), ...phaseDone({ kind: "work", n: 1 }), { _tag: "Ended", code: 0 }];
+    const events: RunEvent[] = [...questionPhase, ...phaseDone({ kind: "planning", n: 1 }), ...phaseDone({ kind: "execution", n: 1 }), ...phaseDone({ kind: "work", n: 1 }), endedEvent(COMPLETED)];
     for (const s of [fold(live(events)), replayed(events)]) {
       expect(noStepAhead(s)).toBe(true);
       expect(stepStates(s)[0]).toEqual([["formulate", "done"]]);
@@ -1323,11 +1324,11 @@ describe("the whole run in the timeline", () => {
     const ended = fold(live([...prefix, notified({ _tag: "PhaseEnded", phase: q, result: "converged" })]));
     expect(runOf(ended, "implementation")?.timeline[0].steps.every((st) => (st.state as string) !== "ahead")).toBe(true);
     expect(stepStates(ended)[0]).toEqual([["formulate", "done"]]);
-    const finished = fold(live([...prefix, { _tag: "Ended", code: 0 }]));
+    const finished = fold(live([...prefix, endedEvent(COMPLETED)]));
     expect(stepStates(finished)[0]).toEqual([["formulate", "done"]]);
-    const halted = fold(live([...prefix, { _tag: "Ended", code: 1 }]));
+    const halted = fold(live([...prefix, endedEvent(HALTED)]));
     expect(stepStates(halted)[0]).toEqual([["formulate", "stopped"]]);
-    const skippedThenHalted = fold(live([...prefix, notified({ _tag: "PhaseEnded", phase: q, result: "converged" }), { _tag: "Ended", code: 1 }]));
+    const skippedThenHalted = fold(live([...prefix, notified({ _tag: "PhaseEnded", phase: q, result: "converged" }), endedEvent(HALTED)]));
     expect(stepStates(skippedThenHalted)[0]).toEqual([["formulate", "done"]]);
   });
 
@@ -1347,7 +1348,7 @@ describe("the whole run in the timeline", () => {
       notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
       notified({ _tag: "LoopFinished", subject: "questions", result: "converged" }),
       notified({ _tag: "PhaseEnded", phase: q, result: "converged" }),
-      { _tag: "Ended", code: 0 },
+      endedEvent(COMPLETED),
     ];
     for (const s of [fold(live(events)), replayed(events)]) {
       expect(entries(s)).toEqual([["Bring Up to Date", "done"], ["Gather Requirements", "done"]]);
@@ -1521,7 +1522,7 @@ describe("phase times", () => {
   });
 
   test("a run that ends while a phase is active ends that phase at the time of Ended; the phases not reached keep none", () => {
-    const events: RunEvent[] = [started, foreseen(false, 1), notified({ _tag: "PhaseBegan", phase: planning }), { _tag: "Ended", code: 130 }];
+    const events: RunEvent[] = [started, foreseen(false, 1), notified({ _tag: "PhaseBegan", phase: planning }), endedEvent(INTERRUPTED)];
     const seconds = [0, 1, 10, 95];
     for (const s of [fold(live(events, 1, seconds)), replayed(events, 1, 1, seconds)]) {
       expect(times(s)).toEqual([["Planning", at(10), at(95)], ["Implementation", null, null], ["Code review", null, null]]);
@@ -1593,7 +1594,7 @@ describe("the current step of the plan", () => {
 
   test("the end of the phase or of the run leaves no step current", () => {
     const events = [...prefix, ...reports([["S1", "started"]])];
-    for (const end of [notified({ _tag: "PhaseEnded", phase: { kind: "execution", n: 1 }, result: "aborted" }), { _tag: "Ended", code: 1 } as RunEvent]) {
+    for (const end of [notified({ _tag: "PhaseEnded", phase: { kind: "execution", n: 1 }, result: "aborted" }), endedEvent(HALTED) as RunEvent]) {
       for (const s of both([...events, end])) expect(implementation(s).currentStep).toBe(null);
     }
   });
@@ -1702,7 +1703,7 @@ describe("the steps an Implementation acted on", () => {
   });
 
   test("a halted Implementation keeps its acted steps right after Ended", () => {
-    const halted = [...implementation1.slice(0, -1), { _tag: "Ended", code: 1 } as RunEvent];
+    const halted = [...implementation1.slice(0, -1), endedEvent(HALTED) as RunEvent];
     for (const s of both(halted)) expect(shown(s, "Implementation")?.flatMap(([, , steps]) => steps)).toEqual(["S1 1 one (text of one) unfinished", "S3 2 three (text of three) done", "S4 1 four (text of four) unfinished"]);
   });
 
@@ -1846,7 +1847,7 @@ describe("a wait for a usage limit", () => {
 
   test("the lift, the run's end, and the next call's start each clear it", () => {
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted)])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
-    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), { _tag: "Ended", code: 130 }])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), endedEvent(INTERRUPTED)])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted), notified(call)])) expect(statusOf(s)).toBe("Claude — planning");
   });
 
@@ -1858,7 +1859,7 @@ describe("a wait for a usage limit", () => {
       for (const s of both([started, notified(call), notified(failed), notified(event)])) expect(limitPauseOf(runOf(s, "implementation")!)).toEqual({ fromMs: FROM, untilMs: UNTIL, known: basis.kind === "reset" });
     }
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(call)])) expect(limitPauseOf(runOf(s, "implementation")!)).toBe(null);
-    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), { _tag: "Ended", code: 130 }])) expect(limitPauseOf(runOf(s, "implementation")!)).toBe(null);
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), endedEvent(INTERRUPTED)])) expect(limitPauseOf(runOf(s, "implementation")!)).toBe(null);
   });
 
   test("limitWaitView: the fraction elapsed and the time remaining at an instant", () => {
@@ -1976,13 +1977,13 @@ describe("the rail as a tree that collapses", () => {
   });
 
   test("a halt holds the stopped phase open", () => {
-    const s = fold([...live([started, foreseen(false, 1), began(planning), planRound, { _tag: "Ended", code: 1 }]), flags({ scope: phaseScope(planning), open: false })]);
+    const s = fold([...live([started, foreseen(false, 1), began(planning), planRound, endedEvent(HALTED)]), flags({ scope: phaseScope(planning), open: false })]);
     expect(phaseNode(s, planning)).toMatchObject({ open: true, held: true });
   });
 
   // P1-R1-1: after a halt, the stage of the step the halted execution call was working on.
   test("a halt after the execution call ended holds the phase and the stage of the step last reported running", () => {
-    const events: RunEvent[] = [started, foreseen(false, 1), began(planning), planRound, planned, ended(planning), began(implementation), call(), ...reports([["S4", "started"], ["S4", "done"], ["S1", "started"]]), callEnded, { _tag: "Ended", code: 1 }];
+    const events: RunEvent[] = [started, foreseen(false, 1), began(planning), planRound, planned, ended(planning), began(implementation), call(), ...reports([["S4", "started"], ["S4", "done"], ["S1", "started"]]), callEnded, endedEvent(HALTED)];
     const s = fold([...live(events), flags({ scope: phaseScope(implementation), open: false }, { scope: stageScope(1), open: false }, { scope: stageScope(2), open: false })]);
     const entry = runOf(s, "implementation")!.timeline.find((e) => e.phase.kind === "execution")!;
     expect(entry.currentStep).toBe(null);
@@ -2010,14 +2011,14 @@ describe("the rail as a tree that collapses", () => {
   // W1-R1-1: a halt while the question after the execution call waits, when no phase is active any more.
   test("a halt after the phase has ended holds the phase and the stage of the step last reported running", () => {
     const close = flags({ scope: phaseScope(implementation), open: false }, { scope: stageScope(1), open: false }, { scope: stageScope(2), open: false });
-    const events: RunEvent[] = [...executingS1, callEnded, notified({ _tag: "ExecutionEnded", phase: 1, outcome: { status: "needs_input", question: "Which?", summary: "" } } as UiEvent), ended(implementation, "needs_input"), asked(1, prompts.decisionPrompt), { _tag: "Ended", code: 1 }];
+    const events: RunEvent[] = [...executingS1, callEnded, notified({ _tag: "ExecutionEnded", phase: 1, outcome: { status: "needs_input", question: "Which?", summary: "" } } as UiEvent), ended(implementation, "needs_input"), asked(1, prompts.decisionPrompt), endedEvent(HALTED)];
     const s = fold([...live(events), close]);
     expect(phaseNode(s, implementation)).toMatchObject({ open: true, held: true });
     expect(branch(s, implementation, "stage:current-1")).toMatchObject({ open: true, held: true });
     // An ended Implementation shows only the steps it acted on, so stage 2 is not shown at all; it is not held.
     const shown2 = rawBranch(s, implementation, "stage:current-2");
     expect(shown2?._tag === "Disclosure" && shown2.held).toBe(false);
-    const planningHalt = fold([...live([started, foreseen(false, 1), began(planning), planRound, ended(planning), { _tag: "Ended", code: 1 }]), flags({ scope: phaseScope(planning), open: false })]);
+    const planningHalt = fold([...live([started, foreseen(false, 1), began(planning), planRound, ended(planning), endedEvent(HALTED)]), flags({ scope: phaseScope(planning), open: false })]);
     expect(phaseNode(planningHalt, planning)).toMatchObject({ open: true, held: true });
   });
 
@@ -2201,7 +2202,7 @@ describe("two modes", () => {
   });
 
   test("a replay of four runs places each run in its mode, the newest its run and the one before its last", () => {
-    const run = (id: number, mode: "refinement" | "implementation") => ({ id, events: stamp([startedIn(mode, `${id}`), { _tag: "Ended", code: 0 } as RunEvent]) });
+    const run = (id: number, mode: "refinement" | "implementation") => ({ id, events: stamp([startedIn(mode, `${id}`), endedEvent(COMPLETED) as RunEvent]) });
     const s = fold([helloBoth, { type: "replay", ui: [], runs: [run(1, "refinement"), run(2, "implementation"), run(3, "refinement"), run(4, "implementation")] }]);
     expect([runOf(s, "refinement")?.id, lastOf(s, "refinement")?.id, runOf(s, "implementation")?.id, lastOf(s, "implementation")?.id]).toEqual([3, 1, 4, 2]);
     expect(s.modes.refinement.current).toEqual([1]);
@@ -2221,7 +2222,7 @@ describe("the tab shown before the user chooses one", () => {
 
   test("a replay shows the tab of a run in progress; a choice of the user stands", () => {
     expect(fold([helloImpl, replayOf("implementation")]).selected).toBe("implementation");
-    expect(fold([helloImpl, replayOf("implementation", [{ _tag: "Ended", code: 0 }])]).selected).toBe("refinement");
+    expect(fold([helloImpl, replayOf("implementation", [endedEvent(COMPLETED)])]).selected).toBe("refinement");
     expect(fold([replayOf("implementation")], selectMode(fold([helloImpl]), "refinement")).selected).toBe("refinement");
   });
 });
@@ -2647,26 +2648,26 @@ describe("several refinement runs", () => {
   });
 
   test("closeRun removes an ended run and the list is shown; a later replay does not bring it back", () => {
-    const one = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3), ...eventsOf(2, b)], empty);
+    const one = fold([...eventsOf(1, a), ...eventsOf(1, [endedEvent(INTERRUPTED)], 3), ...eventsOf(2, b)], empty);
     expect(closeRun(one, 2)).toBe(one);
     const closed = closeRun(one, 1);
     expect(closed.modes.refinement.runs.map((r) => r.id)).toEqual([2]);
     expect(closed.modes.refinement.focus).toEqual({ _tag: "List" });
     expect(closed.closed).toEqual([1]);
-    const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([...a, { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp(b) }] };
+    const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([...a, endedEvent(INTERRUPTED)]) }, { id: 2, events: stamp(b) }] };
     expect(reduce(closed, replay).modes.refinement.runs.map((r) => r.id)).toEqual([2]);
     expect(reduce(reduce(closed, helloOf([2])), replay).modes.refinement.runs.map((r) => r.id)).toEqual([2]);
     expect(reduce(closed, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }).closed).toEqual([]);
   });
 
   test("a newer refinement of the same item replaces the held ended one", () => {
-    const one = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3), ...eventsOf(2, b)], empty);
+    const one = fold([...eventsOf(1, a), ...eventsOf(1, [endedEvent(INTERRUPTED)], 3), ...eventsOf(2, b)], empty);
     const again = fold(eventsOf(3, a), one);
     expect(again.modes.refinement.runs.map((r) => r.id)).toEqual([2, 3]);
   });
 
   test("W1-R1-3: the focused ended run replaced by another page's start of its item moves the focus to the replacing run", () => {
-    const ended = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3)], empty);
+    const ended = fold([...eventsOf(1, a), ...eventsOf(1, [endedEvent(INTERRUPTED)], 3)], empty);
     const viewing = focusRun(ended, "refinement", 1);
     expect(viewing.modes.refinement.starting).toBe(null);
     const replaced = fold(eventsOf(2, a), viewing);
@@ -2678,7 +2679,7 @@ describe("several refinement runs", () => {
   });
 
   test("W1-R1-3: a focused running run of another item keeps the focus when the ended run of an item is replaced", () => {
-    const s = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3), ...eventsOf(2, b)], empty);
+    const s = fold([...eventsOf(1, a), ...eventsOf(1, [endedEvent(INTERRUPTED)], 3), ...eventsOf(2, b)], empty);
     const viewing = focusRun(s, "refinement", 2);
     const replaced = fold(eventsOf(3, a), viewing);
     expect(replaced.modes.refinement.focus).toEqual({ _tag: "Run", run: 2 });
@@ -2702,7 +2703,7 @@ describe("several refinement runs", () => {
   });
 
   test("property: any interleaving of two runs' events folds each run as its own stream alone", () => {
-    const ea = eventsOf(1, [...a, said("more"), { _tag: "Ended", code: 0 }]);
+    const ea = eventsOf(1, [...a, said("more"), endedEvent(COMPLETED)]);
     const eb = eventsOf(2, [...b, said("other")]);
     const alone = (messages: readonly ServerMessage[], id: number) => fold(messages, empty).modes.refinement.runs.find((r) => r.id === id);
     fc.assert(
@@ -2735,34 +2736,49 @@ describe("the presented runs", () => {
     expect(modeWaiting(two, "refinement")).toBe(true);
     expect(modeWaiting(focusRun(two, "refinement", 1), "refinement")).toBe(true);
     expect(modeWaiting(two, "implementation")).toBe(false);
-    expect(modeWaiting(fold(eventsOf(2, [{ _tag: "Ended", code: 130 }], 2), two), "refinement")).toBe(false);
+    expect(modeWaiting(fold(eventsOf(2, [endedEvent(INTERRUPTED)], 2), two), "refinement")).toBe(false);
   });
 
   test("runTabs: the items first, then each run named by its item, a waiting run's name marked", () => {
     expect(runTabs(two, "refinement", new Set())).toEqual([
-      { value: "list", name: prompts.LIST_TAB },
-      { value: "run-1", name: prompts.runTabName({ id: "11", title: "item 11" }) },
-      { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })) },
+      { value: "list", name: prompts.LIST_TAB, plain: prompts.LIST_TAB, ending: null },
+      { value: "run-1", name: prompts.runTabName({ id: "11", title: "item 11" }), plain: prompts.runTabName({ id: "11", title: "item 11" }), ending: null },
+      { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })), plain: prompts.runTabName({ id: "12", title: "item 12" }), ending: null },
     ]);
   });
 
   // Issue #209: an ended run's tab carries its end's mark while its end is unseen.
-  test("runTabs: an ended run whose end is unseen is marked ✓ or ✕ by its code; seen, it is plain", () => {
-    for (const code of [0, 130]) {
-      const ended = fold(eventsOf(1, [{ _tag: "Ended", code }], 2), two);
+  test("runTabs: an ended run whose end is unseen is marked by its ending; seen, it is plain", () => {
+    for (const ending of [COMPLETED, INTERRUPTED]) {
+      const ended = fold(eventsOf(1, [endedEvent(ending)], 2), two);
       const name = prompts.runTabName({ id: "11", title: "item 11" });
-      expect(runTabs(ended, "refinement", new Set([1]))[1]).toEqual({ value: "run-1", name: prompts.endedTabName(name, code) });
-      expect(runTabs(ended, "refinement", new Set())[1]).toEqual({ value: "run-1", name });
+      expect(runTabs(ended, "refinement", new Set([1]))[1]).toEqual({ value: "run-1", name: prompts.endedTabName(name, ending), plain: name, ending });
+      expect(runTabs(ended, "refinement", new Set())[1]).toEqual({ value: "run-1", name, plain: name, ending: null });
     }
     expect(runTabs(two, "refinement", new Set([2]))[2]!.name).toBe(prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })));
   });
 
+  // Issue #44: the run's ending, never its code, is what the view keeps and what its tab shows.
+  test("issue #44: a send-back's Ended sets the ending, and its unseen tab carries ↩", () => {
+    const ended = fold(eventsOf(1, [endedEvent(SENT_BACK_PARKED)], 2), two);
+    expect(ended.modes.refinement.runs.find((r) => r.id === 1)?.ended).toEqual(SENT_BACK_PARKED);
+    expect(runTabs(ended, "refinement", new Set([1]))[1]!.name).toBe(`↩ ${prompts.runTabName({ id: "11", title: "item 11" })}`);
+  });
+  test("issue #44: a replayed Ended recorded without its ending is shown as ended, with –", () => {
+    const frame = JSON.stringify({ type: "event", run: 1, seq: 2, time: at(0), event: { _tag: "Ended", code: 0 } });
+    const decoded = decodeServer(frame);
+    if (decoded._tag !== "Success") throw new Error("the frame did not decode");
+    const ended = fold([decoded.success], two);
+    expect(ended.modes.refinement.runs.find((r) => r.id === 1)?.ended).toEqual(UNESTABLISHED_ENDING);
+    expect(runTabs(ended, "refinement", new Set([1]))[1]!.name).toBe(`– ${prompts.runTabName({ id: "11", title: "item 11" })}`);
+  });
+
   test("seam: the mark in front of an ended run's tab is the one in front of the browser title", () => {
-    for (const code of [0, 1, 2, 130]) {
-      const ended = fold(eventsOf(1, [{ _tag: "Ended", code }], 2), two);
+    for (const ending of [COMPLETED, HALTED, ABANDONED, INTERRUPTED, SENT_BACK_PARKED]) {
+      const ended = fold(eventsOf(1, [endedEvent(ending)], 2), two);
       const name = prompts.runTabName({ id: "11", title: "item 11" });
       const tab = runTabs(ended, "refinement", new Set([1]))[1]!.name;
-      const title = tabTitle("/p", { _tag: "Ended", code });
+      const title = tabTitle("/p", { _tag: "Ended", ending });
       expect(tab.slice(0, tab.length - name.length)).toBe(title.slice(0, title.length - tabTitle("/p").length));
     }
   });
@@ -2786,12 +2802,12 @@ describe("the countdown of a question (issue #185)", () => {
     expect(runOf(held, "implementation")?.pending?.held).toBe(true);
   });
   test("an expiry that abandons clears the prompt and keeps the expiry; Ended marks the run over with its word", () => {
-    const events = [started, counting(1, "abandon"), { _tag: "AnswerExpired", prompt: 1, seconds: 120, then: "abandon" } as RunEvent, { _tag: "Ended", code: 2 } as RunEvent];
+    const events = [started, counting(1, "abandon"), { _tag: "AnswerExpired", prompt: 1, seconds: 120, then: "abandon" } as RunEvent, endedEvent(ABANDONED) as RunEvent];
     const run = runOf(fold(live(events)), "implementation");
     expect(run?.pending).toBe(null);
     expect(run?.expired).toEqual({ prompt: 1, seconds: 120, then: "abandon" });
-    expect(run?.ended).toBe(2);
-    expect(prompts.endedOutcome(2)).toBe("abandoned");
+    expect(run?.ended).toEqual(ABANDONED);
+    expect(prompts.endingWord(ABANDONED)).toBe("abandoned");
     // A replay of the same events folds alike.
     expect(runOf(replayed(events), "implementation")?.expired).toEqual(run?.expired);
   });
@@ -3007,7 +3023,7 @@ describe("issue #144: the Implementation tab's list during a run", () => {
   const replayOf = (runs: readonly Readonly<{ id: number; events: readonly RunEvent[] }>[]): ServerMessage => ({ type: "replay", ui: [], runs: runs.map((r) => ({ id: r.id, events: stamp(r.events) })) });
   const empty = fold([helloOf(null), replayOf([])]);
   const question = asked(1, prompts.interviewMessagePrompt);
-  const ended: RunEvent = { _tag: "Ended", code: 0 };
+  const ended: RunEvent = endedEvent(COMPLETED);
   const a = [implementing("11"), said("working")];
   const b = [implementing("12"), said("working")];
   const implFocus = (s: ViewState) => s.modes.implementation.focus;
@@ -3030,20 +3046,20 @@ describe("issue #144: the Implementation tab's list during a run", () => {
   });
 
   test("runTabs: the items alone with no run; with two held runs, the items and the newest run, marked while it waits", () => {
-    expect(runTabs(empty, "implementation", new Set())).toEqual([{ value: "list", name: prompts.LIST_TAB }]);
+    expect(runTabs(empty, "implementation", new Set())).toEqual([{ value: "list", name: prompts.LIST_TAB, plain: prompts.LIST_TAB, ending: null }]);
     const two = fold([...eventsOf(1, [...a, ended]), ...eventsOf(2, [...b, question])], empty);
     expect(two.modes.implementation.runs.map((r) => r.id)).toEqual([1, 2]);
     expect(runTabs(two, "implementation", new Set())).toEqual([
-      { value: "list", name: prompts.LIST_TAB },
-      { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })) },
+      { value: "list", name: prompts.LIST_TAB, plain: prompts.LIST_TAB, ending: null },
+      { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })), plain: prompts.runTabName({ id: "12", title: "item 12" }), ending: null },
     ]);
   });
 
   test("issue #209: the Implementation run's tab carries its unseen end's mark", () => {
-    const halted = fold(eventsOf(1, [...a, { _tag: "Ended", code: 1 }]), empty);
+    const halted = fold(eventsOf(1, [...a, endedEvent(HALTED)]), empty);
     const name = prompts.runTabName({ id: "11", title: "item 11" });
-    expect(runTabs(halted, "implementation", new Set([1]))[1]).toEqual({ value: "run-1", name: prompts.endedTabName(name, 1) });
-    expect(runTabs(halted, "implementation", new Set())[1]).toEqual({ value: "run-1", name });
+    expect(runTabs(halted, "implementation", new Set([1]))[1]).toEqual({ value: "run-1", name: prompts.endedTabName(name, HALTED), plain: name, ending: HALTED });
+    expect(runTabs(halted, "implementation", new Set())[1]).toEqual({ value: "run-1", name, plain: name, ending: null });
   });
 
   test("a Started is shown where asked, where the previous run was shown, or where the list holds no run; else the list stays", () => {

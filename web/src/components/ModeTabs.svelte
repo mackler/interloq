@@ -9,6 +9,7 @@
   import CircularIndeterminate from "./CircularIndeterminate.svelte";
   import { type Mark, markGlyph, markStateText } from "../notify.ts";
   import { limitPauseText, RUNNING_MARK } from "../../../src/prompts.ts";
+  import { endingAlerts } from "../../../src/ending.ts";
 
   let { tab = $bindable(), items }: { tab: string; items: readonly { value: string; name: string; mark: Mark }[] } = $props();
   const group = $props.id();
@@ -23,7 +24,7 @@
     {@const id = group + item.value}
     {@const mark = item.mark}
     <input type="radio" name={group} {id} value={item.value} bind:group={tab} aria-label={accessibleName(item)} />
-    <label for={id} class="m3-layer" data-value={item.value} data-mark={mark._tag}>{#if mark._tag === "Running"}<span class="mark"><CircularIndeterminate label={markStateText(mark) ?? ""} glyph={RUNNING_MARK} /></span> <span class="name">{item.name}</span>{:else if mark._tag === "Clear"}<span class="name">{item.name}</span>{:else}<span class="mark" class:alert={mark._tag === "Ended" && mark.code !== 0} aria-hidden="true">{markGlyph(mark)}</span> <span class="name">{item.name}</span>{#if mark._tag === "LimitPaused"}{" "}<span class="when">{limitPauseText(mark.pause.fromMs, mark.pause.untilMs, mark.pause.known)}</span>{/if}{/if}{#if item.value === tab}<span class="indicator" aria-hidden="true"></span>{/if}</label>
+    <label for={id} class="m3-layer" data-value={item.value} data-mark={mark._tag} data-ending={mark._tag === "Ended" ? mark.ending._tag : undefined}>{#if mark._tag === "Running"}<span class="mark"><CircularIndeterminate label={markStateText(mark) ?? ""} glyph={RUNNING_MARK} /></span> <span class="name">{item.name}</span>{:else if mark._tag === "Clear"}<span class="name">{item.name}</span>{:else}<span class="mark" class:alert={mark._tag === "Ended" && endingAlerts(mark.ending)} aria-hidden="true">{markGlyph(mark)}</span> <span class="name">{item.name}</span>{#if mark._tag === "LimitPaused"}{" "}<span class="when">{limitPauseText(mark.pause.fromMs, mark.pause.untilMs, mark.pause.known)}</span>{/if}{/if}{#if item.value === tab}<span class="indicator" aria-hidden="true"></span>{/if}</label>
   {/each}
 </div>
 
@@ -73,7 +74,8 @@
     display: inline-flex;
     align-items: center;
   }
-  /* Issue #139: halted is the one alert, in the error color and bold, so it never reads as one of the four reports. */
+  /* Issue #139: halted is the one alert, in the error color and bold, so it never reads as one of the four reports;
+     issue #44: an abandonment is drawn so too (decision Q2). */
   .mark.alert {
     color: var(--m3c-error);
     font-weight: 700;

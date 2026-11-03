@@ -5,7 +5,7 @@
 import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Path, type PlatformError, Ref, Result, type Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
-import { type Artifact, guardedRecord, implementationRootsOf, LOG_SUBJECTS, subjectOf, pathOf, RECORDS_DIR, reviewedFile, RUNS_DIR, type RunRoot, recordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
+import { type Artifact, guardedRecord, implementationRootsOf, LOG_SUBJECTS, subjectOf, pathOf, RECORDS_DIR, recordsDirOf, reviewedFile, RUNS_DIR, type RunRoot, recordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
 import { describe, FileSystemError, GitError } from "./errors.ts";
 import { IssueBeforeFile, IssueFile, type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
@@ -34,7 +34,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
     const project = path.resolve(projectDir) as ProjectPath;
-    const dir = path.join(project, RECORDS_DIR, root) as RecordPath;
+    const dir = recordsDirOf(project, root) as RecordPath;
     const at = (artifact: Artifact): string => path.join(dir, pathOf(artifact));
     const plan = at({ kind: "plan" }) as RecordPath;
     const questions = at({ kind: "questions" }) as RecordPath;

@@ -9,10 +9,10 @@ import { claudePlannerLayer } from "../src/claude.ts";
 import { codexReviewerLayer } from "../src/codex.ts";
 import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
-import { NoTracker, TrackerUnreachable } from "../src/errors.ts";
+import { describe, NoTracker, ServerFault, TrackerUnreachable } from "../src/errors.ts";
 import { program } from "../src/program.ts";
 import { listedState, type RunMode } from "../src/runMode.ts";
-import { answerExpiredText, limitAnswerExpiredText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
+import { defectText, answerExpiredText, limitAnswerExpiredText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
 import { Reviewer, Tracker, type UiShape } from "../src/services.ts";
 import type { OutputEvent } from "../src/liveOutput.ts";
 import { itemIdOf } from "../src/tracker.ts";
@@ -941,4 +941,48 @@ test("endWait: with two refinements waiting, run B's id with run A's wait is ref
   assert.ok(!eventsOf(h, a).concat(eventsOf(h, b)).some((e) => e._tag === "Notified" && e.event._tag === "WaitEndedEarly"));
   await run(h.manager.stop(h.manager.incarnation, a));
   await run(h.manager.stop(h.manager.incarnation, b));
+});
+
+// Issue #44 (S5): the manager publishes the ending the program concluded, and decides it where none was concluded.
+const endedOf = (h: Harness, id: number) => eventsOf(h, id).find((e): e is Extract<RunEvent, { _tag: "Ended" }> => e._tag === "Ended");
+const replayedEnded = async (h: Harness, id: number) =>
+  (await run(h.manager.replay)).runs.find((r) => r.id === id)?.events.map((s) => s.event).find((e): e is Extract<RunEvent, { _tag: "Ended" }> => e._tag === "Ended");
+
+test("issue #44: a send-back's Ended carries code 0 and the sent-back ending, live and in the replay", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [{ steps: [{ output: { reply: { kind: "notRefined", missing: "the retention" } } }], reviews: [{ issues: [] }] }]);
+  const id = await started(h);
+  await ended(h, id);
+  const live = endedOf(h, id);
+  assert.equal(live?.code, 0);
+  assert.deepEqual(live?.ending, { _tag: "SentBack", missing: "the retention", park: { _tag: "NothingParked" } });
+  assert.deepEqual(await replayedEnded(h, id), live);
+});
+
+test("issue #44: a defect of the run is published halted, with the defect's text and the run's records directory", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [{ steps: [{ output: noQuestions, plan: "v1" }] }], reviewing(repo, () => undefined, Effect.die(new Error("boom"))));
+  const id = await started(h);
+  await ended(h, id);
+  const live = endedOf(h, id);
+  assert.equal(live?.code, 1);
+  assert.equal(live?.ending._tag, "Halted");
+  if (live?.ending._tag !== "Halted") return;
+  assert.equal(live.ending.reason, defectText("boom"));
+  assert.equal(live.ending.records, runDirOf(repo));
+});
+
+test("issue #44: a run haltAll publishes past its bounds is halted with the server fault's text", async () => {
+  const repo = tempRepo();
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const h = await harness(repo, [{ steps: [{ output: noQuestions, plan: "v1" }] }], reviewing(repo, () => reach(), Effect.uninterruptible(Effect.never)), [], undefined, SHORT);
+  const id = await started(h);
+  await reached;
+  await run(h.manager.haltAll("write EPIPE"));
+  const live = endedOf(h, id);
+  assert.equal(live?.code, 1);
+  assert.equal(live?.ending._tag, "Halted");
+  if (live?.ending._tag !== "Halted") return;
+  assert.equal(live.ending.reason, describe(new ServerFault({ message: "write EPIPE" })));
 });

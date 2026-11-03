@@ -6,7 +6,8 @@ import { type Mark, markGlyph } from "./notify.ts";
 /**
  * The tab's title for the server's identification of its project; `Interloq` alone before the first hello. Issue #16:
  * a pause or an unseen end puts its marker in front, keeping the project; issue #209: an end's marker is ✓ for a
- * finished run and ✕ for any other end (`endMarkOf`); issue #139: the glyph is `markGlyph`'s, the one the mode tabs show.
+ * finished run and ✕ for any other end; issue #139: the glyph is `markGlyph`'s, the one the mode tabs show; issue #44:
+ * an end's glyph is its ending's own (`endingMarkOf`).
  */
 export const tabTitle = (location: string | null, mark: Mark = { _tag: "Clear" }): string => {
   const title = location === null ? "Interloq" : `${ownName(location)} — Interloq`;

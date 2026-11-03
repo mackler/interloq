@@ -1,4 +1,5 @@
 import { NO_STEP_CHECKS } from "../src/schema.ts";
+import { COMPLETED, ENDINGS, HALTED, SENT_BACK_PARKED } from "./endingFixtures.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { test } from "node:test";
@@ -1129,15 +1130,12 @@ test("parkedMergeRefusedText names the branch and its own case, says nothing was
   }
 });
 
-// Issue #209: the two end marks and the one choice between them.
-test("endMarkOf: a finished run is marked ✓ and every other end ✕", async () => {
-  const fc = (await import("fast-check")).default;
-  assert.equal(prompts.endMarkOf(0), prompts.TITLE_ENDED_MARK);
-  for (const code of [1, 2, 130]) assert.equal(prompts.endMarkOf(code), prompts.TITLE_UNFINISHED_MARK);
-  fc.assert(fc.property(fc.integer().filter((c) => c !== 0), (c) => prompts.endMarkOf(c) === prompts.TITLE_UNFINISHED_MARK));
+// Issue #209: the end marks among the other marks; issue #44: a run tab's name carries its ending's own mark.
+test("endedTabName: the ending's mark in front of the name, distinct from the other marks", () => {
   const marks = new Set([prompts.TITLE_ENDED_MARK, prompts.TITLE_UNFINISHED_MARK, prompts.TITLE_WAITING_MARK, prompts.RUNNING_MARK, prompts.LIMIT_PAUSED_MARK]);
   assert.equal(marks.size, 5);
-  for (const code of [0, 1, 2, 130]) assert.equal(prompts.endedTabName("x", code), `${prompts.endMarkOf(code)} x`);
+  for (const e of ENDINGS) assert.equal(prompts.endedTabName("x", e), `${prompts.endingMarkOf(e)} x`);
+  assert.equal(prompts.endedTabName("x", SENT_BACK_PARKED), "↩ x");
 });
 
 // Issue #163 (decision Q1): the line under the choice of terms names the button the question page shows.
@@ -1155,7 +1153,8 @@ test("limitPauseText: until or next try, the day only where it differs", () => {
   assert.equal(prompts.limitPauseText(from, Date.parse("2026-12-10T00:30:00Z"), false), "next try 10 Dec 00:30 UTC");
 });
 test("the state texts of a run", () => {
-  assert.equal(prompts.runEndedText(0), "a run finished");
-  assert.equal(prompts.runEndedText(1), "a run halted");
+  assert.equal(prompts.runEndedText(COMPLETED), "a run completed");
+  assert.equal(prompts.runEndedText(HALTED), "a run halted");
+  assert.equal(prompts.runEndedText(SENT_BACK_PARKED), "a run sent back");
   assert.ok(prompts.runLimitPausedText("until 23:11 UTC").endsWith("until 23:11 UTC"));
 });

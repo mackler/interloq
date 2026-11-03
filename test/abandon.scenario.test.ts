@@ -52,7 +52,7 @@ test("a plan writer's question unanswered after an execution committed: 2, the w
   const last = record.slice(record.lastIndexOf("**Abandoned (exit code 2):**"));
   assert.ok(last.length > 0 && last.includes("Which retention?") && last.includes(durationText(120_000)), record.slice(-800));
   assert.match(last, /question \d+/);
-  assert.deepEqual(conclusion?.abandoned, { _tag: "SetRefined" });
+  assert.deepEqual(conclusion?.ending._tag === "Abandoned" ? conclusion.ending.label : null, { _tag: "SetRefined" });
   assert.equal(conclusion?.parked?._tag, "Parked");
   assert.ok(probe.ui.said.some((l) => l.startsWith("\nNO ANSWER: ")));
 });
@@ -81,8 +81,9 @@ test("the first read's question unanswered: 2, nothing committed, the label stil
   assert.equal(dirs.length, 1);
   const record = fs.readFileSync(path.join(repo, "plan-review", "runs", dirs[0]!, "conversation.md"), "utf8");
   assert.ok(record.includes("retry") && record.includes("**Abandoned (exit code 2):**"), record);
-  // No conclusion: the run manager's chain records it as the label unchanged.
-  assert.equal(conclusion, null);
+  // Issue #44: concluded abandoned before the records, its label unchanged and nothing parked.
+  assert.deepEqual(conclusion?.ending._tag === "Abandoned" ? conclusion.ending.label : null, { _tag: "Unchanged" });
+  assert.equal(conclusion?.parked, null);
 });
 
 {
@@ -98,7 +99,7 @@ test("the first read's question unanswered: 2, nothing committed, the label stil
     });
     assert.equal(code, 2);
     assert.equal(await stateOf(probe), "implementing");
-    assert.deepEqual(conclusion?.abandoned, { _tag: "SendBackUnfinished", step: "label" });
+    assert.deepEqual(conclusion?.ending._tag === "Abandoned" ? conclusion.ending.label : null, { _tag: "SendBackUnfinished", step: "label" });
     const park = conclusion?.parked ?? null;
     assert.ok(conversation(probe).includes(abandonAfterSendBackLine(scriptedItem.id, park?._tag === "Parked" ? park.branch : null, "label")));
   });

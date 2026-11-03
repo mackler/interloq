@@ -1,14 +1,16 @@
 // Issue #16: the page's icon, with a badge while a prompt waits or after a watched run ended unseen (pure). An SVG
 // written here as a data URL: no canvas, no file, no dependency. Issue #209: an end's badge carries its mark, ✓ for a
-// finished run and ✕ for any other end; the waiting badge stays a plain dot.
+// finished run and ✕ for any other end; the waiting badge stays a plain dot. Issue #44: an end's badge carries its
+// ending's own glyph, in the error color for a halt and an abandonment alone (decision Q2).
 // Issue #139: a halted run's badge is the alert, in the error color with ✕; a working or paused run's badge is in the
 // working color with its glyph.
+import { endingAlerts } from "../../src/ending.ts";
 import { type Mark, markGlyph } from "./notify.ts";
 
 export type FaviconColors = Readonly<{ base: string; badge: string; ended: string; working: string }>;
 
 const badgeColor = (mark: Mark, colors: FaviconColors): string =>
-  mark._tag === "Waiting" ? colors.badge : mark._tag === "Ended" ? (mark.code === 0 ? colors.ended : colors.badge) : colors.working;
+  mark._tag === "Waiting" ? colors.badge : mark._tag === "Ended" ? (endingAlerts(mark.ending) ? colors.badge : colors.ended) : colors.working;
 
 /** The icon for a mark: a rounded square with the letter I, and for a mark a dot in its top right corner, an end's with its mark. */
 export const faviconHref = (mark: Mark, colors: FaviconColors): string => {

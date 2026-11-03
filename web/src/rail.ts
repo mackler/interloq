@@ -99,7 +99,8 @@ const nodeOf = (run: RunView, scope: UiScope, auto: boolean, held: boolean, coll
  */
 const needingIndex = (run: RunView): number => {
   if (run.pending !== null) return currentIndex(run.timeline);
-  if (run.ended !== 1) return -1;
+  // Issue #44: a halt holds its phase open, whatever its exit code was taken from before.
+  if (run.ended?._tag !== "Halted") return -1;
   const stopped = run.timeline.findIndex((e) => e.state === "stopped");
   return stopped >= 0 ? stopped : currentIndex(run.timeline);
 };

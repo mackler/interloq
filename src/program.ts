@@ -4,15 +4,16 @@
 import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, isTrackerError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped, type NoAnswer, type SendBackUnanswered } from "./errors.ts";
+import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, isTrackerError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped, type NoAnswer, type SendBackUnanswered, type WriteCheck } from "./errors.ts";
 import { heldTrackerEnv, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
-import { ABANDONED_EXIT_CODE, abandonAfterSendBackLine, abandonedRecord, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
+import { abandonAfterSendBackLine, abandonedRecord, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { type ImplementationEnd, implementationRun, type RefinementEnd, type RefinementSource, refinementRun, run, type UsedPreparation } from "./run.ts";
 import { preparationOf } from "./preparedComments.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
-import { type Config, NO_STEP_CHECKS, stepChecksOf, type TermsMode } from "./schema.ts";
+import { type Config, finalCommandsOf, NO_STEP_CHECKS, type StepChecks, stepChecksOf, type TermsMode } from "./schema.ts";
+import { type CompletedWork, type ConcludedEnding, exitCodeOfEnding, type ItemReturn, type ReturnCheck } from "./ending.ts";
 import { fileOf, loadSourcedConfig } from "./config.ts";
 import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestCheck.ts";
 import type { Platform } from "./platform.ts";
@@ -47,6 +48,8 @@ export type Wiring = Readonly<{
   suite: SuiteRunnerShape;
   /** A test's wrapper of every store the run opens (issue #186, W1-R1-3: a parking held while Stop task arrives); none live. */
   store?: (store: StoreShape) => StoreShape;
+  /** Issue #44: a test's observation of the run's conclusion, called once it is concluded; none live. */
+  observeConclusion?: (conclusion: Conclusion) => Effect.Effect<void>;
 }>;
 
 /**
@@ -165,8 +168,18 @@ export const makeFaultSignal: Effect.Effect<FaultSignal> = Effect.all({ fault: D
  * What a run concluded once its records exist (issue #186): its exit code, and the parking the run did itself (a
  * send-back's or a guard stop's, src/sendBack.ts), which the chain then takes as given; null where the run parked nothing.
  */
-/** Issue #185: `abandoned`, what an abandonment for want of an answer did to the item's label; null for every other ending. */
-export type Conclusion = Readonly<{ code: number; parked: ParkNote | null; abandoned: AbandonLabel | null }>;
+/**
+ * Issue #44: the run's ending, from which its exit code is derived (`exitCodeOfEnding`) and which the page shows as
+ * concluded; an abandonment's label (issue #185) is the ending's own.
+ */
+export type Conclusion = Readonly<{ ending: ConcludedEnding; parked: ParkNote | null }>;
+
+/**
+ * Issue #44: what is known of the item's label after its return to refined failed, from what the last write's check
+ * found: only a read-back that found a state names it; anything else, a write that may have landed included, is unchecked.
+ */
+export const returnCheckOf = (check: WriteCheck | null): ReturnCheck =>
+  check !== null && check.kind === "held" && check.held.kind === "state" ? { _tag: "Held", state: check.held.state } : { _tag: "Unchecked" };
 /**
  * `concluded` (work review 2 of issue #192, W2-R1-1) receives the code the run computed once its records exist, with its
  * own parking since issue #186. The run's
@@ -270,27 +283,27 @@ const programWith = (
         yield* ui.say(`Usage: ${usage}`);
       });
     /** What the page is told of a halt: HALTED, its reason and the records' directory, then the last two lines. */
-    const sayHalt = (reason: string, sessionId: string | null, records: StoreShape) =>
+    const sayHalt = (reason: string, sessionId: string | null, records: StoreShape): Effect.Effect<void> =>
       Effect.gen(function* () {
         yield* ui.say(`\nHALTED: ${reason}\nState is preserved in ${records.dir}.`);
         yield* tail(sessionId, records);
-        return 1;
       });
+    /** Issue #44: a halt's ending; `records` the directory the halt was recorded in, null where none was created. */
+    const haltedEnding = (reason: string, records: string | null, park: ParkNote | null = null, item: ItemReturn | null = null): ConcludedEnding => ({ _tag: "Halted", reason, records, park, item });
     /**
      * Issue #193: a halt of a run whose records exist: its record in conversation.md first, so that it is on disk when the
      * run's end is published, then what the page is told. A write that fails is ignored, so a halt never becomes a defect.
      */
-    const halted = (reason: string, sessionId: string | null, records: StoreShape) =>
+    const halted = (reason: string, sessionId: string | null, records: StoreShape): Effect.Effect<void> =>
       records.converse(haltRecord(reason)).pipe(Effect.ignore, Effect.andThen(sayHalt(reason, sessionId, records)));
     /** Issue #185: what the page is told of a run that got no answer: NO ANSWER, the reason and the records, then the last two lines. */
-    const sayAbandoned = (reason: string, sessionId: string | null, records: StoreShape) =>
+    const sayAbandoned = (reason: string, sessionId: string | null, records: StoreShape): Effect.Effect<void> =>
       Effect.gen(function* () {
         yield* ui.say(`\nNO ANSWER: ${reason}\nState is preserved in ${records.dir}.`);
         yield* tail(sessionId, records);
-        return ABANDONED_EXIT_CODE;
       });
-    /** Issue #185: the record of the abandonment in conversation.md, then what the page is told; 2. */
-    const abandonedEnding = (error: NoAnswer | SendBackUnanswered, sessionId: string | null, records: StoreShape) =>
+    /** Issue #185: the record of the abandonment in conversation.md, then what the page is told. */
+    const abandonedEnding = (error: NoAnswer | SendBackUnanswered, sessionId: string | null, records: StoreShape): Effect.Effect<void> =>
       records.converse(abandonedRecord(describe(error))).pipe(Effect.ignore, Effect.andThen(sayAbandoned(describe(error), sessionId, records)));
 
     /**
@@ -303,15 +316,22 @@ const programWith = (
      * recordsRoot, so a server fault racing it finds the same directory), the first read's held records and the halt's
      * record are written there, and the page is told; where the allocation fails, the page alone.
      */
-    const haltedBeforeRecords = (reason: string, held: readonly string[]) => endedBeforeRecords(held, (records) => halted(reason, null, records), (records) => sayHalt(reason, null, records));
+    const haltedBeforeRecords = (reason: string, held: readonly string[]): Effect.Effect<ConcludedEnding> =>
+      endedBeforeRecords(
+        held,
+        (records) => Effect.as(halted(reason, null, records), haltedEnding(reason, records.dir)),
+        (records) => Effect.as(sayHalt(reason, null, records), haltedEnding(reason, null)),
+      );
     /**
      * Issue #185: a question of the first read that went unanswered: the same directory with the held records and the
      * abandonment's record, and 2. Nothing was committed and no label set, so the item keeps the label refined.
      */
-    const abandonedBeforeRecords = (error: NoAnswer, held: readonly string[]) =>
-      endedBeforeRecords(held, (records) => abandonedEnding(error, null, records), (records) => sayAbandoned(describe(error), null, records));
+    const abandonedBeforeRecords = (error: NoAnswer, held: readonly string[]): Effect.Effect<ConcludedEnding> => {
+      const ending: ConcludedEnding = { _tag: "Abandoned", reason: describe(error), park: null, label: { _tag: "Unchanged" } };
+      return endedBeforeRecords(held, (records) => Effect.as(abandonedEnding(error, null, records), ending), (records) => Effect.as(sayAbandoned(describe(error), null, records), ending));
+    };
     /** The directory of an ending before the records exist, its held records, then `ended`; where it fails, `said` alone. */
-    const endedBeforeRecords = (held: readonly string[], ended: (records: StoreShape) => Effect.Effect<number>, said: (records: StoreShape) => Effect.Effect<number>) =>
+    const endedBeforeRecords = (held: readonly string[], ended: (records: StoreShape) => Effect.Effect<ConcludedEnding>, said: (records: StoreShape) => Effect.Effect<ConcludedEnding>) =>
       Effect.gen(function* () {
         const root = yield* Effect.uninterruptible(
           Effect.gen(function* () {
@@ -367,7 +387,7 @@ const programWith = (
         // Issue #171: End the run at the first read's question, before the run has records.
         yield* ui.say("\nINTERRUPTED by the user.");
         yield* tail(null, yield* store(planned, []));
-        return 130;
+        return { _tag: "Interrupted", park: null, item: null } satisfies ConcludedEnding;
       }
       const taskRead = taskExit.value;
       if (Result.isFailure(taskRead))
@@ -410,13 +430,14 @@ const programWith = (
      * The halt of a fault that came before the body: recorded in the run's directory if it was allocated, otherwise in
      * one allocated now, so that the halt is recorded; the planned store if that allocation fails.
      */
-    const faultHalted = (error: ServerFault, ignorePaths: readonly string[]) =>
+    const faultHalted = (error: ServerFault, ignorePaths: readonly string[]): Effect.Effect<ConcludedEnding> =>
       Effect.gen(function* () {
         const known = yield* Ref.get(recordsRoot);
         const root = Option.isSome(known) ? Exit.succeed(known.value) : yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
         const faultRecords = yield* store(Exit.isSuccess(root) ? root.value : planned, ignorePaths);
         if (Exit.isSuccess(root)) yield* recordFault(faultRecords, error.message);
-        return yield* sayHalt(describe(error), null, faultRecords);
+        yield* sayHalt(describe(error), null, faultRecords);
+        return haltedEnding(describe(error), Exit.isSuccess(root) ? faultRecords.dir : null);
       });
     /**
      * The fault's halt, or the defect, from a stage's failed exit. Issue #193 (Q2): a defect is recorded in the directory
@@ -445,9 +466,20 @@ const programWith = (
         Effect.onInterrupt(() => faultCome.pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (error) => Effect.asVoid(faultHalted(error, ignorePaths)) })))),
       );
 
+    /**
+     * Issue #44: the conclusion of an ending before the run's store exists: nothing is parked, so the parking is none.
+     */
+    const concludeBefore = (ending: ConcludedEnding): Effect.Effect<number> => concluding({ ending, parked: null });
+    const concluding = (conclusion: Conclusion): Effect.Effect<number> =>
+      Effect.gen(function* () {
+        if (concluded !== undefined) yield* Ref.set(concluded, Option.some(conclusion));
+        if (wiring.observeConclusion !== undefined) yield* wiring.observeConclusion(conclusion);
+        return exitCodeOfEnding(conclusion.ending);
+      });
+
     const prepared = yield* orFault(prepare, []);
-    if (Exit.isFailure(prepared)) return yield* stageFailed(prepared.cause, []);
-    if (typeof prepared.value === "number") return prepared.value;
+    if (Exit.isFailure(prepared)) return yield* stageFailed(prepared.cause, []).pipe(Effect.flatMap(concludeBefore));
+    if ("_tag" in prepared.value) return yield* concludeBefore(prepared.value);
     const { config, decisionFormat, task, tracker, requirements, held, checks, prepared: preparation, source } = prepared.value;
 
     /**
@@ -464,7 +496,8 @@ const programWith = (
       if (Exit.isFailure(allocated)) {
         const error = Cause.findErrorOption(allocated.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(allocated.cause));
-        return yield* sayHalt(describe(error.value), null, yield* store(planned, []));
+        yield* sayHalt(describe(error.value), null, yield* store(planned, []));
+        return haltedEnding(describe(error.value), null);
       }
       const records = yield* store(allocated.value, config.ignorePaths);
       const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk), Layer.succeed(SuiteRunner, wiring.suite));
@@ -474,8 +507,8 @@ const programWith = (
       return { records, context } as const;
     });
     const built = yield* orFault(setup, config.ignorePaths);
-    if (Exit.isFailure(built)) return yield* stageFailed(built.cause, config.ignorePaths);
-    if (typeof built.value === "number") return built.value;
+    if (Exit.isFailure(built)) return yield* stageFailed(built.cause, config.ignorePaths).pipe(Effect.flatMap(concludeBefore));
+    if ("_tag" in built.value) return yield* concludeBefore(built.value);
     const { records, context } = built.value;
     const sessionId = Context.get(context, Planner).sessionId;
 
@@ -485,9 +518,9 @@ const programWith = (
      * outcome; nothing here changes the run's exit code. A halt asks the chain to claim the parking of its uncommitted
      * files, and a claimed parking keeps the item implementing. `bounded`, after the server's fault, gives the write 5 s.
      */
-    const returnItem = (ending: RunEnding, bounded: boolean): Effect.Effect<void> =>
+    const returnItem = (ending: RunEnding, bounded: boolean): Effect.Effect<ItemReturn | null> =>
       mode !== "implementation" || tracker === null
-        ? Effect.void
+        ? Effect.succeed(null)
         : Effect.gen(function* () {
             const say = (line: string) => ui.say(line).pipe(Effect.andThen(records.converse(`${line}\n\n`).pipe(Effect.ignore)));
             const facts = yield* Effect.gen(function* () {
@@ -505,33 +538,37 @@ const programWith = (
               const claimed = check._tag === "Uncommitted" && (yield* claimParking);
               return baselineFacts(startCommit, head, claimed ? PARKING_CLAIMED : NOT_PARKED);
             }).pipe(Effect.result);
-            if (Result.isFailure(facts)) return yield* say(itemNotReturnedLine(start.item, describe(facts.failure), null));
-            if (itemReturnOf(facts.success)._tag !== "Return") return;
+            /** Issue #44: the return as confirmed, after its line is said. */
+            const notReturned = (cause: string, check: ReturnCheck, line: string): Effect.Effect<ItemReturn> => Effect.as(say(line), { _tag: "NotReturned", cause, check });
+            // The facts' failure comes before any write, so Interloq did not change the label.
+            if (Result.isFailure(facts)) return yield* notReturned(describe(facts.failure), { _tag: "NotSent" }, itemNotReturnedLine(start.item, describe(facts.failure), null));
+            if (itemReturnOf(facts.success)._tag !== "Return") return null;
             // Its waits and read-back recorded as any tracker write's, a record that fails ignored so it cuts no retry short.
             const env: TrackerRetryEnv = { ui, settings: config, record: (markdown) => records.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" };
             const write = Effect.flatMap(Tracker, (t) => writeWithRetry(t, { kind: "setState", item: start.item, state: listedState("implementation") }, env)).pipe(Effect.provide(tracker));
             const outcome = yield* (bounded ? write.pipe(Effect.timeoutOption(`${RETURN_AFTER_FAULT_MS} millis`)) : write.pipe(Effect.map(Option.some))).pipe(Effect.exit);
             if (Exit.isSuccess(outcome)) {
-              return yield* say(Option.isSome(outcome.value) ? itemReturnedLine(start.item) : itemNotReturnedLine(start.item, `no answer within ${RETURN_AFTER_FAULT_MS / 1000} s`, null));
+              if (Option.isSome(outcome.value)) return yield* Effect.as(say(itemReturnedLine(start.item)), { _tag: "Returned" } as const);
+              // The bound's timeout: the write may have landed.
+              const cause = `no answer within ${RETURN_AFTER_FAULT_MS / 1000} s`;
+              return yield* notReturned(cause, { _tag: "Unchecked" }, itemNotReturnedLine(start.item, cause, null));
             }
             const error = Cause.findErrorOption(outcome.cause);
             const failure = Option.getOrNull(error);
             const [cause, check] =
               failure === null ? [Cause.pretty(outcome.cause), null] : failure._tag === "TrackerWriteFailed" ? [trackerFailureText(failure.error), failure.check] : [describe(failure), null];
-            return yield* say(itemNotReturnedLine(start.item, cause, check));
+            return yield* notReturned(cause, returnCheckOf(check), itemNotReturnedLine(start.item, cause, check));
           });
 
     /**
-     * W2-R1-1: the code the run computed, kept for the caller in `concluded` and returned. Issue #186: with the run's own
-     * parking, given where the ending carries it and otherwise read from parked.json, so an interruption after a
-     * completed parking tells the chain the work is parked.
+     * W2-R1-1: the run's conclusion, kept for the caller in `concluded`, and its code returned. Issue #186: with the run's
+     * own parking, given where the ending carries it and otherwise read from parked.json, so an interruption after a
+     * completed parking tells the chain the work is parked. Issue #44: the ending is built with that parking.
      */
-    const conclude = (code: number, given?: ParkNote | null, abandoned: AbandonLabel | null = null): Effect.Effect<number> =>
+    const conclude = (build: (parked: ParkNote | null) => ConcludedEnding, given?: ParkNote | null): Effect.Effect<number> =>
       Effect.gen(function* () {
-        if (concluded === undefined) return code;
         const parked = given !== undefined ? given : parkedNoteOf(yield* records.loadParked().pipe(Effect.orElseSucceed(() => null)));
-        yield* Ref.set(concluded, Option.some({ code, parked, abandoned }));
-        return code;
+        return yield* concluding({ ending: build(parked), parked });
       });
     /**
      * Issue #185: what an abandonment did to the work and the label. A send-back that had begun keeps its parking and
@@ -560,19 +597,29 @@ const programWith = (
       yield* tail(yield* sessionId, records);
     });
     /** The halt of the server's fault once the records and the services exist: its record, then HALTED. */
-    const bodyFaulted = (error: ServerFault) =>
+    const bodyFaulted = (error: ServerFault): Effect.Effect<number> =>
       Effect.gen(function* () {
         yield* recordFault(records, error.message);
-        yield* returnItem("halted", true);
-        return yield* sayHalt(describe(error), yield* sessionId, records);
+        const item = yield* returnItem("halted", true);
+        yield* sayHalt(describe(error), yield* sessionId, records);
+        return yield* conclude((park) => haltedEnding(describe(error), records.dir, park, item));
       });
     /**
      * An interruption of the whole run from outside: the server's fault's halt if the fault has come (W1-S1-1 of issue
      * #158: haltAll interrupts a faulted run whose body did not end within the grace), otherwise the user's (Stop task).
      */
     const interruptedFromOutside = faultCome.pipe(
-      Effect.flatMap(Option.match({ onNone: () => returnItem("stopped", false).pipe(Effect.andThen(interrupted), Effect.as(130)), onSome: bodyFaulted })),
-      Effect.flatMap((code) => conclude(code)),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.gen(function* () {
+              const item = yield* returnItem("stopped", false);
+              yield* interrupted;
+              return yield* conclude((park) => ({ _tag: "Interrupted", park, item }));
+            }),
+          onSome: bodyFaulted,
+        }),
+      ),
     );
     // Issue #120: a refinement run is the question phase alone; an implementation run plans, executes and reviews.
     const kind = start.kind;
@@ -604,7 +651,12 @@ const programWith = (
           // Issue #216 (Q1): an issue found already built or replaced has no requirements; its line was said by the run.
           else yield* ui.say(`Conversation record: ${records.dir}/conversation.md`);
           yield* tail(yield* sessionId, records);
-          return yield* conclude(0, exit.value.mode === "implementation" && exit.value.end._tag === "SentBack" ? exit.value.end.park : null);
+          const outcome = exit.value;
+          if (outcome.mode === "implementation" && outcome.end._tag === "SentBack") {
+            const { missing, park } = outcome.end;
+            return yield* conclude(() => ({ _tag: "SentBack", missing, park }), park);
+          }
+          return yield* conclude(() => ({ _tag: "Completed", work: completedWork(outcome, checks) }), null);
         }
         const error = Cause.findErrorOption(exit.cause);
         if (Option.isNone(error)) {
@@ -616,29 +668,36 @@ const programWith = (
         }
         // S24 (the user's decision at the stop of execution phase 1): End the run is an interruption, like Ctrl+C.
         if (error.value._tag === "UserStopped") {
-          yield* returnItem("stopped", false);
+          const item = yield* returnItem("stopped", false);
           yield* interrupted;
-          return yield* conclude(130);
+          return yield* conclude((park) => ({ _tag: "Interrupted", park, item }));
         }
-        if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value).pipe(Effect.flatMap((code) => conclude(code)));
+        if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value);
         // Issue #185: no answer came within the wait: the run's work moved to the item's branch and the label set to
         // refined (abandonRun), or, where a send-back had begun, its undone step said and no label set.
         if (error.value._tag === "NoAnswer" || error.value._tag === "SendBackUnanswered") {
           const failure = error.value;
           const { park, label } = yield* abandonment(failure);
-          const code = yield* abandonedEnding(failure, yield* sessionId, records);
-          return yield* conclude(code, park, label);
+          yield* abandonedEnding(failure, yield* sessionId, records);
+          return yield* conclude(() => ({ _tag: "Abandoned", reason: describe(failure), park, label }), park);
         }
         // Issue #186: the guard's stop keeps the item implementing (requirements Q5), and a parking that failed or a
         // send-back left incomplete keeps it too (Q6): the item is not returned, and the ending's parking is concluded.
         const failure = error.value;
         const parkedEnding = failure._tag === "NotRefinedStopped" || failure._tag === "SendBackNotParked" || failure._tag === "SendBackIncomplete" ? failure : null;
-        if (parkedEnding === null) yield* returnItem("halted", false);
-        const code = yield* halted(describe(failure), yield* sessionId, records);
-        return yield* conclude(code, parkedEnding === null ? undefined : parkedEnding.park);
+        const item = parkedEnding === null ? yield* returnItem("halted", false) : null;
+        yield* halted(describe(failure), yield* sessionId, records);
+        return yield* conclude((park) => haltedEnding(describe(failure), records.dir, park, item), parkedEnding === null ? undefined : parkedEnding.park);
       }),
     );
   });
+
+/**
+ * Issue #44: what a run that finished accomplished. An implementation run finishes only after its final commands passed
+ * and its commit check found nothing, so every final command configured passed.
+ */
+const completedWork = (outcome: RunOutcome, checks: StepChecks): CompletedWork =>
+  outcome.mode === "refinement" ? outcome.end : { _tag: "Implemented", finalCommands: finalCommandsOf(checks).map((c) => c.command) };
 
 /**
  * Issue #192: how long the relabeling of an item may take after the server's fault, half of SERVER_FAULT_GRACE_MS (10 s),
