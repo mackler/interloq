@@ -40,7 +40,7 @@ import { tabTitle } from "./title.ts";
 import { ownName } from "../../src/hostDir.ts";
 import { faviconHref } from "./favicon.ts";
 import { CHIME_TONES, resetChime, schemeColors } from "./alerts.ts";
-import type { Mark, Preferences } from "./notify.ts";
+import { type Mark, markedTabName, markGlyph, type Preferences } from "./notify.ts";
 import { readPreferences, writePreferences } from "./storage.ts";
 import { AudioContextStub, NotificationStub, shownOf } from "./test-setup.ts";
 import { helloChain } from "./testChain.ts";
@@ -1122,11 +1122,67 @@ describe("App and the draft", () => {
       const { root, ws } = await begin();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("refinement", "11"), asked(1)]) }, { id: 2, events: stamp([startedIn("implementation", "1")]) }] });
       const labels = () => [...root.querySelectorAll("nav.tabs label")].map((l) => l.textContent?.trim());
-      expect(labels()).toEqual([prompts.waitingTabName(prompts.TAB_TEXTS.refinement.tab), prompts.TAB_TEXTS.implementation.tab]);
+      expect(labels()).toEqual([prompts.waitingTabName(prompts.TAB_TEXTS.refinement.tab), markedTabName(prompts.TAB_TEXTS.implementation.tab, { _tag: "Running" })]);
       expect(root.querySelector("input[name=answer], textarea[name=answer]")).not.toBe(null);
       select(root, "implementation");
       expect(root.querySelector("input[name=answer], textarea[name=answer]")).toBe(null);
       expect(labels()[0]).toBe(prompts.waitingTabName(prompts.TAB_TEXTS.refinement.tab));
+    });
+
+    // Issue #139: from the Refinement tab, the Implementation tab says which of the five states its run is in, by the
+    // mark the title shows too (one decision, one glyph).
+    describe("the Implementation tab's mark, seen from the Refinement tab (issue #139)", () => {
+      const NAME = prompts.TAB_TEXTS.implementation.tab;
+      const implLabel = (root: HTMLElement) => one(root, 'nav.tabs label[data-value="implementation"]');
+      const FROM = Date.parse("2026-11-03T10:00:00Z");
+      const UNTIL = Date.parse("2026-11-03T23:11:00Z");
+      const limited = { _tag: "Notified", event: { _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL } };
+      const shows = (root: HTMLElement, mark: Mark) => {
+        expect(implLabel(root).textContent?.trim()).toBe(markedTabName(NAME, mark));
+        // The seam: the tab's leading glyph is the title's, both markGlyph of one mark.
+        expect(document.title).toBe(tabTitle("/p", mark));
+        expect(implLabel(root).textContent?.trim().startsWith(`${markGlyph(mark)} `)).toBe(true);
+        expect(document.title.startsWith(`${markGlyph(mark)} `)).toBe(true);
+      };
+      test("(a) a run in progress: running, with the progress indicator", async () => {
+        const { root, ws } = await begin();
+        ws.receive({ type: "replay", ui: [], runs: [{ id: 2, events: stamp([startedIn("implementation", "1")]) }] });
+        select(root, "refinement");
+        shows(root, { _tag: "Running" });
+        expect(implLabel(root).querySelectorAll("[role=progressbar]").length).toBe(1);
+      });
+      test("(b) a usage-limit wait: paused, with when it ends", async () => {
+        const { root, ws } = await begin();
+        ws.receive({ type: "replay", ui: [], runs: [{ id: 2, events: stamp([startedIn("implementation", "1"), limited]) }] });
+        select(root, "refinement");
+        shows(root, { _tag: "LimitPaused", pause: { fromMs: FROM, untilMs: UNTIL, known: true } });
+        expect(implLabel(root).textContent).toContain(prompts.limitPauseText(FROM, UNTIL, true));
+      });
+      test("(c) a pending prompt: waiting", async () => {
+        const { root, ws } = await begin();
+        ws.receive({ type: "replay", ui: [], runs: [{ id: 2, events: stamp([startedIn("implementation", "1"), asked(1)]) }] });
+        select(root, "refinement");
+        shows(root, { _tag: "Waiting" });
+        expect(implLabel(root).querySelectorAll("[role=progressbar]").length).toBe(0);
+      });
+      test("(d) a run that finishes off screen: finished; (e) one that halts: halted, the alert", async () => {
+        for (const code of [0, 1]) {
+          const { root, ws } = await begin();
+          ws.receive({ type: "replay", ui: [], runs: [{ id: 2, events: stamp([startedIn("implementation", "1")]) }] });
+          select(root, "refinement");
+          ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: { _tag: "Ended", code } });
+          flushSync();
+          shows(root, { _tag: "Ended", code });
+          expect(implLabel(root).querySelector(".alert") !== null).toBe(code !== 0);
+          document.body.innerHTML = "";
+        }
+      });
+      test("(f) a usage-limit wait and a pending prompt at once: waiting", async () => {
+        const { root, ws } = await begin();
+        ws.receive({ type: "replay", ui: [], runs: [{ id: 2, events: stamp([startedIn("implementation", "1"), limited, asked(1)]) }] });
+        select(root, "refinement");
+        shows(root, { _tag: "Waiting" });
+      });
     });
 
     test("a refusal of one mode shows in that tab only", async () => {

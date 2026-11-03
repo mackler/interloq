@@ -27,10 +27,11 @@
   // beyond those minimums, the layout is the one before issue #204. The widths are remembered per browser and shown
   // clamped to the window, so a resize never rewrites them. No separator exists below 840 px, and the panels' one is
   // absent while the decision page spans both panels.
-  import { Button, ConnectedButtons, Tabs } from "m3-svelte";
+  import { Button, ConnectedButtons } from "m3-svelte";
   import ScrollableTabs from "./ScrollableTabs.svelte";
+  import ModeTabs from "./ModeTabs.svelte";
   import { untrack } from "svelte";
-  import { BACK_TO_LIST, CLOSE_RUN_TAB, PANEL_SPLIT_LABEL, panelSplitText, RAIL_WIDTH_LABEL, railWidthText, runTabsLabel, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
+  import { BACK_TO_LIST, CLOSE_RUN_TAB, PANEL_SPLIT_LABEL, panelSplitText, RAIL_WIDTH_LABEL, railWidthText, runTabsLabel, TAB_TEXTS, TABS_LABEL, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
@@ -44,14 +45,14 @@
   import { tabTitle } from "../title.ts";
   import { type Closer, currentPermission, playChime, requestDesktopPermission, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
   import { faviconHref } from "../favicon.ts";
-  import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences, unseenEnds } from "../notify.ts";
+  import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, marksByMode, type NotifyState, type Observation, type Permission, type Preferences, unseenEnds } from "../notify.ts";
   import { readColumnWidths, readPanelLines, readPreferences, writeColumnWidths, writePanelLines, writePreferences } from "../storage.ts";
   import { DEFAULT_PANEL_LINES, type PanelLines, panelLinesOf, rootPxOf } from "../panelHeight.ts";
   import { columnsPxOf, type ColumnWidths, DEFAULT_COLUMN_WIDTHS, gridColumns, leftBounds, leftPercentOf, railBounds, railRemOf, shown as shownWidth } from "../columnWidths.ts";
   import ColumnSeparator from "./ColumnSeparator.svelte";
   import { Result } from "effect";
   import { ownName } from "../../../src/hostDir.ts";
-  import { limitPauseOf, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { limitPauseOf, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -261,8 +262,13 @@
   $effect(() => {
     if (showList && tab.items._tag === "Unasked" && view.connection === "open") untrack(() => requestItems(mode));
   });
-  /** The tabs, each name with the waiting mark while its run waits for the user [visibility of system status]. */
-  const tabItems = $derived(RUN_MODES.map((m) => ({ name: modeWaiting(view, m) ? waitingTabName(TAB_TEXTS[m].tab) : TAB_TEXTS[m].tab, value: m })));
+  /**
+   * Issue #139: the tabs, each with its run's mark, one of five states (working, paused for a usage limit, waiting,
+   * finished, halted), so the other tab's progress is visible from either [visibility of system status]. The marks are
+   * the decisions' of the effect below, the ones the title and the icon show, combined per mode by one precedence.
+   */
+  let tabMarks = $state<Readonly<Record<RunMode, Mark>>>({ refinement: { _tag: "Clear" }, implementation: { _tag: "Clear" } });
+  const tabItems = $derived(RUN_MODES.map((m) => ({ name: TAB_TEXTS[m].tab, value: m, mark: tabMarks[m] })));
   // Issue #16: a pending prompt, or a watched run's end not yet seen, puts its marker in front of the title and a
   // badge on the icon, and is raised once as the user chose: a desktop notification, a chime [visibility of system
   // status, for a user who is not looking at the page]. decide (web/src/notify.ts) decides; this effect only fires.
@@ -439,7 +445,9 @@
     if (decision.raise === "sound" || decision.raise === "desktopAndSound") playChime();
   };
   $effect(() => {
-    const decisions = presented(view).map((p) => [p.key, decide(untrack(() => notifyStates[p.key] ?? initialNotifyState), observation(p))] as const);
+    const shown = presented(view);
+    const decisions = shown.map((p) => [p.key, decide(untrack(() => notifyStates[p.key] ?? initialNotifyState), observation(p))] as const);
+    tabMarks = marksByMode(decisions.map(([, d], i) => ({ mode: shown[i]!.mode, mark: markOf(d) })));
     notifyStates = Object.fromEntries(decisions.map(([k, d]) => [k, d.state]));
     // A run no longer presented has its notification closed.
     for (const k of Object.keys(closers)) {
@@ -478,9 +486,10 @@
   {/if}
   <!-- Issue #120: the two modes are two destinations of equal rank within one project, each with content of its own, which
        M3 specifies as primary tabs [recognition rather than recall: both modes are always in view; visibility of system
-       status: a tab whose run waits for an answer carries the waiting mark]. -->
+       status: a tab whose run waits for an answer carries the waiting mark; issue #139: each tab carries its run's
+       state, written by hand in ModeTabs because m3-svelte's Tabs takes no indicator]. -->
   <nav class="tabs" aria-label={TABS_LABEL}>
-    <Tabs items={tabItems} bind:tab={() => mode, (value) => selectTab(value as RunMode)} />
+    <ModeTabs items={tabItems} bind:tab={() => mode, (value) => selectTab(value as RunMode)} />
   </nav>
   {#if secondRow !== null && secondRowShown}
     <nav class="run-tabs" aria-label={runTabsLabel(mode)}>

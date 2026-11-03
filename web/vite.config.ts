@@ -7,14 +7,15 @@ import { functionsMixins } from "vite-plugin-functions-mixins";
 import { defineConfig } from "vitest/config";
 
 /** The components whose CSS Vitest injects, so that jsdom computes their styles. */
-const INJECTED_CSS = ["TimelineRail.svelte", "ItemList.svelte", "ScrollableTabs.svelte"];
+const INJECTED_CSS = ["TimelineRail.svelte", "ItemList.svelte", "ScrollableTabs.svelte", "ModeTabs.svelte"];
 
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   // m3-svelte writes its styles with CSS @function and @mixin, which this plugin resolves at build time.
   // Under Vitest, the progress rail's styles are injected with the component, so that jsdom computes its indentation
   // (issue #116), and so are the item list's, so that the tests read its rows' real CSS (issue #125), and so are the scrollable tabs', so that the tests read the CSS that lets the row scroll
-  // sideways (issue #202); every other
+  // sideways (issue #202), and so are the mode tabs', so that the tests read the CSS that keeps a label on one row
+  // (issue #139); every other
   // component's CSS stays out of the tests, as before.
   plugins: [
     svelte(process.env.VITEST ? { dynamicCompileOptions: ({ filename }) => (INJECTED_CSS.some((name) => filename.endsWith(`/${name}`)) ? { css: "injected" } : undefined) } : {}),
