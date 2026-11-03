@@ -61,3 +61,33 @@ test("RELAYED_EXAMPLE parses as a relayed question, each option with no picture,
 test("the prompts that list an option's fields name its figure", () => {
   assert.match(prompts.TERMS_ENTRY_FIELDS, /figure/u);
 });
+
+// Work review 3 of issue #98 (W3-R1-1), plan review 4 (P4-R1-1): every writer prompt that states the question format
+// itself carries the figure clause. questionListPrompt composes its format from clauses; every other prompt is selected
+// here by its containing QUESTION_TEXT_FORMAT whole, so no hand-kept list decides which are covered. Continuation
+// prompts state no format and inherit it from their session's opening prompt.
+test("every prompt that states the question format carries the figure clause", async () => {
+  const { TEST_ROOT, EARLIER_ROOT } = await import("./helpers.ts");
+  const { NO_STEP_CHECKS } = await import("../src/schema.ts");
+  const clause = prompts.QUESTION_FORMAT.find((c) => c.id === "figure")!.text;
+  assert.ok(prompts.questionListPrompt("t").includes(clause), "questionListPrompt lacks the figure clause");
+  const request = { origin: { kind: "relayed" as const }, decision: null, question: plain("Which?"), options: [], details: [], explanations: [], facts: "", fallback: [], history: [] };
+  const candidates: Readonly<Record<string, string>> = {
+    QUESTION_OPTIONS_RULE: prompts.QUESTION_OPTIONS_RULE,
+    RELAYED_SHAPE: prompts.RELAYED_SHAPE,
+    initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
+    earlierPlanPrompt: prompts.earlierPlanPrompt(TEST_ROOT, "t", true, EARLIER_ROOT, NO_STEP_CHECKS),
+    planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
+    questionApplyDecisionsPrompt: prompts.questionApplyDecisionsPrompt(TEST_ROOT),
+    interviewOpenPrompt: prompts.interviewOpenPrompt(TEST_ROOT),
+    interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]),
+    clarificationOpenPrompt: prompts.clarificationOpenPrompt(TEST_ROOT),
+    termsPrompt: prompts.termsPrompt(TEST_ROOT, "t"),
+    termsOnRequestPrompt: prompts.termsOnRequestPrompt(TEST_ROOT, "t", "Q1"),
+    executePrompt: prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
+    contextPrompt: prompts.contextPrompt("t", request),
+  };
+  const stating = Object.entries(candidates).filter(([, text]) => text.includes(prompts.QUESTION_TEXT_FORMAT));
+  assert.ok(stating.length >= 4, `only ${stating.map(([n]) => n).join(", ")} state the format`);
+  for (const [name, text] of stating) assert.ok(text.includes(clause), name);
+});
