@@ -31,6 +31,20 @@ test("the scope is a selection for E2E_SCENARIOS, a file or a selector, and whol
   assert.equal(scopeOf({}, [...PLAYWRIGHT, "--project=chromium"]), "selection");
 });
 
+test("only an option Playwright gives a value consumes the next argument, and every selecting option is a selection (W1-R1-1)", () => {
+  const scope = (...args: string[]) => scopeOf({}, [...PLAYWRIGHT, ...args]);
+  assert.equal(scope("--headed", "e2e/run.spec.ts"), "selection");
+  assert.equal(scope("--workers", "2"), "whole");
+  assert.equal(scope("--workers=2"), "whole");
+  assert.equal(scope("--reporter", "list", "e2e/run.spec.ts"), "selection");
+  assert.equal(scope("--headed"), "whole");
+  for (const args of [["-G", "slow"], ["--shard", "1/2"], ["--shard=1/2"], ["--last-failed"], ["--test-list", "tests.txt"], ["--only-changed"]]) {
+    assert.equal(scope(...args), "selection", args.join(" "));
+  }
+  assert.equal(scope("-x"), "whole");
+  assert.equal(scope("--max-failures", "1"), "whole");
+});
+
 test("onEnd writes one counted command from the tests' outcomes", () => {
   const dir = mkdtempSync(join(tmpdir(), "e2e-counts-"));
   const saved = { file: process.env[COUNTS_FILE_VARIABLE], scenarios: process.env.E2E_SCENARIOS };

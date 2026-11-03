@@ -47,6 +47,13 @@ test("bats' TAP report: each test line counted once, a skip and a todo skipped, 
   fails(tapCounts("hello\n"));
 });
 
+test("a malformed TAP report is refused: a plan with trailing text, a plan the test lines disagree with, two plans (W1-R1-2)", () => {
+  fails(tapCounts("1..2garbage\nhello\n"));
+  fails(tapCounts("1..3\nok 1 a\nok 2 b\n"));
+  fails(tapCounts("1..2\nok 1 a\nok 2 b\n1..2\n"));
+  assert.deepEqual(ok(tapCounts("1..0 # skip no tests\n")), { passed: 0, failed: 0, skipped: 0 });
+});
+
 test("Playwright's outcomes: a flaky test passed", () => {
   assert.deepEqual(playwrightCounts(["expected", "expected", "flaky", "unexpected", "skipped"]), { passed: 3, failed: 1, skipped: 1 });
 });

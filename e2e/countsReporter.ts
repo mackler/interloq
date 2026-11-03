@@ -28,15 +28,43 @@ export const commandNameOf = (env: NodeJS.ProcessEnv, argv: readonly string[]): 
   return ["npx playwright test", ...args].join(" ");
 };
 
-const SELECTORS = ["-g", "--grep", "--grep-invert", "--project"];
-/** A selection where E2E_SCENARIOS starts some servers alone, or an argument names a file or a selector. */
+// From the `testOptions` table of Playwright's `lib/program.js`, the source of `npx playwright test --help`.
+/** The options that run only part of the tests. `-x` and `--max-failures` end a run early but select no test. */
+const SELECTION_OPTIONS: ReadonlySet<string> = new Set([
+  "-g", "--grep", "-G", "--grep-invert", "--project", "--shard", "--last-failed", "--only-changed", "--test-list", "--test-list-invert",
+]);
+/** The options shown with a required `<value>`, which consume the next argument. */
+const VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "--add-reporter", "--browser", "-c", "--config", "--global-timeout", "-g", "--grep", "-G", "--grep-invert", "--last-failed-file",
+  "--max-failures", "--output", "--project", "--repeat-each", "--reporter", "--retries", "--run-agents", "--shard", "--test-list",
+  "--test-list-invert", "--timeout", "--trace", "--tsconfig", "--ui-host", "--ui-port", "--update-source-method", "-j", "--workers",
+]);
+/** The options with an optional value from listed choices, which consume the next argument only when it is one of them. */
+const CHOICE_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["--debug", new Set(["inspector", "cli"])],
+  ["-u", new Set(["all", "changed", "missing", "none"])],
+  ["--update-snapshots", new Set(["all", "changed", "missing", "none"])],
+]);
+
+/** Whether the arguments from `i` on select tests: a file named, or an option that runs only part of the tests. */
+const selectsFrom = (args: readonly string[], i: number): boolean => {
+  if (i >= args.length) return false;
+  const arg = args[i];
+  if (arg === "--") return i + 1 < args.length;
+  if (!arg.startsWith("-")) return true;
+  const eq = arg.indexOf("=");
+  const name = eq === -1 ? arg : arg.slice(0, eq);
+  if (SELECTION_OPTIONS.has(name)) return true;
+  const next = args[i + 1];
+  const consumes =
+    eq === -1 && next !== undefined && (VALUE_OPTIONS.has(name) || (CHOICE_OPTIONS.get(name)?.has(next) ?? false));
+  return selectsFrom(args, consumes ? i + 2 : i + 1);
+};
+
+/** A selection where E2E_SCENARIOS starts some servers alone, or an argument names a file or a selecting option. */
 export const scopeOf = (env: NodeJS.ProcessEnv, argv: readonly string[]): CommandScope => {
   if (env.E2E_SCENARIOS !== undefined && env.E2E_SCENARIOS !== "") return "selection";
-  const args = testArgs(argv);
-  const selects = args.some(
-    (arg, i) => SELECTORS.includes(arg) || SELECTORS.some((s) => arg.startsWith(`${s}=`)) || (!arg.startsWith("-") && (i === 0 || !args[i - 1].startsWith("-"))),
-  );
-  return selects ? "selection" : "whole";
+  return selectsFrom(testArgs(argv), 0) ? "selection" : "whole";
 };
 
 type RunTests = Readonly<{ allTests: () => readonly Readonly<{ outcome: () => PlaywrightOutcome }>[] }>;

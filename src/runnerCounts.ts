@@ -25,25 +25,29 @@ const decodeVitest = Schema.decodeUnknownResult(VitestReport);
 export const vitestCounts = (text: string): Result.Result<TestCounts, string> =>
   Result.map(reason(decodeVitest(text)), (r) => ({ passed: r.numPassedTests, failed: r.numFailedTests, skipped: r.numPendingTests + r.numTodoTests }));
 
-const TAP_PLAN = /^\d+\.\.\d+/u;
+const TAP_PLAN = /^1\.\.(\d+)(\s+#.*)?$/u;
 const TAP_TEST = /^(not )?ok\b(.*)$/u;
 const TAP_SKIP = /#\s*(skip|todo)\b/iu;
 /**
  * bats' TAP report: each top-level test line counted once, a `# skip` or `# todo` directive skipped, `not ok` failed and
- * `ok` passed. Indented lines (diagnostics, YAML blocks, subtests) and comments are not test lines. A report without a
- * plan line is not bats' report.
+ * `ok` passed. Indented lines (diagnostics, YAML blocks, subtests) and comments are not test lines. A report without exactly one plan line `1..N` (an optional `# …` comment after it), or whose top-level test lines do not
+ * number N, is not bats' report.
  */
 export const tapCounts = (text: string): Result.Result<TestCounts, string> => {
   const lines = text.split(/\r\n|\r|\n/u);
-  if (!lines.some((l) => TAP_PLAN.test(l))) return Result.fail("no TAP plan line");
-  return Result.succeed(
-    lines.reduce<TestCounts>((c, l) => {
-      const m = TAP_TEST.exec(l);
-      if (m === null) return c;
-      if (TAP_SKIP.test(m[2])) return { ...c, skipped: c.skipped + 1 };
-      return m[1] === undefined ? { ...c, passed: c.passed + 1 } : { ...c, failed: c.failed + 1 };
-    }, { passed: 0, failed: 0, skipped: 0 }),
-  );
+  const plans = lines.flatMap((l) => {
+    const m = TAP_PLAN.exec(l);
+    return m === null ? [] : [Number(m[1])];
+  });
+  if (plans.length !== 1) return Result.fail(plans.length === 0 ? "no TAP plan line of the form 1..N" : `${plans.length} TAP plan lines`);
+  const counts = lines.reduce<TestCounts>((c, l) => {
+    const m = TAP_TEST.exec(l);
+    if (m === null) return c;
+    if (TAP_SKIP.test(m[2])) return { ...c, skipped: c.skipped + 1 };
+    return m[1] === undefined ? { ...c, passed: c.passed + 1 } : { ...c, failed: c.failed + 1 };
+  }, { passed: 0, failed: 0, skipped: 0 });
+  const total = counts.passed + counts.failed + counts.skipped;
+  return total === plans[0] ? Result.succeed(counts) : Result.fail(`the TAP plan names ${plans[0]} tests and the report has ${total}`);
 };
 
 /** A Playwright test's outcome, as `TestCase.outcome()` gives it. */
