@@ -8,7 +8,9 @@ import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import type * as S from "../src/schema.ts";
 import type { ShownDocument } from "../src/reviewedDocument.ts";
-import { issue, questionEntry, refinementFails, requirementsRespond, runRefinement, type ScriptedUi, summaryReply, tempRepo, testLayer, userQuestion } from "./helpers.ts";
+import { Effect } from "effect";
+import { program } from "../src/program.ts";
+import { fakeTrackerOf, haltConversationOf, haltReasonOf, issue, questionEntry, requirementsRespond, runRefinement, type ScriptedUi, scriptedItem, scriptedStart, summaryReply, tempRepo, testLayer, testWiring, userQuestion } from "./helpers.ts";
 
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
 const q = (id: string): S.QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
@@ -163,7 +165,9 @@ test("a classification missing an accepted id gets the validation repair turn, a
   assert.ok(repaired.probe.planner.prompts.some((p) => p.includes(missing)), "no repair turn named the missing finding");
   assert.equal(read(repaired.probe.dir, "requirements.md"), "Q1: A\nFixed.\n");
 
-  const halted = testLayer(tempRepo(), {
+  // W1-R1-2: the second failure is carried through program, the one place a typed error of the run becomes exit code 1
+  // and its record is written in conversation.md (issue #193).
+  const { wiring, probe } = testWiring(tempRepo(), {
     answers: ["A"],
     closings: closing,
     steps: [
@@ -172,6 +176,15 @@ test("a classification missing an accepted id gets the validation repair turn, a
       { output: requirementsRespond([["G-R1-1", "accepted"]], [], "Q1: A\nFixed.") },
     ],
     reviews: [{ issues: [] }, { issues: [issue("G-R1-1", "a contradiction")] }, { issues: [] }],
+    tracker: fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]),
+    mode: "refinement",
   });
-  await refinementFails(halted.layer, "FindingsInvalid", new RegExp(missing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, "refinement"), wiring)));
+  assert.equal(code, 1);
+  const said = probe.ui.said.join("\n");
+  const reason = haltReasonOf(said);
+  assert.ok(reason !== null, `no halt said: ${said}`);
+  assert.ok(reason.includes(missing), reason);
+  assert.ok(haltConversationOf(said).endsWith(prompts.haltRecord(reason)));
+  assert.ok(read(probe.dir, "conversation.md").endsWith(prompts.haltRecord(reason)), read(probe.dir, "conversation.md").slice(-600));
 });
