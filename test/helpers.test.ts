@@ -37,7 +37,7 @@ test("ScriptedUi records the notified events in order", async () => {
 // Issue #243: a beside question takes only a `beside` answer from the head of the script, calling onTaken first.
 test("ScriptedUi.askBeside takes a beside answer at the head, calls onTaken, and never takes an answer scripted for ask", async () => {
   const taken: string[] = [];
-  const onTaken = (t: string) => Effect.sync(() => void taken.push(t));
+  const onTaken = (t: string) => Effect.sync(() => { taken.push(t); return "kept" as const; });
   const ui = new ScriptedUi([{ beside: "p" }, "1"]);
   const text = await Effect.runPromise(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askBeside("limit", "line", onTaken))));
   assert.equal(text, "p");

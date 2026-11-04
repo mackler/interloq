@@ -346,15 +346,18 @@ SCENARIOS.transportRetry = {
   config: { maxTransportRetries: 3, transportRetryDelaySeconds: 2 },
 };
 // Issue #30: an accepted issue with plan.json unchanged after the corrective turn: the question, answered Proceed.
-// Issue #243: the question is open beside the running review; its second cycle is held (a timed gate, since the test
-// cannot reach into the server) so that the test answers while the review runs.
+// Issue #243: the question is open beside the running review; its second cycle is held until the run publishes the
+// answer to a question beside it (W1-R1-4: released by the run's own events, never by a timer), so that the test answers
+// while the review runs.
+let besideAnswered!: () => void;
+const besideAnsweredOnce = new Promise<void>((resolve) => (besideAnswered = resolve));
 SCENARIOS.unchangedPause = {
   steps: [
     { output: noQuestions, plan: "1. [ ] the step\n" },
     { output: respond([["P1-R1-1", "accepted"]]) },
     { output: respond([["P1-R1-1", "accepted"]]) },
   ],
-  reviews: [{ issues: [issue("P1-R1-1", "The step names no file.")] }, { issues: [], gate: () => new Promise<void>((r) => setTimeout(r, 20_000)) }, { issues: [] }],
+  reviews: [{ issues: [issue("P1-R1-1", "The step names no file.")] }, { issues: [], gate: () => besideAnsweredOnce }, { issues: [] }],
   execs: [finished],
 };
 
@@ -571,6 +574,17 @@ const access = name === "noTracker" ? { ...trackerAccessOf(tracker, shared), tra
 
 const main = Effect.gen(function* () {
   const manager = yield* makeRunManager((ui, mode) => ({ ...testWiring(repo, { ...scenarioOf(mode), tracker }).wiring, ui: Effect.succeed(ui) }), repo, [], `e2e-${name}`, access, name === "chain" || name === "chainQueue" ? DEFAULT_SETTINGS : OFF_SETTINGS);
+  // W1-R1-4: the unchangedPause scenario's held review is released when a run answers one of its questions beside it.
+  if (name === "unchangedPause") {
+    const beside = new Set<string>();
+    yield* manager.subscribe((b) =>
+      Effect.sync(() => {
+        if (b._tag !== "event") return;
+        if (b.event._tag === "Asked" && b.event.beside !== null) beside.add(`${b.run}:${b.event.prompt}`);
+        if (b.event._tag === "Answered" && beside.has(`${b.run}:${b.event.prompt}`)) besideAnswered();
+      }),
+    );
+  }
   // As src/web.ts: the tabs are closed by a finalizer registered after serveEffect, so it runs first (finding 15).
   const web = yield* makeWebServer(manager, distDir);
   yield* HttpServer.serveEffect(web.handler);

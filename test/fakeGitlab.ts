@@ -7,7 +7,7 @@ import { itemOfIssue } from "../src/gitlabIssues.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
 import type { ItemId } from "../src/tracker.ts";
 import { gitlabCredential } from "../src/trackerConfig.ts";
-import type { FakeItem, FakeTracker, TrackerOperation } from "./fakeTracker.ts";
+import { type FakeItem, type FakeTracker, readGates, type TrackerOperation } from "./fakeTracker.ts";
 import { GITLAB_LABELS, PROJECT } from "./gitlabLabels.ts";
 import { type Answer, json, makeStub, type SentRequest } from "./stubHttp.ts";
 
@@ -138,10 +138,12 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
     );
   const scripted = (operation: TrackerOperation) => scriptedAt(operation, "before");
   const after = (operation: TrackerOperation) => scriptedAt(operation, "after");
+  const gates = readGates();
   const tracker: TrackerShape = {
     list: (state) => Effect.andThen(scripted("list"), adapter.list(state)),
     listMarked: (state) => Effect.andThen(scripted("listMarked"), adapter.listMarked(state)),
-    read: (id) => Effect.andThen(Ref.update(reads, (rs) => [...rs, id]), Effect.andThen(scripted("read"), adapter.read(id))),
+    read: (id) =>
+      Effect.flatMap(Ref.updateAndGet(reads, (rs) => [...rs, id]), (rs) => Effect.andThen(gates.held(rs.length), Effect.andThen(scripted("read"), adapter.read(id)))),
     readCited: (id) => Effect.andThen(scripted("readCited"), adapter.readCited(id)),
     writeText: (id, text) => Effect.andThen(scripted("writeText"), Effect.andThen(adapter.writeText(id, text), after("writeText"))),
     writeRefinement: (id, refinement) => Effect.andThen(scripted("writeRefinement"), Effect.andThen(adapter.writeRefinement(id, refinement), after("writeRefinement"))),
@@ -163,6 +165,7 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
     failNext: (operation, error) => Ref.update(failures, (fs): readonly Scripted[] => [...fs, { operation, error, when: "before" }]),
     failAfterNext: (operation, error) => Ref.update(failures, (fs): readonly Scripted[] => [...fs, { operation, error, when: "after" }]),
     edit: () => Effect.die(new Error("the GitLab fake has no edit; edit its server instead")),
+    gateRead: gates.gateRead,
     sent: stub.sent,
     close: server.close,
     server,

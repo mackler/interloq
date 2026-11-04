@@ -12,10 +12,11 @@ import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import { commentText, runCommentKey } from "../src/itemComments.ts";
 import { type Conclusion, defectMessage, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
-import { askedInPlanReview, tempDir, finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
+import { askedInPlanReview, heldClock, presentedQuestions, tempDir, finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { checkCommandInvalidText, defectRecord, sendBackIncompleteText, sentBackLine, haltRecord, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import { checkCommandInvalidText, defectRecord, sendBackIncompleteText, sentBackLine, haltRecord, itemStartedLine, trackerBesideRetryLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
+import { USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import type { CommandLine } from "../src/schema.ts";
 import { phaseName } from "../src/uiEvents.ts";
 import { seededId } from "./fakeTracker.ts";
@@ -681,6 +682,50 @@ describe("the first read of the item, repeated", () => {
     const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: [{ beside: "q" }] });
     assert.equal(await runProgram(probe, wiring), 130);
     assert.match(said(probe), /INTERRUPTED by the user\./);
+  });
+
+  // Issue #243, W1-R1-3: the repeats used up open the question beside further repeats every USAGE_LIMIT_RETRY_SECONDS.
+  const driveWaits = async (held: ReturnType<typeof heldClock>, waits: readonly number[]): Promise<void> => {
+    for (const ms of waits) {
+      await held.sleepRegistered(ms);
+      held.advance(ms);
+    }
+  };
+  test("#243 W1-R1-3: the first read's repeats used up, nothing answered: a further read after the wait succeeds and the run ends 0", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 3);
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST });
+    const held = heldClock(Date.parse("2026-11-04T12:00:00Z"));
+    const done = Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, held.clock)));
+    await driveWaits(held, [10, 20, USAGE_LIMIT_RETRY_SECONDS * 1000]);
+    assert.equal(await done, 0);
+    assert.equal((await Effect.runPromise(tracker.reads)).length >= 4, true);
+    assert.equal(presentedQuestions(probe.ui).filter((q) => q.origin.kind === "tracker").length, 1, "the question was presented once");
+    assert.deepEqual(probe.ui.asked, [], "nothing waited for an answer");
+    const conversation = conversationOf(probe);
+    const first = conversation.indexOf(readLine(1, 0.01));
+    const second = conversation.indexOf(readLine(2, 0.02));
+    const question = conversation.indexOf(trackerExhaustedQuestion("GitHub", "reading item 1"));
+    const further = conversation.indexOf(trackerBesideRetryLine("GitHub", "reading item 1", 3, USAGE_LIMIT_RETRY_SECONDS));
+    const started = conversation.indexOf(itemStartedLine("implementation", scriptedItem.id, scriptedItem.title));
+    assert.ok(first >= 0 && second > first && question > second && further > question && started > further, conversation);
+  });
+
+  test("#243 W1-R1-3: q answered while the read after the repeats is in progress ends the run with 130, that read never completing", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 3);
+    const gate = tracker.gateRead(4);
+    let gateStartedFirst = false;
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: [{ beside: "q", when: () => gate.started.then(() => void (gateStartedFirst = true)) }] });
+    const held = heldClock(Date.parse("2026-11-04T12:00:00Z"));
+    const done = Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, held.clock)));
+    await driveWaits(held, [10, 20, USAGE_LIMIT_RETRY_SECONDS * 1000]);
+    assert.equal(await done, 130);
+    assert.ok(gateStartedFirst, "the answer was given only after the gated read began");
+    assert.equal((await Effect.runPromise(tracker.reads)).length, 4, "no read after the gated one");
+    assert.match(said(probe), /INTERRUPTED by the user\./);
+    assert.ok(!said(probe).includes(itemStartedLine("implementation", scriptedItem.id, scriptedItem.title)), "the gated read's result was never used");
+    assert.deepEqual(probe.planner.prompts, []);
   });
 
   test("Stop task during a first-read wait ends the run with 130", async () => {

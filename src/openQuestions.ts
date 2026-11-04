@@ -6,7 +6,7 @@ import { Deferred, Effect, Fiber, Layer, Ref, Scope } from "effect";
 import type { RunError, UserStopped } from "./errors.ts";
 import * as R from "./openDisputes.ts";
 import type { BesideKey } from "./reviewState.ts";
-import { OpenQuestions, type OpenQuestionsShape } from "./services.ts";
+import { OpenQuestions, type OpenQuestionsShape, type Taken } from "./services.ts";
 
 type Producers = ReadonlyMap<BesideKey, Fiber.Fiber<string, UserStopped | RunError>>;
 type Held = Readonly<{ registry: R.Registry; producers: Producers }>;
@@ -40,7 +40,7 @@ export const makeOpenQuestions: Effect.Effect<OpenQuestionsShape, never, Scope.S
   return {
     scope,
     opened: (dispute) => step((r) => R.opened(r, dispute)),
-    answered: (key, text) => step((r) => R.answered(r, key, text)),
+    answered: (key, text) => step((r) => R.answered(r, key, text)).pipe(Effect.map((r): Taken => (r === "kept" ? "kept" : "refused"))),
     attach: (key, fiber) => Ref.update(held, (h) => ({ ...h, producers: new Map(h.producers).set(key, fiber) })),
     peek: (keys) => step((r) => R.peeked(r, keys)),
     acknowledge: (keys) => step((r) => R.acknowledged(r, keys)),

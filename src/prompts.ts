@@ -4709,9 +4709,6 @@ export const disputeWithdrawnByDecisionLine = (k: number, heading: string): stri
   `${heading}: the disagreement put to you during decision ${k} is withdrawn, because the question that decision served is no longer asked; nothing remains for an answer to it to change.`;
 /** Issue #243: the note recorded with an answer to such a disagreement given before it was withdrawn. */
 export const DISPUTE_NOT_APPLIED_NOTE = "(not applied: the decision this disagreement belonged to had ended, so nothing remained for the answer to change)";
-/** Issue #243: an answer to a dispute's question that arrived after the dispute was withdrawn, so it changes nothing. */
-export const disputeAnswerTooLateLine = (heading: string, text: string): string =>
-  `${heading}: your answer "${text}" arrived after the disagreement it answered was withdrawn, so it changes nothing.`;
 /** Issue #243: the heading of the line that says the review goes on after an accepted point left its file unchanged. */
 export const UNCHANGED_HEADING = "Accepted without a change:";
 /** Issue #243: the record's subject of a Retry answered to an unchanged question. */

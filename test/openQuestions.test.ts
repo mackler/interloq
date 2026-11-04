@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Effect, Exit, Fiber, type Layer } from "effect";
+import { Deferred, Effect, Exit, Fiber, type Layer } from "effect";
 import { UserStopped } from "../src/errors.ts";
 import { numberedOptions, openBeside, type QuestionDraft } from "../src/offer.ts";
 import type { OpenDispute } from "../src/openDisputes.ts";
@@ -33,7 +33,7 @@ const openDispute = (d: OpenDispute) =>
   Effect.gen(function* () {
     const open = yield* OpenQuestions;
     yield* open.opened(d);
-    const handle = yield* openBeside(open.scope, prompts.decisionPrompt, draft, () => true, { offer: false, onAccepted: (text) => Effect.asVoid(open.answered(d.key, text)) });
+    const handle = yield* openBeside(open.scope, prompts.decisionPrompt, draft, () => true, { offer: false, onAccepted: (text) => open.answered(d.key, text) });
     yield* open.attach(d.key, handle.fiber);
     return { open, handle };
   });
@@ -116,4 +116,54 @@ test("quit makes quitted fail with UserStopped", async () => {
     return yield* open.quitted;
   }).pipe(Effect.provide(layer)));
   assert.ok(Exit.isFailure(exit) && String(exit.cause).includes("UserStopped"));
+});
+
+// W1-R1-1: the Ui's take and a withdrawal decided in one place, the registry, so no answer accepted is lost.
+const heldWebUi = async () => {
+  const events: RunEvent[] = [];
+  const suspended = await Effect.runPromise(Deferred.make<void>());
+  const release = await Effect.runPromise(Deferred.make<void>());
+  const ui = await Effect.runPromise(
+    makeWebUi((e) =>
+      e._tag === "Answered"
+        ? Deferred.succeed(suspended, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(Effect.sync(() => void events.push(e))))
+        : Effect.sync(() => void events.push(e)),
+    ),
+  );
+  return { ui, events, suspended, release };
+};
+
+test("W1-R1-1: withdrawAll while an answer's Answered publication is held: the answer's result and the registry agree", async () => {
+  const web = await heldWebUi();
+  const { layer } = await setUp({ ui: web.ui });
+  const { result, w } = await run(layer, Effect.gen(function* () {
+    const { open } = yield* openDispute(dispute("k1"));
+    const prompt = yield* Effect.promise(() => besidePrompt(web.events));
+    const answering = yield* Effect.forkDetach(web.ui.answer(prompt, "1"));
+    yield* Effect.raceFirst(Deferred.await(web.suspended), Effect.andThen(Fiber.await(answering), Effect.void));
+    const w = yield* open.withdrawAll;
+    yield* Deferred.succeed(web.release, undefined);
+    return { result: yield* Fiber.join(answering), w };
+  }));
+  const kept = w.answered.some((a) => a.dispute.key === "k1");
+  const withdrawn = w.withdrawn.some((d) => d.key === "k1");
+  if (result === "taken") assert.ok(kept && !withdrawn, "an answer taken is in the withdrawal's answered");
+  else {
+    assert.equal(result, "notWaiting");
+    assert.ok(withdrawn && !kept, "an answer not taken leaves the dispute withdrawn");
+    assert.ok(!web.events.some((e) => e._tag === "Answered"), "no Answered is published for it");
+  }
+});
+
+test("W1-R1-1: withdrawAll before the answer: the answer is not waiting and nothing is published", async () => {
+  const web = await webUi();
+  const { layer } = await setUp({ ui: web.ui });
+  const result = await run(layer, Effect.gen(function* () {
+    const { open } = yield* openDispute(dispute("k1"));
+    const prompt = yield* Effect.promise(() => besidePrompt(web.events));
+    yield* open.withdrawAll;
+    return yield* web.ui.answer(prompt, "1");
+  }));
+  assert.equal(result, "notWaiting");
+  assert.ok(!web.events.some((e) => e._tag === "Answered"));
 });

@@ -568,7 +568,7 @@ const besidePrompt = async (events: readonly RunEvent[], question: number, count
 };
 const recorder = () => {
   const taken: string[] = [];
-  return { taken, onTaken: (t: string) => Effect.sync(() => void taken.push(t)) };
+  return { taken, onTaken: (t: string) => Effect.sync(() => { taken.push(t); return "kept" as const; }) };
 };
 
 test("a beside question is published with beside, no deciding and no countdown even where the run counts down; pending returns it", async () => {
@@ -678,4 +678,29 @@ test("askDuring with onTaken calls it inside the take, before the asker resumes;
   await framePrompt(events, 2);
   await run(Fiber.interrupt(plain));
   assert.ok(!events.some((e) => e._tag === "PromptCancelled"), "a frame never used beside the run is not cancelled");
+});
+
+// W1-R1-1 of issue #243: the Ui asks onTaken before it publishes the answer, and an answer onTaken refuses is not taken.
+test("W1-R1-1: an onTaken that refuses leaves the beside frame shown, publishes no Answered, and askBeside does not return", async () => {
+  const { ui, events } = await withUi();
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askBeside(prompts.limitPrompt, "line", () => Effect.succeed("refused" as const)))));
+  const prompt = await besidePrompt(events, 1);
+  assert.equal(await run(ui.answer(prompt, "p")), "notWaiting");
+  assert.ok(!events.some((e) => e._tag === "Answered"), "no Answered is published for a refused answer");
+  assert.equal((await run(ui.pending))?.prompt, prompt, "the question is still shown");
+  await sleep(10);
+  assert.equal(fiber.pollUnsafe(), undefined, "askBeside has not returned");
+  await run(Fiber.interrupt(fiber));
+  assert.deepEqual(events[events.length - 1], { _tag: "PromptCancelled", prompt });
+});
+
+test("W1-R1-1: an onTaken that keeps is called before the Answered is published", async () => {
+  const order: string[] = [];
+  const events: RunEvent[] = [];
+  const ui = await run(makeWebUi((e) => Effect.sync(() => { events.push(e); if (e._tag === "Answered") order.push("Answered"); })));
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askBeside(prompts.limitPrompt, "line", () => Effect.sync(() => { order.push("onTaken"); return "kept" as const; })))));
+  const prompt = await besidePrompt(events, 1);
+  assert.equal(await run(ui.answer(prompt, "p")), "taken");
+  assert.deepEqual(order, ["onTaken", "Answered"]);
+  assert.equal(await run(Fiber.join(fiber)), "p");
 });

@@ -15,6 +15,7 @@ import { recordPath, type RunRoot } from "../src/artifacts.ts";
 import { blocksText, piecesText } from "../src/pieces.ts";
 import type { SuiteResult } from "../src/suite.ts";
 import type { OutputEvent } from "../src/liveOutput.ts";
+import type { StoreShape } from "../src/services.ts";
 import { fakeTrackerOf, finished, presentedQuestions, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -365,4 +366,53 @@ test("#243: Run the suite again answered, then another stop outside the work: a 
   const numbers = suiteQuestions(probe).map((q) => q.number);
   assert.equal(numbers.length, 2, String(numbers));
   assert.notEqual(numbers[0], numbers[1]);
+});
+
+// W1-R1-2 of issue #243: a Stop given as the suite run beside its question ends is honored whichever side wins the race,
+// and its decision line is written once.
+const stopLine = "**User decision:** stop the run";
+const heldStopLine = (held: Promise<void>) => (store: StoreShape): StoreShape => ({
+  ...store,
+  converse: (md) => (md.includes(stopLine) ? Effect.promise(() => held).pipe(Effect.andThen(store.converse(md))) : store.converse(md)),
+});
+const countOf = (text: string, part: string): number => text.split(part).length - 1;
+
+test("#243 W1-R1-2: Stop answered while the suite run is gated and the suite then passes at once: the run halts with SuiteStopped, the line once", async () => {
+  let started!: () => void;
+  const begun = new Promise<void>((r) => (started = r));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let releaseLine!: () => void;
+  const lineHeld = new Promise<void>((r) => (releaseLine = r));
+  const gated = { gate: () => (started(), gate), result: { _tag: "Passed", output: "all passed\n", ms: 1 } as SuiteResult };
+  const { wiring, probe } = testWiring(tempRepo(), {
+    ...one,
+    answers: [{ beside: TRANSPORT_ANSWERS.stop, when: () => begun.then(() => { release(); setTimeout(releaseLine, 30); }) }],
+    suite: [timedOut, timedOut, gated],
+    config: { suiteCommand: SUITE },
+    store: heldStopLine(lineHeld),
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 1);
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.ok(conversation.includes(suiteStoppedText(SUITE, 2, 2, "it ran longer than 40 minutes and was stopped")), conversation);
+  assert.equal(countOf(conversation, stopLine), 1, conversation);
+});
+
+test("#243 W1-R1-2: Stop answered while the suite run is gated and never released: the run halts with SuiteStopped, the line once", async () => {
+  let started!: () => void;
+  const begun = new Promise<void>((r) => (started = r));
+  let releaseLine!: () => void;
+  const lineHeld = new Promise<void>((r) => (releaseLine = r));
+  const gated = { gate: () => (started(), new Promise<void>(() => {})), result: { _tag: "Passed", output: "", ms: 1 } as SuiteResult };
+  const { wiring, probe } = testWiring(tempRepo(), {
+    ...one,
+    answers: [{ beside: TRANSPORT_ANSWERS.stop, when: () => begun.then(() => void setTimeout(releaseLine, 30)) }],
+    suite: [timedOut, timedOut, gated],
+    config: { suiteCommand: SUITE },
+    store: heldStopLine(lineHeld),
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 1);
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.ok(conversation.includes(suiteStoppedText(SUITE, 2, 2, "it ran longer than 40 minutes and was stopped")), conversation);
+  assert.equal(countOf(conversation, stopLine), 1, conversation);
 });

@@ -44,7 +44,7 @@ test("askMessage fails alike; nextQuestion counts from 1; askDuring runs the wor
 // Issue #243: a question beside the run is never answered unattended, so the run goes on and is never set aside for it.
 test("askBeside never completes and is interruptible", async () => {
   const { ui } = await run(unattendedUi);
-  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (frame) => frame.askBeside("limit", "line", () => Effect.void))));
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (frame) => frame.askBeside("limit", "line", () => Effect.succeed("kept" as const)))));
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(fiber.pollUnsafe(), undefined);
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));

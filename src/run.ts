@@ -303,6 +303,12 @@ const withdrawnAtEnd = <R extends S.PlannerResponse, D>(subject: Subject<R, D>, 
     }
   });
 
+/**
+ * Issue #243, W1-R1-2: what an answer to the question beside a stopped suite decides, from the answer the question holds
+ * (pure): Stop the run, Run the suite again, or none while unanswered.
+ */
+export const suiteAnswerOf = (answer: Option.Option<string>): "stop" | "retry" | "none" =>
+  Option.isNone(answer) ? "none" : (parseTransportAnswer(answer.value) ?? "stop");
 const sayAndWrite = (line: string): Effect.Effect<void, StoreError, Ui | Store> =>
   Effect.gen(function* () {
     yield* (yield* Ui).say(line);
@@ -568,20 +574,26 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
           question = null;
           return open === null ? Effect.void : Scope.close(open.scope, Exit.void);
         });
-        /** The answer the question holds now: Stop the run, or Run the suite again, which consumes the question. */
-        const answeredNow = Effect.gen(function* () {
-          if (question === null) return "none" as const;
-          const answer = yield* question.handle.answer;
-          if (Option.isNone(answer)) return "none" as const;
-          const choice = parseTransportAnswer(answer.value) ?? "stop";
-          yield* store.converse(suiteAnswerLine(choice, command));
-          yield* closeQuestion;
-          return choice;
-        });
-        /** Completes when Stop the run is answered; a Run the suite again consumes the question and waits no more. */
-        const stopAnswered = (open: NonNullable<typeof question>): Effect.Effect<"stop", UserStopped | StoreError> =>
+        /**
+         * W1-R1-2: the one place an answer to the question is acted on, after the race whichever side won: Stop the run
+         * or Run the suite again recorded once and the question closed, or nothing where none was given.
+         */
+        const decided = (open: NonNullable<typeof question>) =>
+          Effect.gen(function* () {
+            const choice = suiteAnswerOf(yield* open.handle.answer);
+            if (choice === "none") return choice;
+            yield* store.converse(suiteAnswerLine(choice, command));
+            if (question === open) question = null;
+            yield* Scope.close(open.scope, Exit.void);
+            return choice;
+          });
+        /**
+         * Completes when Stop the run is answered, and does nothing else, so its interruption by the suite's end can leave
+         * nothing half done; Run the suite again leaves the suite run in progress to finish.
+         */
+        const stopAnswered = (open: NonNullable<typeof question>): Effect.Effect<"stop", UserStopped> =>
           Effect.raceFirst(
-            Deferred.await(open.answered).pipe(Effect.andThen(answeredNow), Effect.flatMap((c) => (c === "stop" ? Effect.succeed("stop" as const) : Effect.never))),
+            Deferred.await(open.answered).pipe(Effect.andThen(open.handle.answer), Effect.flatMap((a) => (suiteAnswerOf(a) === "stop" ? Effect.succeed("stop" as const) : Effect.never))),
             Fiber.join(open.handle.fiber).pipe(Effect.matchEffect({ onFailure: (e) => (e._tag === "UserStopped" ? Effect.fail(e) : Effect.never), onSuccess: () => Effect.never })),
           );
         const stoppedBy = (stops: readonly SuiteStop[]) => {
@@ -594,12 +606,12 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
             const open = question;
             const running = Effect.map(suitePhase(command, n, key), (r) => ({ _tag: "Ran", r }) as const);
             const ran = yield* (open === null ? running : Effect.raceFirst(running, Effect.map(stopAnswered(open), () => ({ _tag: "Stopped" }) as const)));
-            // Stop the run answered while the suite ran: the run is interrupted (its process group killed), and the run halts.
+            // Stop the run answered while the suite ran, or as it ended: the run halts (where the watcher won, the suite run
+            // was interrupted, its process group killed). The answer is read once, here, whichever side won.
+            if (open !== null && (yield* decided(open)) === "stop") return yield* stoppedBy(here);
             if (ran._tag === "Stopped") return yield* stoppedBy(here);
             const { verdict, log, tail, reports } = ran.r;
             suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed", key, reports }];
-            // A Stop given as the run ended is honored too.
-            if ((yield* answeredNow) === "stop") return yield* stoppedBy(here);
             if (verdict._tag === "Passed") return null;
             if (verdict._tag === "WorkFailed") return { _tag: "SuiteFailed", suite: n, command, reason: verdict.reason, tail, log } satisfies RevisionCause;
             // The next suite run of this iteration is foreseen first, so that the lines name this one as the run now numbers it.
@@ -630,7 +642,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
               };
               const scope = yield* Scope.make();
               const answered = yield* Deferred.make<void>();
-              const handle = yield* openBeside(scope, transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.asVoid(Deferred.succeed(answered, undefined)) }).pipe(inPhase({ kind: "suite", n }));
+              const handle = yield* openBeside(scope, transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.as(Deferred.succeed(answered, undefined), "kept" as const) }).pipe(inPhase({ kind: "suite", n }));
               question = { handle, scope, answered };
             }
             yield* sayAndWrite(suiteRunningAgainLine(name, command));

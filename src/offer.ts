@@ -13,7 +13,7 @@ import { Result } from "effect";
 import { QuestionInvalid } from "./errors.ts";
 import type { Figure } from "./figure.ts";
 import { attachedMarkdown, renderChoice, renderDecisionAbandoned, renderQuestionRecord, termItem } from "./render.ts";
-import { type AskKind, Decider, OpenQuestions, Store, Ui, type UiShape } from "./services.ts";
+import { type AskKind, Decider, OpenQuestions, Store, Ui, type Taken, type UiShape } from "./services.ts";
 
 
 // ---- the offer (D2) ------------------------------------------------------------------------------------
@@ -322,7 +322,7 @@ export type Place =
       _tag: "Beside";
       offer: boolean;
       presented: Deferred.Deferred<number>;
-      onTaken: (raw: string, options: readonly OfferedOption[]) => Effect.Effect<void>;
+      onTaken: (raw: string, options: readonly OfferedOption[]) => Effect.Effect<Taken>;
       stored: Effect.Effect<Option.Option<string>>;
     }>;
 const FOREGROUND: Place = { _tag: "Foreground" };
@@ -399,7 +399,7 @@ export const askOffering = <E, R = never>(
     yield* store.saveFigures(presentFigures(question.options.map((o) => o.figure)));
     yield* store.converse(renderQuestionRecord(question));
     if (beside !== null) yield* Deferred.succeed(beside.presented, question.number);
-    const takenBy = (raw: string) => (beside === null ? Effect.void : beside.onTaken(raw, explained.options));
+    const takenBy = (raw: string): Effect.Effect<Taken> => (beside === null ? Effect.succeed("kept") : beside.onTaken(raw, explained.options));
     /** Issue #153: the records of decision k abandoned by `answer`. */
     const recordAbandoned = (k: number, answer: string) =>
       Effect.gen(function* () {
@@ -532,7 +532,8 @@ export type BesideQuestion = Readonly<{
   answer: Effect.Effect<Option.Option<string>>;
   fiber: Fiber.Fiber<string, UserStopped | RunError>;
 }>;
-export type BesideOptions = Readonly<{ offer: boolean; resolve?: (answer: string, options: readonly OfferedOption[]) => string; onAccepted?: (text: string) => Effect.Effect<void> }>;
+/** `onAccepted`, called inside the Ui's take before the answer is stored: an answer it refuses is not taken (W1-R1-1). */
+export type BesideOptions = Readonly<{ offer: boolean; resolve?: (answer: string, options: readonly OfferedOption[]) => string; onAccepted?: (text: string) => Effect.Effect<Taken> }>;
 /** Issue #243: what an answer taken beside the run is: an answer the question accepts, an end of the run, Help me decide, or rejected. */
 type Accepted = Readonly<{ _tag: "Answer"; raw: string; text: string }> | Readonly<{ _tag: "Quit" }> | Readonly<{ _tag: "Decide" }> | Readonly<{ _tag: "Rejected" }>;
 const acceptedOf = (raw: string, offer: boolean, acceptable: (answer: string) => boolean, resolve: BesideOptions["resolve"], options: readonly OfferedOption[]): Accepted => {
@@ -569,16 +570,21 @@ export const openBeside = (
     const open = yield* Effect.serviceOption(OpenQuestions);
     const presented = yield* Deferred.make<number>();
     const stored = yield* Ref.make(Option.none<Readonly<{ raw: string; text: string }>>());
-    const onTaken = (raw: string, shown: readonly OfferedOption[]): Effect.Effect<void> => {
+    const onTaken = (raw: string, shown: readonly OfferedOption[]): Effect.Effect<Taken> => {
       const accepted = acceptedOf(raw, options.offer, acceptable, options.resolve, shown);
       switch (accepted._tag) {
         case "Answer":
-          return Ref.set(stored, Option.some({ raw: accepted.raw, text: accepted.text })).pipe(Effect.andThen(options.onAccepted === undefined ? Effect.void : options.onAccepted(accepted.text)));
+          // Stored before onAccepted, which may wake a watcher that reads it; W1-R1-1: cleared again where onAccepted refuses
+          // it (the registry withdrew the dispute first), so a withdrawal and the take never both claim the answer.
+          return Ref.set(stored, Option.some({ raw: accepted.raw, text: accepted.text })).pipe(
+            Effect.andThen(options.onAccepted === undefined ? Effect.succeed<Taken>("kept") : options.onAccepted(accepted.text)),
+            Effect.tap((taken) => (taken === "refused" ? Ref.set(stored, Option.none()) : Effect.void)),
+          );
         case "Quit":
-          return Option.isSome(open) ? open.value.quit(new UserStopped({ where: hint })) : Effect.void;
+          return (Option.isSome(open) ? open.value.quit(new UserStopped({ where: hint })) : Effect.void).pipe(Effect.as<Taken>("kept"));
         case "Decide":
         case "Rejected":
-          return Effect.void;
+          return Effect.succeed("kept");
       }
     };
     const place: Place = { _tag: "Beside", offer: options.offer, presented, onTaken, stored: Effect.map(Ref.get(stored), Option.map((s) => s.raw)) };
@@ -609,9 +615,9 @@ export const openBesideUnoffered = (
   Effect.gen(function* () {
     const { question, present } = yield* presentUnoffered(env.ui, env.record, draft);
     const stored = yield* Ref.make(Option.none<string>());
-    const onTaken = (raw: string): Effect.Effect<void> => {
+    const onTaken = (raw: string): Effect.Effect<Taken> => {
       const parsed = parseAskLine(raw);
-      return parsed.kind === "answer" && acceptable(parsed.text) ? Ref.set(stored, Option.some(parsed.text)).pipe(Effect.andThen(onAccepted())) : Effect.void;
+      return (parsed.kind === "answer" && acceptable(parsed.text) ? Ref.set(stored, Option.some(parsed.text)).pipe(Effect.andThen(onAccepted())) : Effect.void).pipe(Effect.as<Taken>("kept"));
     };
     const producer = Effect.scoped(
       Effect.gen(function* () {

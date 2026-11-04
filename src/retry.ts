@@ -258,7 +258,7 @@ const retrying = <A, E, R>(
             const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.transportExhaustedQuestion(agent, what)), options: transportOptions(), attached: attachedOf("fault", prompts.transportDetails(n, fault.message)), ...(agent === "codex" ? { explain: facts } : {}), decision: null };
             const scope = yield* Scope.make();
             const answered = yield* Deferred.make<void>();
-            const handle = yield* openBeside(scope, prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.asVoid(Deferred.succeed(answered, undefined)) });
+            const handle = yield* openBeside(scope, prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.as(Deferred.succeed(answered, undefined), "kept" as const) });
             question = { handle, scope, answered };
           }
           tries++;

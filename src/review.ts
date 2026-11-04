@@ -520,13 +520,8 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
             };
             yield* openQuestions.opened(dispute);
             yield* Ref.update(disputeKeys, (keys) => [...keys, beside.key]);
-            // An answer the registry no longer holds (withdrawn first) is said from a fiber of its own, never inside the take.
-            const tooLate = (text: string) => Effect.gen(function* () {
-              const line = prompts.disputeAnswerTooLateLine(heading, text);
-              yield* ui.say(line);
-              yield* store.converse(`${line}\n\n`).pipe(Effect.ignore);
-            });
-            const onAccepted = (text: string) => Effect.flatMap(openQuestions.answered(beside.key, text), (r) => (r === "tooLate" ? Effect.asVoid(Effect.forkIn(tooLate(text), openQuestions.scope)) : Effect.void));
+            // W1-R1-1: the registry decides in one step between this answer and a withdrawal; one it refuses is not taken.
+            const onAccepted = (text: string) => openQuestions.answered(beside.key, text);
             const handle = yield* openBeside(openQuestions.scope, prompts.decisionPrompt, decisionDraft(heading, d.asks, d.options, within, pass), () => true, { offer: false, resolve: decisionAnswerOf, onAccepted });
             return yield* openQuestions.attach(beside.key, handle.fiber);
           }

@@ -23,6 +23,11 @@ export type FakeTracker = Readonly<{
   failNext: (operation: TrackerOperation, error: TrackerError, state?: ItemState) => Effect.Effect<void>;
   /** Issue #171: the next call of the write `operation` applies its change, then fails with `error`, once (a 500 that applied); with `state`, only a `setState` to that state matches (W1-R1-1). */
   failAfterNext: (operation: "writeRefinement" | "setState" | "comment" | "deleteComment" | "writeText", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
+  /**
+   * Issue #243, W1-R1-3: the read that is the `call`-th of the fake (counted from its first read, 1-based) is gated: when
+   * called it resolves `started`, then waits for `release` before it answers.
+   */
+  gateRead: (call: number) => Readonly<{ started: Promise<void>; release: () => void }>;
   /** Issue #131: the developer edits the item in the tracker (its title or text). */
   edit: (id: ItemId, change: (item: FakeItem) => FakeItem) => Effect.Effect<void>;
 }>;
@@ -30,6 +35,28 @@ export type FakeTracker = Readonly<{
 /** A scripted failure: before the operation changes anything, or after a write applied its change (issue #171). */
 type Scripted = Readonly<{ operation: TrackerOperation; error: TrackerError; when: "before" | "after"; state?: ItemState }>;
 type State = Readonly<{ items: readonly FakeItem[]; failures: readonly Scripted[]; reads: readonly ItemId[]; nextComment: number }>;
+
+/**
+ * Issue #243, W1-R1-3: the gated reads of a fake, by their 1-based number among its reads. `held(n)` is what read n does
+ * before it answers; `gateRead` is `FakeTracker.gateRead`.
+ */
+export const readGates = (): Readonly<{ held: (n: number) => Effect.Effect<void>; gateRead: FakeTracker["gateRead"] }> => {
+  const gates = new Map<number, Readonly<{ start: () => void; released: Promise<void> }>>();
+  return {
+    held: (n) => {
+      const gate = gates.get(n);
+      return gate === undefined ? Effect.void : Effect.andThen(Effect.sync(gate.start), Effect.promise(() => gate.released));
+    },
+    gateRead: (call) => {
+      let start!: () => void;
+      const started = new Promise<void>((r) => (start = r));
+      let release!: () => void;
+      const released = new Promise<void>((r) => (release = r));
+      gates.set(call, { start, released });
+      return { started, release };
+    },
+  };
+};
 
 export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<FakeTracker> =>
   Effect.map(Ref.make<State>({ items: initial, failures: [], reads: [], nextComment: 1 }), (ref) => {
@@ -52,12 +79,14 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
     const replace = (item: FakeItem): Effect.Effect<void> => Ref.update(ref, (s) => ({ ...s, items: s.items.map((i) => (i.id === item.id ? item : i)) }));
     /** Issue #131: the id of a comment the fake adds, `c-1`, `c-2`, …; a seeded comment keeps the id it was given. */
     const newCommentId: Effect.Effect<CommentId> = Ref.modify(ref, (s): readonly [CommentId, State] => [Result.getOrThrow(commentIdOf(`c-${s.nextComment}`)), { ...s, nextComment: s.nextComment + 1 }]);
+    const gates = readGates();
     const shown = ({ open: _open, comments: _comments, marked: _marked, ...item }: FakeItem): TrackerItem => item;
     const tracker: TrackerShape = {
       list: (state) => Effect.andThen(scripted("list"), Effect.map(Ref.get(ref), (s) => s.items.filter((i) => i.open && i.state === state).map(shown))),
       // Issue #131: newest first is the reverse of the order the items were given to makeFakeTracker.
       listMarked: (state) => Effect.andThen(scripted("listMarked"), Effect.map(Ref.get(ref), (s) => s.items.filter((i) => i.open && i.marked === true && i.state === state).map(shown).reverse())),
-      read: (id) => Effect.andThen(Ref.update(ref, (s) => ({ ...s, reads: [...s.reads, id] })), Effect.andThen(scripted("read"), Effect.map(find(id), shown))),
+      read: (id) =>
+        Effect.flatMap(Ref.updateAndGet(ref, (s) => ({ ...s, reads: [...s.reads, id] })), (s) => Effect.andThen(gates.held(s.reads.length), Effect.andThen(scripted("read"), Effect.map(find(id), shown)))),
       // Issue #216: a cited item read whatever its state, open as the fake holds it.
       readCited: (id) => Effect.andThen(scripted("readCited"), Effect.map(find(id), (item) => ({ id: item.id, title: item.title, body: item.body, open: item.open }))),
       writeText: (id, text) =>
@@ -101,6 +130,7 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
       tracker,
       items: Effect.map(Ref.get(ref), (s) => s.items),
       reads: Effect.map(Ref.get(ref), (s) => s.reads),
+      gateRead: gates.gateRead,
       failNext: (operation, error, state) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "before", ...(state === undefined ? {} : { state }) }] })),
       failAfterNext: (operation, error, state) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "after", ...(state === undefined ? {} : { state }) }] })),
       edit: (id, change) => Ref.update(ref, (s): State => ({ ...s, items: s.items.map((i) => (i.id === id ? change(i) : i)) })),

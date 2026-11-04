@@ -330,7 +330,7 @@ export const runTrackerEnv: Effect.Effect<TrackerRetryEnv, never, Ui | Store | R
     ui,
     settings,
     record: (markdown) => store.converse(markdown),
-    openQuestion: (scope, draft, onAccepted) => openBeside(scope, prompts.transportPrompt, draft, acceptable, { offer: false, onAccepted: () => onAccepted() }).pipe(Effect.provideContext(context)),
+    openQuestion: (scope, draft, onAccepted) => openBeside(scope, prompts.transportPrompt, draft, acceptable, { offer: false, onAccepted: () => Effect.as(onAccepted(), "kept" as const) }).pipe(Effect.provideContext(context)),
     exhausted: "ask",
   };
 });

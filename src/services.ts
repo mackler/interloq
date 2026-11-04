@@ -65,21 +65,28 @@ export type DuringAnswer<A> = Readonly<{ _tag: "Done"; value: A }> | Readonly<{ 
  * closes; a later `askDuring` on the same handle reuses it in place. The work is a decision's analysis (issue #153) or the
  * request for the question's terms (issue #217).
  */
+/**
+ * Issue #243, W1-R1-1: what the asker's `onTaken` decided of an answer, before the Ui publishes it: `kept`, so the Ui takes
+ * it; or `refused` (a dispute withdrawn first, which the registry decides in one step), so the Ui takes nothing, publishes
+ * nothing and leaves the question shown until its asking is interrupted.
+ */
+export type Taken = "kept" | "refused";
 export type QuestionFrame = Readonly<{
   /**
    * Issue #243: `onTaken`, where given, is called with the raw answer inside the Ui's own uninterruptible step that takes
    * an answer given while work runs, before the asking fiber is resumed, so the asker records it atomically with the
-   * Ui's acceptance. It must not block (it updates Refs). Without it askDuring behaves as before.
+   * Ui's acceptance, and before the answer is published; an answer it refuses is not taken (W1-R1-1). It must not block
+   * (it updates Refs). Without it askDuring behaves as before.
    */
-  askDuring: <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>, onTaken?: (text: string) => Effect.Effect<void>) => Effect.Effect<DuringAnswer<A>, E | UserStopped, R>;
+  askDuring: <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>, onTaken?: (text: string) => Effect.Effect<Taken>) => Effect.Effect<DuringAnswer<A>, E | UserStopped, R>;
   /**
    * Issue #243: shows `prompt` in the handle's frame while the run goes on beside it (a question open beside the run),
    * announced as any question is, and returns the developer's answer; nothing waits on it, so it never counts down. An
    * answer that ends the run ("q" for `line`, "/quit" for `message`) fails with UserStopped. `onTaken` is called with the
-   * raw answer inside the Ui's own uninterruptible step that takes it, before the asking fiber is resumed; it must not
-   * block. Interrupted while still open, the prompt is cancelled on the page (`PromptCancelled`).
+   * raw answer inside the Ui's own uninterruptible step that takes it, before the answer is published and the asking
+   * fiber resumed, and an answer it refuses is not taken (W1-R1-1); it must not block. Interrupted while still open, the prompt is cancelled on the page (`PromptCancelled`).
    */
-  askBeside: (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<void>) => Effect.Effect<string, UserStopped>;
+  askBeside: (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<Taken>) => Effect.Effect<string, UserStopped>;
 }>;
 export interface UiShape {
   readonly say: (text: string) => Effect.Effect<void>;
@@ -473,10 +480,10 @@ export type OpenQuestionsShape = Readonly<{
   /** A dispute registered before its question is presented. */
   opened: (dispute: OpenDispute) => Effect.Effect<void>;
   /**
-   * An answer to a dispute's question, called inside the Ui's uninterruptible take (a Ref update only): kept, or too late
-   * where the dispute was withdrawn first, which the caller says from a fiber of its own, never inside the take.
+   * An answer to a dispute's question, called inside the Ui's uninterruptible take before it publishes the answer (a Ref
+   * update only): kept, or refused where the dispute was withdrawn first, so the Ui takes nothing (W1-R1-1).
    */
-  answered: (key: BesideKey, text: string) => Effect.Effect<"kept" | "tooLate">;
+  answered: (key: BesideKey, text: string) => Effect.Effect<Taken>;
   /** A dispute's producer, interrupted when the dispute is withdrawn. */
   attach: (key: BesideKey, fiber: Fiber.Fiber<string, UserStopped | RunError>) => Effect.Effect<void>;
   /** The answered disputes among `keys`, read without consuming them (a loop's boundary). */

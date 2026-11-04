@@ -40,7 +40,7 @@ import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
 import type { StartRequest } from "../src/protocol.ts";
 import type { SuiteResult } from "../src/suite.ts";
 import { type EndWaitResult, makeWaits, waitCounter, type WaitHandle, type WaitId, type Waits } from "../src/waits.ts";
-import { type Decider, type DeciderShape, type OpenQuestions, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, type QuestionFrame, type AskKind, type DuringAnswer, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
+import { type Decider, type DeciderShape, type OpenQuestions, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, type QuestionFrame, type AskKind, type DuringAnswer, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, type Taken, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
 import { type DeciderDeps, deciderLayer } from "../src/decision.ts";
@@ -186,17 +186,21 @@ export class ScriptedUi implements UiShape {
    * other script runs the work to its end, so an answer after "/decide" answers the question asked again beside the analysis.
    */
   enterQuestion(_question: number): Effect.Effect<QuestionFrame, never, Scope.Scope> {
-    /** The raw answer handed to `onTaken` and read as `kind` reads it, as one uninterruptible step (as the web Ui takes it). */
-    const taking = (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<void>, text: string): Effect.Effect<string, UserStopped> =>
-      Effect.uninterruptible(
-        Effect.andThen(onTaken(text), () => {
+    /**
+     * The raw answer handed to `onTaken` and read as `kind` reads it, as one uninterruptible step (as the web Ui takes it);
+     * W1-R1-1: an answer onTaken refuses is not delivered, and the question stays unanswered until interrupted.
+     */
+    const taking = (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<Taken>, text: string): Effect.Effect<string, UserStopped> =>
+      Effect.uninterruptible(onTaken(text)).pipe(
+        Effect.flatMap((taken) => {
+          if (taken === "refused") return Effect.never;
           const parsed = kind === "line" ? parseAskLine(text) : parseMessage(text);
           return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where: prompt })) : Effect.succeed(parsed.text);
         }),
       );
     const givenAt = (text: string, when: (() => Promise<void>) | undefined): Effect.Effect<string> =>
       when === undefined ? Effect.succeed(text) : Effect.callback<string>((resume) => void when().then(() => resume(Effect.succeed(text))));
-    const askDuring = <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>, onTaken: (text: string) => Effect.Effect<void> = () => Effect.void): Effect.Effect<DuringAnswer<A>, E | UserStopped, R> =>
+    const askDuring = <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>, onTaken: (text: string) => Effect.Effect<Taken> = () => Effect.succeed("kept")): Effect.Effect<DuringAnswer<A>, E | UserStopped, R> =>
       Effect.suspend(() => {
         const next = this.answers[0];
         if (next === undefined || typeof next === "string" || !("during" in next)) return Effect.map(work, (value): DuringAnswer<A> => ({ _tag: "Done", value }));
@@ -211,7 +215,7 @@ export class ScriptedUi implements UiShape {
      * Issue #243: a question open beside the run takes the head of the script only where it is a `beside` answer; any
      * other head leaves it unanswered (interruptible), so it never consumes an answer scripted for a foreground question.
      */
-    const askBeside = (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<void>): Effect.Effect<string, UserStopped> =>
+    const askBeside = (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<Taken>): Effect.Effect<string, UserStopped> =>
       Effect.suspend(() => {
         const next = this.answers[0];
         if (next === undefined || typeof next === "string" || !("beside" in next)) return Effect.never;
