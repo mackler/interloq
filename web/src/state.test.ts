@@ -3727,3 +3727,38 @@ describe("the timeline's order after a forecast (issue #173)", () => {
     );
   });
 });
+
+// Issue #243: a question open beside the running run, shown with its own question, announced, and cancelled.
+describe("a question open beside the run (issue #243)", () => {
+  const pq = (number: number, text: string): PresentedQuestion =>
+    ({ number, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null }) as PresentedQuestion;
+  const presentedAs = (number: number, text: string): RunEvent => notified({ _tag: "QuestionPresented", question: pq(number, text) });
+  const besideAsked = (prompt: number, question: number): RunEvent => ({ ...(asked(prompt, prompts.limitPrompt) as Extract<RunEvent, { _tag: "Asked" }>), beside: question });
+  const questionText = (s: ViewState) => {
+    const q = runOf(s, "implementation")?.pending?.question;
+    return q === null || q === undefined ? null : piecesText(q.question);
+  };
+
+  test("a beside question published while a foreground prompt waits is shown with its own question after the foreground answer", () => {
+    const events = [started, presentedAs(1, "Beside?"), presentedAs(2, "Foreground?"), asked(2, prompts.decisionPrompt), { _tag: "Answered", prompt: 2, text: "1" } as RunEvent, besideAsked(1, 1)];
+    const s = fold(live(events));
+    expect(runOf(s, "implementation")?.pending?.asked.prompt).toBe(1);
+    expect(questionText(s)).toBe("Beside?");
+    expect(runOf(s, "implementation")?.pending?.decision).toBe("none");
+  });
+
+  test("a foreground question presented after a beside one keeps its own question", () => {
+    const events = [started, presentedAs(1, "Beside?"), besideAsked(1, 1), presentedAs(2, "Foreground?"), asked(2, prompts.decisionPrompt)];
+    expect(questionText(fold(live(events)))).toBe("Foreground?");
+  });
+
+  test("PromptCancelled of a beside prompt leaves no pending prompt and adds nothing to followed; the run's tab no longer waits", () => {
+    const events = [started, presentedAs(1, "Beside?"), besideAsked(1, 1)];
+    const waiting = fold(live(events));
+    expect(modeWaiting(waiting, "implementation")).toBe(true);
+    const cancelled = fold(live([...events, { _tag: "PromptCancelled", prompt: 1 } as RunEvent]));
+    expect(runOf(cancelled, "implementation")?.pending).toBe(null);
+    expect(runOf(cancelled, "implementation")?.followed).toEqual([]);
+    expect(modeWaiting(cancelled, "implementation")).toBe(false);
+  });
+});

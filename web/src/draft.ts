@@ -58,7 +58,7 @@ export const reconcile = (draft: Draft | null, view: Shown): Reconciled => {
     if (view.run!.pending?.question?.number === follow.question) return { draft: { _tag: "Held", key: pending, text: draft.text }, notice: null };
     return withdrawn(draft);
   }
-  if (!sameRun || view.run!.answered.includes(draft.key.prompt)) return withdrawn(draft);
+  if (!sameRun || view.run!.answered.includes(draft.key.prompt) || view.run!.cancelled.includes(draft.key.prompt)) return withdrawn(draft);
   // W2-R1-1 of issue #153: another prompt pending that asks another question (one asked inside the decision of the
   // draft's question, open beside it) withdraws the draft, since the page holds one draft per run.
   if (pending !== null) {

@@ -235,6 +235,8 @@ export type RunView = Readonly<{
   expired: Expired | null;
   /** The prompts answered so far, in order (finding 5): what a draft is reconciled against, live and after a replay. */
   answered: readonly number[];
+  /** Issue #243: the prompts cancelled because what their question concerned ended; their drafts are withdrawn. */
+  cancelled: readonly number[];
   /** Whether an agent call runs: `calls` is not empty. */
   busy: boolean;
   /** The agent calls that run, the innermost last (P1-R2-1). */
@@ -255,6 +257,11 @@ export type RunView = Readonly<{
   questionOptions: readonly Choice[];
   /** The question presented last and not yet asked (S26), with the time it was presented. */
   presented: Readonly<{ question: PresentedQuestion; time: string }> | null;
+  /**
+   * Issue #243: every question of the run as presented, by its number: a question open beside the run is presented at
+   * once and its prompt published only when nothing stands over it, and again each time it is shown again.
+   */
+  presentedBy: ReadonlyMap<number, Readonly<{ question: PresentedQuestion; time: string }>>;
   /** The band of the phase the next message belongs to (issue #15): set when a phase begins, kept until the next one. */
   phase: Band | null;
   /** The last time the right panel displays, a message's or a band label's: what its next message's time is measured from. */
@@ -560,6 +567,7 @@ export const emptyRun = (id: number): RunView => ({
   pending: null,
   expired: null,
   answered: [],
+  cancelled: [],
   busy: false,
   calls: [],
   retry: null,
@@ -569,6 +577,7 @@ export const emptyRun = (id: number): RunView => ({
   absorb: [],
   questionOptions: [],
   presented: null,
+  presentedBy: new Map(),
   phase: null,
   lastShown: null,
   analysis: null,
@@ -1036,11 +1045,8 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return {
         ...run,
         presented: { question: event.question, time },
-        questionOptions: event.question.options.flatMap((o) => {
-          const label = piecesText(o.label);
-          const description = piecesText(o.description);
-          return "token" in o.answer ? [{ label: description === "" ? label : `${label} — ${description}`, sends: o.answer.token }] : [];
-        }),
+        presentedBy: new Map(run.presentedBy).set(event.question.number, { question: event.question, time }),
+        questionOptions: optionsOf(event.question),
       };
     case "AnalysisProgress": {
       // S21 (Q4): one plain status while the analysis is prepared, updated in place; the line said for it that
@@ -1145,6 +1151,14 @@ const framed = (r: RunView, event: Extract<RunEvent, { _tag: "Asked" }>, questio
   return { ...r, pending, dismissed: null, questionOptions: [], presented: null, deciding: [...r.deciding, { question, widget: pending, prompt: event.prompt }] };
 };
 
+/** A presented question's options with an exact answer, as the next prompt's cards. */
+const optionsOf = (question: PresentedQuestion): Widget["options"] =>
+  question.options.flatMap((o) => {
+    const label = piecesText(o.label);
+    const description = piecesText(o.description);
+    return "token" in o.answer ? [{ label: description === "" ? label : `${label} — ${description}`, sends: o.answer.token }] : [];
+  });
+
 /** One event of a run with its time, in its order. Pure; the replay folds the same function. */
 export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
   // The lines said for an interview turn or a relayed question are absorbed only while they follow it directly.
@@ -1158,6 +1172,15 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         return event.text.trim() === "" ? r : withInterloqLine(r, event.text);
       case "Asked": {
         if (event.deciding !== null) return framed(r, event, event.deciding, time);
+        // Issue #243: a question open beside the run takes its question from when it was presented, and is announced
+        // as any question is; the question presented last, where it is another, stays for its own prompt.
+        if (event.beside !== null) {
+          const shown = r.presentedBy.get(event.beside) ?? null;
+          const own = r.presented?.question.number === event.beside;
+          const options = shown === null ? [] : optionsOf(shown.question);
+          const pending: Widget = { asked: event, options, choices: event.choices, question: shown?.question ?? null, presentedAt: shown?.time ?? time, hint: pagePromptText(event.kind, event.text), countdown: null, held: true, decision: "none" };
+          return { ...r, pending, ...(own ? { presented: null, questionOptions: [] } : {}), dismissed: null };
+        }
         const extra = r.questionOptions;
         // Presented options belong to this prompt alone (P1-R1-2); an analysis waiting for its prompt gets this one.
         const analysis = r.analysis !== null && r.analysis.prompt === null ? { ...r.analysis, prompt: event.prompt } : r.analysis;
@@ -1194,6 +1217,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         const deciding = r.deciding.filter((d) => d.prompt !== event.prompt);
         return {
           ...r,
+          ...(event._tag === "PromptCancelled" ? { cancelled: [...r.cancelled, event.prompt] } : {}),
           deciding,
           termsRequested: entry === undefined ? r.termsRequested : r.termsRequested.filter((n) => n !== entry.question),
           dashboard: withoutStaleDraft(r.dashboard, deciding),

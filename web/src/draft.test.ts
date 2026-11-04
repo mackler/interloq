@@ -237,3 +237,10 @@ describe("a draft through Help me decide", () => {
     expect(awaitedKey(live([...base, frame(2)]))).toBeNull();
   });
 });
+
+// Issue #243: a question open beside the run cancelled because what it concerned ended: its draft is withdrawn.
+describe("a draft of a cancelled prompt (issue #243)", () => {
+  test("a PromptCancelled of the draft's prompt withdraws it with the notice, nothing else pending", () => {
+    expect(reconcile(draft, live([started, asked(1), { _tag: "PromptCancelled", prompt: 1 }]))).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my unsent answer") });
+  });
+});
