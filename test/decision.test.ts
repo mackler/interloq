@@ -683,3 +683,28 @@ test("Help me decide on a disputed pause with a resolution analyzes the three ch
   assert.equal(json(probe.dir, "decision-1/analysis.json").analysis.columns.length, 3);
   assert.equal(json(probe.dir, "decision-1/chosen.json").option, prompts.RESOLUTION_POSITION);
 });
+
+// Issue #243 (Q1): a disputed question inside a decision's analysis review is withdrawn when the question that decision
+// serves is answered, with its line; the analysis was shown with Claude Code's position standing.
+test("a decision whose review raises a dispute goes on, its analysis is shown, and the dispute is withdrawn when the question is answered", async () => {
+  const draft: QuestionDraft = { origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which database?"), options: numberedOptions(question.options), decision: null };
+  const { layer, probe } = await setUp({
+    answers: ["/decide", "2"],
+    steps: [
+      { output: analysis() },
+      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
+      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
+    ],
+    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }],
+    config: { maxIdleRounds: 5 },
+  });
+  const answer = await Effect.runPromise(Effect.gen(function* () {
+    const ui = yield* Ui;
+    return yield* askOffering(byLine((p) => ui.ask(p)), prompts.decisionPrompt, draft);
+  }).pipe(Effect.provide(layer)));
+  assert.equal(answer, "2");
+  assert.ok(probe.ui.notified.some((e) => e._tag === "DecisionAnalyzed"));
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.ok(conversation.includes(prompts.DISPUTE_PUT_TO_YOU_HEADING));
+  assert.ok(conversation.includes(prompts.disputeWithdrawnByDecisionLine(1, "Decision 1")), conversation.slice(-1500));
+});

@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
 import { clarification, type TermsOffer } from "./conversation.ts";
 import * as prompts from "./prompts.ts";
-import { planningCall, reviewLoop, showDocument } from "./review.ts";
+import { type LoopEnd, planningCall, reviewLoop, showDocument } from "./review.ts";
 import { renderQuestions, renderTerms } from "./render.ts";
 import * as S from "./schema.ts";
 import { Planner, type Services, Store, Ui } from "./services.ts";
@@ -84,7 +84,8 @@ export const prepareQuestionList = (task: string, terms: TermsMode): Effect.Effe
  * Issue #131: the part of the question phase that is nothing but the developer (step 4): the clarification of the agreed
  * list and the review of its result, or, for an empty list, requirements.md with no question.
  */
-export const askAgreed = (task: string, agreed: QuestionsFile["questions"], termsOffer: TermsOffer): Effect.Effect<void, RunError, Services> =>
+/** Issue #243: returns the requirements review's end, or null where none ran (an empty list), which a later review of them continues. */
+export const askAgreed = (task: string, agreed: QuestionsFile["questions"], termsOffer: TermsOffer): Effect.Effect<LoopEnd | null, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -95,17 +96,18 @@ export const askAgreed = (task: string, agreed: QuestionsFile["questions"], term
       yield* showDocument(requirementsSubject());
       yield* store.converse("Planning starts without a conversation: no question was needed.\n\n");
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
-      return;
+      return null;
     }
     yield* ui.say(`\nThe agreed list contains ${agreed.length} question(s).`);
     yield* clarification(agreed.map((q) => q.id), termsOffer);
 
     const reviewed = yield* reviewLoop(requirementsSubject());
     yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: reviewed.result });
+    return reviewed;
   });
 
 /** Runs before planning phase 1 and ends with requirements.md written. */
-export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<void, RunError, Services> =>
+export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<LoopEnd | null, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -114,5 +116,5 @@ export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<voi
     yield* store.converse(`${prompts.termsChoiceLine(terms)}\n\n`);
     yield* ui.say(prompts.termsChoiceLine(terms));
     const agreed = yield* prepareQuestionList(task, terms);
-    yield* askAgreed(task, agreed, terms === "onRequest" ? { kind: "onRequest", task } : { kind: "never" });
+    return yield* askAgreed(task, agreed, terms === "onRequest" ? { kind: "onRequest", task } : { kind: "never" });
   });

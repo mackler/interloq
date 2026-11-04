@@ -20,8 +20,8 @@ import { DECISION_FORMAT, defectMessage, refinementTextOf, taskTextOf, type Wiri
 import { bringUpToDate } from "./bringUpToDate.ts";
 import { refinementTaskText } from "./itemComments.ts";
 import { withDeveloperText } from "./refinement.ts";
-import { PREPARATION_STOPPED, preparationNotWrittenLine, preparationPreparedLine, preparationSetAsideLine, preparationStartedLine, TRANSPORT_ANSWERS } from "./prompts.ts";
-import { Decider, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
+import { disputeSettledWithoutYouLine, PREPARATION_STOPPED, preparationNotWrittenLine, preparationPreparedLine, preparationSetAsideLine, preparationStartedLine, TRANSPORT_ANSWERS } from "./prompts.ts";
+import { Decider, OpenQuestions, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
 import type { CommentId, ItemComment, TrackerItem } from "./tracker.ts";
 import { readCommentsWithRetry, type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
@@ -139,7 +139,17 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
           const agreed = (yield* store.loadQuestions()).questions;
           const terms = agreed.length === 0 ? [] : yield* store.loadTerms();
           return { _tag: "Questions", questions: agreed.map((entry): PreparedQuestion => ({ entry, terms: terms.find((t) => t.id === entry.id) ?? null })) } as const;
-        }).pipe(Effect.provide(context)),
+        }).pipe(
+          // Issue #243: no one answers a preparation, so every disagreement put to the developer beside it is withdrawn on
+          // every way it ends, each written to its conversation.md as settled without him.
+          Effect.ensuring(
+            Effect.gen(function* () {
+              const w = yield* (yield* OpenQuestions).withdrawAll;
+              for (const d of w.withdrawn) yield* record(disputeSettledWithoutYouLine(d.heading, d.reviewer, d.planner));
+            }).pipe(Effect.ignore),
+          ),
+          Effect.provide(context),
+        ),
       );
       if (Exit.isSuccess(phase) && phase.value._tag === "NotWritten") {
         yield* record(preparationNotWrittenLine(item.id, phase.value.reason));

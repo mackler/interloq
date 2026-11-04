@@ -327,6 +327,29 @@ export type Place =
     }>;
 const FOREGROUND: Place = { _tag: "Foreground" };
 
+/**
+ * Issue #243 (Q1): the disputes of each decision withdrawn, each said and written; an answer the Ui took before the
+ * withdrawal is recorded in user-decisions.md with the note that it was not applied. Failures of the records are ignored,
+ * since this runs as a finalizer, whose failure would mask the asking's exit.
+ */
+const withdrawDecisionDisputes = (decisions: readonly number[]): Effect.Effect<void, never, Ui | Store> =>
+  Effect.gen(function* () {
+    const open = yield* Effect.serviceOption(OpenQuestions);
+    if (Option.isNone(open) || decisions.length === 0) return;
+    const ui = yield* Ui;
+    const store = yield* Store;
+    for (const k of decisions) {
+      const { withdrawn, answered } = yield* open.value.withdrawOwned({ _tag: "Decision", decision: k });
+      for (const d of withdrawn) {
+        const line = prompts.disputeWithdrawnByDecisionLine(k, d.heading);
+        yield* ui.say(line);
+        yield* store.converse(`${line}\n\n`).pipe(Effect.ignore);
+      }
+      for (const a of answered)
+        yield* store.appendDecision({ subject: a.dispute.recordSubject, id: a.dispute.id, decision: `${a.text} ${prompts.DISPUTE_NOT_APPLIED_NOTE}`, phase: a.dispute.phase, round: a.dispute.round }).pipe(Effect.ignore);
+    }
+  });
+
 /** Issue #217: what an answer did about the question's terms: nothing, the terms written, or an answer given while they were. */
 type TermsAsked = Readonly<{ _tag: "NotAsked" }> | Readonly<{ _tag: "Explained" }> | Readonly<{ _tag: "Answered"; text: string }>;
 
@@ -356,6 +379,9 @@ export const askOffering = <E, R = never>(
     const inFlight = yield* Ref.make<Option.Option<Ref.Ref<number | null>>>(Option.none());
     const recorded = yield* Ref.make(false);
     const decisions: number[] = [];
+    // Issue #243 (Q1): every decision this asking opened; their disputes are withdrawn when the asking ends, however it ends.
+    const openedDecisions = yield* Ref.make<readonly number[]>([]);
+    yield* Effect.addFinalizer(() => Effect.flatMap(Ref.get(openedDecisions), withdrawDecisionDisputes));
     if (beside !== null)
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
@@ -471,7 +497,7 @@ export const askOffering = <E, R = never>(
         const shown = { context: blocksMarkdown(explained.context.blocks), history: blocksMarkdown(explained.history), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };
         // Issue #153 (Q1): the decision runs beside the question, which stays open, without the offer or the terms line.
         const opened = yield* Ref.make<number | null>(null);
-        const fiber = yield* Effect.forkScoped(decider.decide({ question: asked, options, number: question.number, shown, opened: (k) => Ref.set(opened, k) }));
+        const fiber = yield* Effect.forkScoped(decider.decide({ question: asked, options, number: question.number, shown, opened: (k) => Ref.set(opened, k).pipe(Effect.andThen(Ref.update(openedDecisions, (ks) => [...ks, k]))) }));
         yield* Ref.set(inFlight, Option.some(opened));
         const during = yield* besideWork(fiber);
         if (during._tag === "Answered") {

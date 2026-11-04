@@ -2062,7 +2062,9 @@ export type RevisionCause =
   | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: WorkFailure; tail: string; log: string }>
   | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths; suite: ReadonlyArray<CommandLine> }>
   /** Issue #186: Claude Code's verdict at the end of execution phase k was withdrawn after Codex's review of it. */
-  | Readonly<{ _tag: "VerdictWithdrawn"; verdict: number }>;
+  | Readonly<{ _tag: "VerdictWithdrawn"; verdict: number }>
+  /** Issue #243: the developer answered disagreements Interloq put to him after their review ended. */
+  | Readonly<{ _tag: "DisputesAnswered" }>;
 
 /** A suite run's failure in words (issue #162): its exit code, the signal that ended it, the bound, or why it did not start. */
 export function suiteFailureText(reason: SuiteFailure): string {
@@ -2121,6 +2123,8 @@ Revise the plan with steps that correct this failure; each step still checks its
 ${cause.paths.map((p) => `- ${codeSpan(p)}`).join("\n")}
 The run is not finished while they are uncommitted. Revise the plan with steps that commit them as the project's own instructions direct; Interloq checks again after the next review of the work finds nothing left to correct${suiteAgain}.`;
     }
+    case "DisputesAnswered":
+      return `\nThe developer answered disagreements between Codex and you that Interloq put to him after their review ended; ${runDir(root)}/user-decisions.md holds his answers as its last entries. Revise the plan where they require it; the next review of the plan and of the work covers the change.`;
     case "VerdictWithdrawn":
       return `\nExecution phase ${phase} ended with your verdict that the item's requirements did not hold enough to go on (${runDir(root)}/${pathOf({ kind: "verdict", verdict: cause.verdict })}). Codex's review of it showed that the task, the requirements, the user's decisions or the codebase settle what it named, and the verdict was withdrawn: follow the accepted issues of verdict ${cause.verdict} in ${runDir(root)}/${pathOf({ kind: "log", subject: { verdict: cause.verdict } })} and the last entries of ${runDir(root)}/user-decisions.md. The work that phase did is in the project, and the next review of the work covers it.`;
   }
@@ -4680,6 +4684,22 @@ export const unchangedContinuesLine = (fileLabel: string, round: number, pass: P
 /** Issue #243: a Retry answered to an earlier cycle's unchanged question, carried out as a decision the planner applies. */
 export const unchangedRetryDecision = (fileLabel: string, round: number, accepted: readonly string[]): string =>
   `Carry out the accepted points ${accepted.join(", ")} of cycle ${round}, which left ${fileLabel} unchanged.`;
+/** Issue #243: an answer to a disagreement given after its review ended, recorded where the run can still change the work. */
+export const disputeAnsweredLine = (heading: string, text: string): string =>
+  `${heading}: your answer "${text}" to a disagreement put to you there is recorded in user-decisions.md, and the run follows it from here.`;
+/** Issue #243: the run revises its plan once more for answers given after their reviews ended. */
+export const disputesRevisionLine = (heading: string): string =>
+  `${heading}: you answered disagreements after their review ended, so the plan is revised and reviewed again before the run finishes.`;
+/** Issue #243: a disagreement the developer did not answer before the run ended, withdrawn, with both positions. */
+export const disputeSettledWithoutYouLine = (heading: string, reviewer: string, planner: string): string =>
+  `${heading}: a disagreement put to you was not answered before the run ended; it is settled without you, Claude Code's position standing. Codex's position: ${reviewer} Claude Code's position: ${planner}`;
+/** Issue #243: the note with an answer whose disagreement the item's send-back left with nothing to change. */
+export const DISPUTE_SENT_BACK_NOTE = "(not applied: the item was sent back to refinement, so nothing remained for the answer to change)";
+/** Issue #243: a disagreement inside decision k's review withdrawn when the asking of the question it served ended. */
+export const disputeWithdrawnByDecisionLine = (k: number, heading: string): string =>
+  `${heading}: the disagreement put to you during decision ${k} is withdrawn, because the question that decision served is no longer asked; nothing remains for an answer to it to change.`;
+/** Issue #243: the note recorded with an answer to such a disagreement given before it was withdrawn. */
+export const DISPUTE_NOT_APPLIED_NOTE = "(not applied: the decision this disagreement belonged to had ended, so nothing remained for the answer to change)";
 /** Issue #243: an answer to a dispute's question that arrived after the dispute was withdrawn, so it changes nothing. */
 export const disputeAnswerTooLateLine = (heading: string, text: string): string =>
   `${heading}: your answer "${text}" arrived after the disagreement it answered was withdrawn, so it changes nothing.`;

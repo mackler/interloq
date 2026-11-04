@@ -18,21 +18,22 @@ import { type PreparationFound, preparationOf } from "./preparedComments.ts";
 import { renderQuestions } from "./render.ts";
 import { type EarlierPlan, undonePlan } from "./earlierPlan.ts";
 import { issueObsoleteLine, issueUpdatedLine, PREPARED_TERMS_CHOICE_LINE, preparationCleanupFailedLine, preparationUsedLine, continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, fallenCountsText, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, SUITE_OUTPUT_NAME,
-  suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
+  suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution, disputeAnsweredLine, disputesRevisionLine, disputeSettledWithoutYouLine, DISPUTE_SENT_BACK_NOTE } from "./prompts.ts";
 import { pathOf, recordPath, type RunRoot } from "./artifacts.ts";
 import { type CommandReport, fallenCounts, suiteReportedOf } from "./testCounts.ts";
 import type { Baseline } from "./records.ts";
 import { plainPieces } from "./pieces.ts";
-import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
+import { applyDecisions, askPlannerQuestion, bothValidations, type LoopEnd, planningCall, reviewLoop, type Subject, userQuestionsValidation } from "./review.ts";
+import type { Answered, Withdrawn } from "./openDisputes.ts";
 import { askOffering, byLine, programContext, type QuestionDraft, saveOptionFigures, suiteStoppedOptions } from "./offer.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
-import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, type StoreError, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
+import { Decider, OpenQuestions, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, type StoreError, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { readCommentsWithRetry, runTrackerEnv, type TrackerRetryEnv, type TrackerWrite, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
 import { SUITE_TAIL_LINES, type SuiteResult, type SuiteStop, suiteOutcomeOf, suiteStatusOf, suiteVerdictOf, tailLines } from "./suite.ts";
-import { firstPlanValidation, planField, planSubject, planValidation, savePlan, verdictSubject, workSubject } from "./subjects.ts";
+import { firstPlanValidation, planField, planSubject, planValidation, requirementsSubject, savePlan, verdictSubject, workSubject } from "./subjects.ts";
 import { type SentBack, sendBack } from "./sendBack.ts";
 
 /**
@@ -51,7 +52,7 @@ export type UsedPreparation = Extract<PreparationFound, { _tag: "Prepared" }>;
  * recorded, and the agreed questions are asked at once (askAgreed); a preparation with no question writes the
  * requirements with no agent call (behavior 2, issue #83).
  */
-const preparedPhase = (task: string, prepared: UsedPreparation): Effect.Effect<void, RunError, Services> =>
+const preparedPhase = (task: string, prepared: UsedPreparation): Effect.Effect<LoopEnd | null, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -66,7 +67,7 @@ const preparedPhase = (task: string, prepared: UsedPreparation): Effect.Effect<v
     yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: prepared.questions }, "link")}\n`);
     // Issue #205: the list was searched in advance, and is known now.
     yield* ui.notify({ _tag: "QuestionsAgreed", count: prepared.questions.length });
-    yield* askAgreed(task, prepared.questions, { kind: "never" });
+    return yield* askAgreed(task, prepared.questions, { kind: "never" });
   });
 
 /**
@@ -129,6 +130,10 @@ export const refinementRun = (source: RefinementSource, item: ItemId, terms: S.T
       const labeled = config.tracker !== null && config.tracker.obsoleteLabel !== null;
       if (labeled) yield* writeStep(tracker, { kind: "setState", item, state: "obsolete" }, updateEnv, "setObsolete", null);
       yield* sayAndWrite(issueObsoleteLine(item, outcome.reason, labeled));
+      // Issue #243: nothing remains for an answer to Bring Up to Date's disagreements to change.
+      const w = yield* (yield* OpenQuestions).withdrawAll;
+      yield* recordTaken(w.answered, DISPUTE_SENT_BACK_NOTE);
+      yield* withdrawn(w);
       return { _tag: "Obsolete", labeled } satisfies RefinementEnd as RefinementEnd;
     }
     if (outcome._tag === "Amended") {
@@ -141,7 +146,10 @@ export const refinementRun = (source: RefinementSource, item: ItemId, terms: S.T
     const task = amended ? refinementTaskText(outcome.text, source.comments) : filed;
     const questionDecider = decider.withTask(task).at(phase, phaseName(phase, 1));
     const used = amended ? null : prepared;
-    yield* (used === null ? questionPhase(task, terms) : preparedPhase(task, used)).pipe(Effect.provideService(Decider, questionDecider), Effect.provideService(Ui, observingQuestions(ui, asked)));
+    const reviewed = yield* (used === null ? questionPhase(task, terms) : preparedPhase(task, used)).pipe(Effect.provideService(Decider, questionDecider), Effect.provideService(Ui, observingQuestions(ui, asked)));
+    // Issue #243 (Q1): an answer for Codex's position given after its review ended is applied to requirements.md, by one
+    // application of decisions reviewed as such, before requirements.md is read for the write-back.
+    yield* withdrawnAtEnd(requirementsSubject(), reviewed).pipe(Effect.provideService(Decider, questionDecider));
     // Issue #83: an empty agreed list is no failure; a refinement that asks nothing found nothing to settle.
     if ((yield* store.loadQuestions()).questions.length === 0) {
       yield* store.converse(`${NOTHING_TO_SETTLE}\n\n`);
@@ -249,6 +257,52 @@ const planStartOf = (earlier: EarlierPlan): Effect.Effect<PlanStart, StoreError,
 };
 
 /** A line said on the page and written to conversation.md (issues #162, #176, #180). */
+// ---- issue #243 (Q1): the disagreements put to the developer beside the run, answered after their review ended ----
+
+/** Each answer recorded in user-decisions.md, with its line (none with a note); whether any applies (Codex's position). */
+const recordTaken = (answered: readonly Answered[], note = ""): Effect.Effect<boolean, StoreError, Ui | Store> =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    for (const a of answered) {
+      yield* store.appendDecision({ subject: a.dispute.recordSubject, id: a.dispute.id, decision: note === "" ? a.text : `${a.text} ${note}`, phase: a.dispute.phase, round: a.dispute.round });
+      if (note === "") yield* sayAndWrite(disputeAnsweredLine(a.dispute.heading, a.text));
+    }
+    return answered.some((a) => a.applies);
+  });
+/**
+ * After a review ends: the answers given since, recorded; where one adopts Codex's position the subject applies them and
+ * is reviewed again, continuing the review's round numbers, until none is left.
+ */
+const settled = <R extends S.PlannerResponse, D>(subject: Subject<R, D>, ended: LoopEnd | null): Effect.Effect<LoopEnd | null, RunError, Services> =>
+  Effect.gen(function* () {
+    const openQuestions = yield* OpenQuestions;
+    let loop = ended;
+    for (;;) {
+      if (!(yield* recordTaken(yield* openQuestions.takeAfterLoop))) return loop;
+      yield* applyDecisions(subject);
+      loop = yield* reviewLoop(subject, loop);
+    }
+  });
+/** Every disagreement still unanswered when the run ends, recorded as settled without the developer. */
+const withdrawn = (w: Withdrawn): Effect.Effect<void, StoreError, Ui | Store> =>
+  Effect.forEach(w.withdrawn, (d) => sayAndWrite(disputeSettledWithoutYouLine(d.heading, d.reviewer, d.planner)), { discard: true });
+/**
+ * The run's end for the subject whose answers it can still apply: every disagreement withdrawn; an answer the Ui took
+ * before is recorded and, where it applies, the subject is applied and reviewed once more, then the end is tried again.
+ */
+const withdrawnAtEnd = <R extends S.PlannerResponse, D>(subject: Subject<R, D>, ended: LoopEnd | null): Effect.Effect<void, RunError, Services> =>
+  Effect.gen(function* () {
+    const openQuestions = yield* OpenQuestions;
+    let loop = yield* settled(subject, ended);
+    for (;;) {
+      const w = yield* openQuestions.withdrawAll;
+      yield* withdrawn(w);
+      if (!(yield* recordTaken(w.answered))) return;
+      yield* applyDecisions(subject);
+      loop = yield* settled(subject, yield* reviewLoop(subject, loop));
+    }
+  });
+
 const sayAndWrite = (line: string): Effect.Effect<void, StoreError, Ui | Store> =>
   Effect.gen(function* () {
     yield* (yield* Ui).say(line);
@@ -284,6 +338,7 @@ const planningPrompt = (root: RunRoot, task: string, withRequirements: boolean, 
     case "SuiteFailed":
     case "Uncommitted":
     case "VerdictWithdrawn":
+    case "DisputesAnswered":
       return revisePlanAfterExecutionPrompt(root, task, withRequirements, k - 1, cause, checks);
   }
 };
@@ -345,6 +400,7 @@ const firstCauseOf = (cause: PlanningCause): FirstPlanCause | null => {
     case "SuiteFailed":
     case "Uncommitted":
     case "VerdictWithdrawn":
+    case "DisputesAnswered":
       return null;
   }
 };
@@ -538,6 +594,14 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         }
       });
 
+    const openQuestions = yield* OpenQuestions;
+    /** A send-back concludes the run: every disagreement withdrawn, an answer recorded as not applied. */
+    const sentBack = Effect.gen(function* () {
+      const w = yield* openQuestions.withdrawAll;
+      yield* recordTaken(w.answered, DISPUTE_SENT_BACK_NOTE);
+      yield* withdrawn(w);
+    });
+
     /** The verdicts given so far, numbered across the run (issue #186). */
     let verdicts = 0;
     /** Why the plan is revised after the previous iteration; the next plan revision is written from it. */
@@ -550,6 +614,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         // Planning phase K: write or revise the plan, then review it.
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "planning", n: k } });
         yield* ui.say(planningBeganLine(label("planning", k), previous._tag === "FirstPlan"));
+        // Issue #243: answers given since the last loop ended, recorded before this phase's planning call, which reads them.
+        yield* recordTaken(yield* openQuestions.takeAfterLoop);
         // Issue #186: the run's first planning call returns a plan or the verdict that the item is not refined; Codex
         // reviews a verdict in this phase and session, and where it is withdrawn Claude Code writes the plan instead.
         const first = firstCauseOf(previous);
@@ -560,7 +626,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
             yield* store.savePlanWrite(k, { questions_for_user: [] });
             yield* savePlan(k, replied.plan, before);
             yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: reply.resultText });
-            return { _tag: "Reviewed", loop: yield* reviewLoop(subject) } as const;
+            return { _tag: "Reviewed", loop: (yield* settled(subject, yield* reviewLoop(subject)))! } as const;
           }
           verdicts += 1;
           const n = verdicts;
@@ -576,7 +642,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
           const replaced = yield* planningCall(planAfterVerdictPrompt(store.root, task, withRequirements, n, first, checks), S.PlanOnly, "planning", "records", planField<S.PlanOnly>(planValidation(store.root, before)));
           yield* savePlan(k, replaced.output.plan, before);
           yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: replaced.resultText });
-          return { _tag: "Reviewed", loop: yield* reviewLoop(subject) } as const;
+          return { _tag: "Reviewed", loop: (yield* settled(subject, yield* reviewLoop(subject)))! } as const;
         }
 
         // The reply is the plan (F1): validated, then written by the program as plan.json and plan.md.
@@ -591,10 +657,13 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         }
         if (answered) yield* applyDecisions(subject);
 
-        return { _tag: "Reviewed", loop: yield* reviewLoop(subject) } as const;
+        return { _tag: "Reviewed", loop: (yield* settled(subject, yield* reviewLoop(subject)))! } as const;
       }).pipe(ownSession, inPhase({ kind: "planning", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "planning", n: k }, result: reviewed.loop.result });
-      if (reviewed._tag === "NotRefined") return { _tag: "NotRefined", missing: reviewed.missing, verdict: reviewed.verdict } as const;
+      if (reviewed._tag === "NotRefined") {
+        yield* sentBack;
+        return { _tag: "NotRefined", missing: reviewed.missing, verdict: reviewed.verdict } as const;
+      }
 
       // Execution phase K.
       const execution = yield* Effect.gen(function* () {
@@ -660,6 +729,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: judged.result });
         if (judged.result !== "revise") {
           yield* sayAndWrite(verdictStandsLine(n));
+          yield* sentBack;
           return { _tag: "NotRefined", missing: (yield* store.loadVerdict(n)).missing, verdict: n } as const;
         }
         yield* sayAndWrite(verdictWithdrawnLine(n));
@@ -690,7 +760,20 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
           continue;
         }
         const committed = yield* store.uncommittedSinceStart();
-        if (committed._tag === "Committed") return { _tag: "Finished", phases: k } as const;
+        if (committed._tag === "Committed") {
+          // Issue #243 (Q1): the run never finishes with an answer for Codex's position unapplied.
+          const taken = yield* recordTaken(yield* openQuestions.takeAfterLoop);
+          const w = taken ? null : yield* openQuestions.withdrawAll;
+          const late = w === null ? false : yield* recordTaken(w.answered);
+          if (taken || late) {
+            yield* foresee(k + 1);
+            yield* sayAndWrite(disputesRevisionLine(label("work", k)));
+            previous = { _tag: "DisputesAnswered" };
+            continue;
+          }
+          if (w !== null) yield* withdrawn(w);
+          return { _tag: "Finished", phases: k } as const;
+        }
         // The next iteration is known first, so that the line names this work review as the run now numbers it.
         yield* foresee(k + 1);
         const passedCommands = finals.map((f) => f.command);
