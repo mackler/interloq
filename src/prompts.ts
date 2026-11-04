@@ -416,6 +416,10 @@ export const KEEP_SUPPLIED_REFS =
 /** Issue #98: a call that rephrases or divides a question keeps every option's picture. */
 /** An option's picture as the decision analysis reads it and a surface that cannot draw it shows it (issue #98). */
 export const pictureText = (alt: string): string => `Picture: ${alt}`;
+/** Issue #247: the accessible name of an option's picture, the control that enlarges it and never chooses. */
+export const enlargePictureName = (alt: string): string => `Enlarge picture: ${alt}`;
+/** Issue #247: the label of the enlarged picture's close control. */
+export const CLOSE_PICTURE = "Close picture";
 export const KEEP_FIGURES = "Keep every option's figure exactly as given, in its option's position, and null where it is null: add, change, remove or move none.";
 const BOUND_CLAUSES: Readonly<Record<string, string>> = { keepWording: KEEP_WORDING, keepLiterals: KEEP_LITERALS, keepOptions: KEEP_OPTIONS, keepSuppliedRefs: KEEP_SUPPLIED_REFS, keepFigures: KEEP_FIGURES };
 /** The text of a rule, a format clause or a bound clause, by its id. */

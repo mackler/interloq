@@ -1,10 +1,11 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList, LONG_FIRST_PROMPT_MS, LONG_TEST_TIMEOUT_MS } from "./fixtures.ts";
-import { ELEMENT_GROUP_NAMES, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
+import { ELEMENT_GROUP_NAMES, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, CLOSE_PICTURE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
 import { markedTabName } from "../web/src/notify.ts";
 import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
+import { FIGURE_NARROW } from "./figures.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
 // and both columns are side by side; below it, one column at a time, chosen by its title, and a prompt selects "You and
@@ -111,7 +112,8 @@ const LONG_CHOICES_URL = layoutUrl("longChoices");
 // floor of 15rem.
 const DECIDE_URL = layoutUrl("decide");
 const analysisOf = (page: Page) => page.getByRole("region", { name: new RegExp(`^${YOUR_CHOICE} `) });
-const cards = (page: Page) => page.getByRole("group", { name: "Proposed answers" }).getByRole("button");
+// Issue #247: the choosing buttons alone; a picture's own button, which enlarges it and never chooses, is not a card.
+const cards = (page: Page) => page.getByRole("group", { name: "Proposed answers" }).locator("button:not([data-figure-enlarge])");
 const sectionButtons = (analysis: Locator) => analysis.locator(".sections button.toggle");
 const sectionButton = (analysis: Locator, heading: string) => sectionButtons(analysis).filter({ hasText: heading });
 const bodyOf = async (page: Page, button: Locator) => page.locator(`#${await button.getAttribute("aria-controls")}`);
@@ -1925,7 +1927,9 @@ test.describe("the tests of the figureChoices server, in order", () => {
   const FIGURE_URL = layoutUrl("figureChoices");
   /** Each card's picture: one svg inside the card, with a height, and its use drawn at its own picture's size. */
   const picturesOnCards = async (page: Page) => {
-    const all = cards(page);
+    await expect(cards(page)).toHaveCount(2);
+    // Issue #247: a choice is its choosing card and its picture beside it, one outline around both.
+    const all = page.getByRole("group", { name: "Proposed answers" }).locator("[data-choice]");
     await expect(all).toHaveCount(2);
     for (const [i, expected] of [[0, 40 / 400], [1, 320 / 400]] as const) {
       const card = all.nth(i);
@@ -1944,6 +1948,49 @@ test.describe("the tests of the figureChoices server, in order", () => {
     expect(await page.title()).not.toBe("figure ran");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page scrolls sideways").toBe(true);
   };
+  /**
+   * Issue #247: hovering a choice's picture opens its enlarged view, within the window less 8 px at each edge and larger
+   * than the card's picture, its drawing scaled with it; a click inside the view, Escape, a click on the picture and the
+   * close control send no answer.
+   */
+  const enlargedChoosesNothing = async (page: Page, size: string) => {
+    const lastAnswers = await page.locator("[data-last-answer]").count();
+    const control = page.locator("[data-choice]").nth(0).locator("[data-figure-enlarge]");
+    const onCard = await box(control.locator("[data-option-figure] svg"));
+    const useOnCard = await box(control.locator("[data-option-figure] use"));
+    await control.hover();
+    const view = page.getByRole("dialog", { name: FIGURE_NARROW.alt });
+    await expect(view).toBeVisible();
+    const viewport = page.viewportSize()!;
+    const enlarged = await box(view.locator("[data-figure-view-picture] svg"));
+    expect(enlarged.x, `the enlarged picture within the window at ${size}`).toBeGreaterThanOrEqual(8 - 1);
+    expect(enlarged.y).toBeGreaterThanOrEqual(8 - 1);
+    expect(enlarged.x + enlarged.width).toBeLessThanOrEqual(viewport.width - 8 + 1);
+    expect(enlarged.y + enlarged.height).toBeLessThanOrEqual(viewport.height - 8 + 1);
+    const frame = await box(view);
+    expect(frame.x).toBeGreaterThanOrEqual(8 - 1);
+    expect(frame.y).toBeGreaterThanOrEqual(8 - 1);
+    expect(frame.x + frame.width).toBeLessThanOrEqual(viewport.width - 8 + 1);
+    expect(frame.y + frame.height).toBeLessThanOrEqual(viewport.height - 8 + 1);
+    expect(enlarged.width, `the enlarged picture wider than on the card at ${size}`).toBeGreaterThan(onCard.width);
+    expect(enlarged.height, `the enlarged picture taller than on the card at ${size}`).toBeGreaterThan(onCard.height);
+    const useEnlarged = await box(view.locator("use"));
+    expect(useEnlarged.width, `the drawing itself enlarged at ${size}`).toBeGreaterThan(useOnCard.width);
+    await page.mouse.move(enlarged.x + enlarged.width / 2, enlarged.y + enlarged.height / 2);
+    await page.mouse.click(enlarged.x + enlarged.width / 2, enlarged.y + enlarged.height / 2);
+    await expect(view).toBeVisible();
+    await expect(pane(page).getByRole("heading").first()).toBeVisible();
+    await expect(cards(page)).toHaveCount(2);
+    await page.keyboard.press("Escape");
+    await expect(view).toBeHidden();
+    await control.click();
+    await expect(view).toBeVisible();
+    await expect(cards(page)).toHaveCount(2);
+    await view.getByRole("button", { name: CLOSE_PICTURE }).click();
+    await expect(view).toBeHidden();
+    await expect(cards(page)).toHaveCount(2);
+    expect(await page.locator("[data-last-answer]").count(), `no answer recorded at ${size}`).toBe(lastAnswers);
+  };
   for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
     test(`(L45) the pictures on the choices' cards at ${width} × ${height}, and on the decision page`, async ({ page }) => {
       await page.setViewportSize({ width, height });
@@ -1954,6 +2001,7 @@ test.describe("the tests of the figureChoices server, in order", () => {
         const [a, b] = [await box(cards(page).nth(0)), await box(cards(page).nth(1))];
         expect(Math.abs(a.y - b.y), "the cards stand side by side").toBeLessThanOrEqual(1);
       }
+      await enlargedChoosesNothing(page, `${width} × ${height}`);
       await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
       const analysis = analysisOf(page);
       await expect(analysis).toBeVisible();

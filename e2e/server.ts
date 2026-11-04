@@ -30,6 +30,7 @@ import { NoTracker } from "../src/errors.ts";
 import type { RunMode } from "../src/runMode.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, entryOf, para, ack, summaryReply } from "../test/helpers.ts";
 import { DEFAULT_SETTINGS, OFF_SETTINGS } from "../src/chain.ts";
+import { FIGURE_NARROW, FIGURE_WIDE } from "./figures.ts";
 
 const noQuestions = { questions_for_user: [] };
 // S39 (W2-R1-2): a context long enough to overflow its region beside the analysis.
@@ -63,13 +64,6 @@ const DECIDE_ANALYSIS = {
   ],
   recommendation: { option: "", reason: "" },
 };
-/** Issue #98: a picture of a stacked division of a 400 × 300 rectangle whose shared id draws a square `size` wide. */
-const divisionFigure = (top: number, size: number, extra = "", script = "") => ({
-  svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"${extra}>${script}<defs><rect id="shape" width="${size}" height="${size}" fill="#4a6"/></defs><rect width="400" height="${top}" fill="#ccd"/><rect y="${top}" width="400" height="${300 - top}" fill="#eef"/><use href="#shape"/><text x="200" y="290" text-anchor="middle" font-size="20">${top} px above</text></svg>`,
-  alt: `The question takes ${top} of 300 pixels; a square ${size} pixels wide marks the picture.`,
-});
-const FIGURE_NARROW = divisionFigure(60, 40, ' onload="document.title=\'figure ran\'"', "<script>document.title='figure ran'</script>");
-const FIGURE_WIDE = divisionFigure(240, 320);
 /** A recommendation of twelve paragraphs, the last one marked so that a test can find it. */
 const LONG_RECOMMENDATION = [
   ...Array.from({ length: 11 }, (_, i) => `Paragraph ${i + 1}: the advantage that developers set up the service sooner outweighs, for every developer and from the first day, the disadvantage that operators maintain one more server, because the service has one operator and many developers.`),

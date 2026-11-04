@@ -530,3 +530,13 @@ default) for an answer, after which the run stops waiting for it.
 - **Accessibility (WCAG 2.1, 1.3.1).** No mark or style is the only means of conveying the relation: the chain and the
   extent are lists named for assistive technology, and each element's part is named to assistive technology alone, not
   shown on screen (the developer's decision Q1 of the refinement).
+
+## The enlarged picture of a choice (issue #247, 4 Nov 2026)
+
+- **Flexibility and efficiency of use; user control and freedom.** A choice's picture is its own control: hovering it,
+  or a click, tap, Enter or Space on it, shows it at the largest size the window allows, and nothing done with the
+  picture or its enlarged view chooses the option. The rest of the card chooses, and one outline around the card and
+  its picture keeps the choice one card.
+- **Material Design 3, one deviation.** The view is hand-built after M3 (surface container high, elevation level 3,
+  extra-large shape, a visible focus ring) rather than m3-svelte's `Dialog`, because a view opened by hover must not be
+  modal, trap focus or draw a scrim. It asserts the picture and its alt text, which names it, and nothing more.

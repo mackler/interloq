@@ -174,7 +174,12 @@
           {#each question.options as option, i (i)}
             {#if "token" in option.answer}
               {@const token = option.answer.token}
-              <Card variant="outlined" disabled={starting} onclick={() => send(token)}><span class="card-text"><span class="option-label"><span class="token">{token}.</span> <strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}{#if option.figure !== null}<OptionFigure figure={option.figure} />{/if}</span></Card>
+              <!-- Issue #247 (Q1): the picture stands beside the choosing button, never inside it, so that enlarging it
+                   chooses nothing; one outline around both keeps the card one choice. -->
+              <div class="choice" data-choice class:disabled={starting}>
+                <Card variant="outlined" disabled={starting} onclick={() => send(token)}><span class="card-text"><span class="option-label"><span class="token">{token}.</span> <strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}</span></Card>
+                {#if option.figure !== null}<span class="choice-figure"><OptionFigure figure={option.figure} /></span>{/if}
+              </div>
             {:else}
               <div class="numeric"><span class="option-label"><strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}{#if option.figure !== null}<OptionFigure figure={option.figure} />{/if}<span class="m3-font-body-small">{NUMERIC_OPTION_NOTE}</span></div>
             {/if}
@@ -257,7 +262,7 @@
   .pane { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; background: var(--m3c-surface-container-low); border-radius: var(--m3-shape-medium); }
   /* Beside an analysis the pane holds only the answers, sized by them, the options side by side as everywhere. */
   .pane.answers-only { flex: 0 0 auto; padding: 0.5rem 0.75rem; }
-  .pane.answers-only .options > :global(button) { padding-block: 0.5rem; }
+  .pane.answers-only .options > :global(button), .pane.answers-only .choice > :global(button) { padding-block: 0.5rem; }
   /* Beside an analysis each card keeps its own height, not its row's tallest: the first answer is what the analysis's
      room is measured to (App's room, the developer's decision of 9 Oct 2026), and a taller first card takes that room. */
   .pane.answers-only .options { align-items: start; }
@@ -279,6 +284,14 @@
   .options > :global(button) { width: 100%; min-width: 0; overflow-wrap: anywhere; text-align: start; }
   /* S14: a card holds its label on a line of its own above the description, 12 dp above and below. */
   .options > :global(button) { padding-block: 0.75rem; }
+  /* Issue #247: a choice is its choosing card and, outside it, its picture, one outline around both. */
+  .choice { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--m3c-outline-variant); border-radius: var(--m3-shape-medium); background: var(--m3c-surface); transition: box-shadow var(--m3-easing-fast); }
+  .choice > :global(button) { width: 100%; min-width: 0; overflow-wrap: anywhere; text-align: start; padding-block: 0.75rem; border: none; box-shadow: none; }
+  .choice-figure { display: block; padding: 0 1rem 0.75rem; }
+  @media (hover: hover) {
+    .choice > :global(button:hover) { box-shadow: none; }
+    .choice:has(> :global(button:hover:not(:disabled))) { box-shadow: var(--m3-elevation-1); }
+  }
   .token { font-weight: 600; }
   /* The text above the card's state layer, so that a term in it is reached by the pointer (S44). */
   .card-text { position: relative; z-index: 1; display: flex; flex-direction: column; }
