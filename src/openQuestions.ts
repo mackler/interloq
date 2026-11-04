@@ -41,7 +41,12 @@ export const makeOpenQuestions: Effect.Effect<OpenQuestionsShape, never, Scope.S
     scope,
     opened: (dispute) => step((r) => R.opened(r, dispute)),
     answered: (key, text) => step((r) => R.answered(r, key, text)).pipe(Effect.map((r): Taken => (r === "kept" ? "kept" : "refused"))),
-    attach: (key, fiber) => Ref.update(held, (h) => ({ ...h, producers: new Map(h.producers).set(key, fiber) })),
+    // W7-R1-1: stored where its dispute is still registered, else interrupted at once, decided in one step over the Ref
+    // the withdrawal modifies, so whichever reaches it first, the producer is interrupted exactly once.
+    attach: (key, fiber) =>
+      Ref.modify(held, (h): readonly [boolean, Held] =>
+        R.isRegistered(h.registry, key) ? [true, { ...h, producers: new Map(h.producers).set(key, fiber) }] : [false, h],
+      ).pipe(Effect.flatMap((stored) => (stored ? Effect.void : Effect.asVoid(Fiber.interrupt(fiber))))),
     peek: (keys) => step((r) => R.peeked(r, keys)),
     acknowledge: (keys) => step((r) => R.acknowledged(r, keys)),
     loopEnded: (keys) => step((r) => R.loopEnded(r, keys)),

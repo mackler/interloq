@@ -167,3 +167,34 @@ test("W1-R1-1: withdrawAll before the answer: the answer is not waiting and noth
   assert.equal(result, "notWaiting");
   assert.ok(!web.events.some((e) => e._tag === "Answered"));
 });
+
+// W7-R1-1: a producer attached after its dispute was withdrawn is interrupted by the attach itself, so whichever of the
+// attach and the withdrawal reaches the registry first, the producer ends.
+test("W7-R1-1: attach after the dispute's withdrawal interrupts the producer and stores nothing", async () => {
+  const { layer } = await setUp({});
+  const result = await run(layer, Effect.gen(function* () {
+    const open = yield* OpenQuestions;
+    yield* open.opened(dispute("k7", { _tag: "Decision", decision: 1 }));
+    yield* open.withdrawOwned({ _tag: "Decision", decision: 1 });
+    const fiber = yield* Effect.forkIn(Effect.never as Effect.Effect<string>, open.scope);
+    yield* open.attach("k7" as BesideKey, fiber);
+    const exit = yield* Effect.raceFirst(Effect.map(Fiber.await(fiber), (x) => Exit.isFailure(x) ? "interrupted" : "succeeded"), Effect.as(Effect.sleep("50 millis"), "running"));
+    const later = yield* open.withdrawAll;
+    return { exit, later: later.withdrawn.length + later.answered.length };
+  }));
+  assert.deepEqual(result, { exit: "interrupted", later: 0 });
+});
+
+test("W7-R1-1: attach before the withdrawal: the withdrawal interrupts the producer", async () => {
+  const { layer } = await setUp({});
+  const result = await run(layer, Effect.gen(function* () {
+    const open = yield* OpenQuestions;
+    yield* open.opened(dispute("k8", { _tag: "Decision", decision: 1 }));
+    const fiber = yield* Effect.forkIn(Effect.never as Effect.Effect<string>, open.scope);
+    yield* open.attach("k8" as BesideKey, fiber);
+    yield* open.withdrawOwned({ _tag: "Decision", decision: 1 });
+    const exit = yield* Effect.raceFirst(Effect.map(Fiber.await(fiber), (x) => Exit.isFailure(x) ? "interrupted" : "succeeded"), Effect.as(Effect.sleep("50 millis"), "running"));
+    return exit;
+  }));
+  assert.equal(result, "interrupted");
+});

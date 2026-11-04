@@ -102,13 +102,20 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         catch: (e: unknown) => new FileSystemError({ operation: "serialize", path: file, message: e instanceof Error ? e.message : String(e) }),
       });
     /**
-     * Writes one JSON record, creating its directory: the text goes to `<file>.tmp-<pid>` and is renamed into
+     * Writes one JSON record, creating its directory: the text goes to `<file>.tmp-<pid>-<n>` and is renamed into
      * place, so a reader sees the previous record or the new one, never a partial one (finding 16; Q6).
      */
+    /**
+     * A temporary name of its own for each write: a decision's loop beside a review writes the same record at the same
+     * time, and a name shared by two writes lets one rename remove the other's file.
+     */
+    const writes = yield* Ref.make(0);
+    const temporaryOf = (file: string): Effect.Effect<string> =>
+      Ref.getAndUpdate(writes, (n) => n + 1).pipe(Effect.map((n) => `${file}.tmp-${process.pid}-${n}`));
     const writeRecordText = (file: string, text: string) =>
       Effect.gen(function* () {
         yield* mkdir(path.dirname(file));
-        const temporary = `${file}.tmp-${process.pid}`;
+        const temporary = yield* temporaryOf(file);
         yield* writeText(temporary, text + "\n");
         yield* renameInto(temporary, file);
       });
@@ -492,7 +499,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           Effect.gen(function* () {
             const file = at({ kind: "figure", figure });
             yield* mkdir(path.dirname(file));
-            const temporary = `${file}.tmp-${process.pid}`;
+            const temporary = yield* temporaryOf(file);
             yield* writeText(temporary, figure.svg);
             yield* renameInto(temporary, file);
           }),
@@ -605,7 +612,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           const file = at({ kind: "changes", phase });
           const text = (yield* diffText()) ?? "";
           yield* mkdir(path.dirname(file));
-          const temporary = `${file}.tmp-${process.pid}`;
+          const temporary = yield* temporaryOf(file);
           yield* writeText(temporary, text);
           yield* renameInto(temporary, file);
         }),
@@ -658,7 +665,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         Effect.gen(function* () {
           yield* saveRecord({ kind: "planFile" }, { version: VERSION, plan: recorded });
           // plan.md follows plan.json; a reader of plan.md never sees a plan that plan.json does not hold (F2).
-          const temporary = `${plan}.tmp-${process.pid}`;
+          const temporary = yield* temporaryOf(plan);
           yield* writeText(temporary, renderPlanMarkdown(recorded));
           yield* renameInto(temporary, plan);
         }),

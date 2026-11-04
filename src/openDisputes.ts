@@ -37,6 +37,8 @@ const withdrawing = (r: Registry, pick: (e: Entry) => boolean): readonly [Withdr
 
 /** A dispute registered, in its loop, before its question is presented. */
 export const opened = (r: Registry, d: OpenDispute): readonly [null, Registry] => [null, [...r, { dispute: d, inLoop: true, state: { _tag: "Open" } }]];
+/** Whether a dispute is still in the registry, open or answered (W7-R1-1: its producer may then be attached). */
+export const isRegistered = (r: Registry, key: BesideKey): boolean => r.some((e) => e.dispute.key === key);
 /** An answer the Ui took: kept on its entry, or too late where the entry was withdrawn first. */
 export const answered = (r: Registry, key: BesideKey, text: string): readonly ["kept" | "tooLate", Registry] =>
   r.some((e) => e.dispute.key === key) ? ["kept", r.map((e) => (e.dispute.key === key ? { ...e, state: { _tag: "Answered", text } } : e))] : ["tooLate", r];

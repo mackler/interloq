@@ -778,3 +778,20 @@ test("readSuiteCounts reads the file the command wrote, and none where it wrote 
     assert.deepEqual(await run(store.loadSuiteRecord(3)), Option.some({ ...record, suite: 3, result: "failed", reported }));
   }
 });
+
+// Found while running W7-R1-1's scenarios: a decision's loop beside the plan review writes the checkpoint at the same
+// time; two writes of one record must each use a temporary name of their own, so neither removes the other's.
+test("concurrent writes of one record each succeed, the record ending as one of them", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  for (let i = 0; i < 20; i++) {
+    const exit = await Effect.runPromiseExit(Effect.all(
+      [1, 2, 3, 4].map((round) => store.checkpoint({ subject: "planning-1", phase: 1, round, stage: "reviewed" })),
+      { concurrency: "unbounded" },
+    ));
+    assert.equal(exit._tag, "Success", String(exit));
+  }
+  const leftovers = fs.readdirSync(path.join(repo, "plan-review", TEST_ROOT)).filter((f) => f.includes(".tmp-"));
+  assert.deepEqual(leftovers, []);
+});

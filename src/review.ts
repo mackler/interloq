@@ -4,7 +4,7 @@
 
 import { Effect, Fiber, Ref, Result, Schema } from "effect";
 import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
-import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
+import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError, type UserStopped } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
 import { largestInput, threadAfter, type ReviewThread } from "./reviewThread.ts";
 import { attachedOf, pauseOriginOf, type Question, taskDisputeOf, type QuestionOrigin, validateQuestions } from "./question.ts";
@@ -532,8 +532,10 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
             yield* Ref.update(disputeKeys, (keys) => [...keys, beside.key]);
             // W1-R1-1: the registry decides in one step between this answer and a withdrawal; one it refuses is not taken.
             const onAccepted = (text: string) => openQuestions.answered(beside.key, text);
-            const handle = yield* openBeside(openQuestions.scope, prompts.decisionPrompt, decisionDraft(heading, d.asks, d.options, within, pass), () => true, { offer: false, resolve: decisionAnswerOf, onAccepted });
-            return yield* openQuestions.attach(beside.key, handle.fiber);
+            // W7-R1-1: the producer is attached as it is forked, so a withdrawal while it is presented interrupts it.
+            const onForked = (fiber: Fiber.Fiber<string, UserStopped | RunError>) => openQuestions.attach(beside.key, fiber);
+            yield* openBeside(openQuestions.scope, prompts.decisionPrompt, decisionDraft(heading, d.asks, d.options, within, pass), () => true, { offer: false, resolve: decisionAnswerOf, onAccepted, onForked });
+            return;
           }
         }
       });

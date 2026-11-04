@@ -129,3 +129,13 @@ test("an answered Run-owned dispute peeked and not acknowledged before its loop 
   assert.deepEqual(w.answered.map((a) => a.dispute.key), [keyOf(1)]);
   assert.equal(R.answered(R.EMPTY_REGISTRY, keyOf(3), "x")[0], "tooLate");
 });
+
+test("W7-R1-1: isRegistered holds exactly for a key opened and not withdrawn", () => {
+  fc.assert(
+    fc.property(fc.uniqueArray(n, { maxLength: 5 }), fc.subarray([0, 1, 2, 3, 4]), n, (opened, withdrawn, probe) => {
+      const r0 = opened.reduce((r, i) => R.opened(r, dispute(i, { _tag: "Decision", decision: i }))[1], R.EMPTY_REGISTRY);
+      const r1 = withdrawn.reduce((r, i) => R.withdrawnOwned(r, { _tag: "Decision", decision: i })[1], r0);
+      assert.equal(R.isRegistered(r1, keyOf(probe)), opened.includes(probe) && !withdrawn.includes(probe));
+    }),
+  );
+});

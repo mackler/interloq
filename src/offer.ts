@@ -580,7 +580,16 @@ export const closeSlot = (cell: SlotCell): Effect.Effect<void> =>
     return scope === null ? Effect.void : Scope.close(scope, Exit.void);
   });
 /** `onAccepted`, called inside the Ui's take before the answer is stored: an answer it refuses is not taken (W1-R1-1). */
-export type BesideOptions = Readonly<{ offer: boolean; resolve?: (answer: string, options: readonly OfferedOption[]) => string; onAccepted?: (text: string) => Effect.Effect<Taken> }>;
+/**
+ * `onForked`, called with the producer in one uninterruptible region with its fork, before the question is presented, so
+ * an owner that withdraws the question while it is presented can always reach its producer (W7-R1-1).
+ */
+export type BesideOptions = Readonly<{
+  offer: boolean;
+  resolve?: (answer: string, options: readonly OfferedOption[]) => string;
+  onAccepted?: (text: string) => Effect.Effect<Taken>;
+  onForked?: (fiber: Fiber.Fiber<string, UserStopped | RunError>) => Effect.Effect<void>;
+}>;
 /** Issue #243: what an answer taken beside the run is: an answer the question accepts, an end of the run, Help me decide, or rejected. */
 type Accepted = Readonly<{ _tag: "Answer"; raw: string; text: string }> | Readonly<{ _tag: "Quit" }> | Readonly<{ _tag: "Decide" }> | Readonly<{ _tag: "Rejected" }>;
 /**
@@ -647,7 +656,11 @@ export const openBeside = (
     const producer = askOffering(byLine((): Effect.Effect<string> => Effect.never), hint, draft, acceptable, null, options.resolve ?? null, place).pipe(
       Effect.tapError((e) => (e._tag === "UserStopped" || Option.isNone(open) ? Effect.void : open.value.fail(e))),
     );
-    const fiber = yield* Effect.forkIn(producer, scope);
+    // W7-R1-1: the producer runs interruptibly (restored), and is handed to onForked before any interruption can fall.
+    const onForked = options.onForked;
+    const fiber = yield* Effect.uninterruptibleMask((restore) =>
+      Effect.forkIn(restore(producer), scope).pipe(Effect.tap((f) => (onForked === undefined ? Effect.void : onForked(f)))),
+    );
     const number = yield* Effect.raceFirst(Deferred.await(presented), Effect.andThen(Fiber.join(fiber), Effect.never));
     return { number, answer: Effect.map(Ref.get(stored), Option.map((s) => s.text)), fiber };
   });

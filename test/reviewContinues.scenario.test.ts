@@ -14,7 +14,7 @@ import { run } from "../src/run.ts";
 import { makeWebUi } from "../src/webUi.ts";
 import { emptyRun, foldEvent, shownAnalysis } from "../web/src/state.ts";
 import { reviewLoop } from "../src/review.ts";
-import { type Services, Store } from "../src/services.ts";
+import { type Services, Store, type StoreShape } from "../src/services.ts";
 import { planSubject } from "../src/subjects.ts";
 import { NO_STEP_CHECKS } from "../src/schema.ts";
 import { finished, issue, questionEntry, scriptedRecordedPlan, TEST_ROOT, respond, runRefinement, runTask, scriptedStart, summaryReply, tempRepo, testLayer, testWiring } from "./helpers.ts";
@@ -564,4 +564,62 @@ test("(20) W4-R2-4: a dispute opened inside the limit's decision is withdrawn an
   assert.ok(cancelled.includes(analysisPrompt) || cancelled.includes(limit.prompt), "the limit question's prompt is cancelled");
   assert.equal(await Effect.runPromise(ui.pending), null);
   assert.ok(!fs.existsSync(path.join(probe.dir, "planning-2")), "no revision for the withdrawn dispute");
+});
+
+test("(22) W7-R1-1: the limit's decision cancelled while its dispute's question record is being written: the dispute's question never appears and its producer ends", async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const decisionResponse = (a: typeof limitAnalysis) => ({ ...respond([["D1-R1-1", "rejected"]]), analysis: a });
+  const response2 = signal();
+  const release = signal();
+  let headingSeen = false;
+  let held = false;
+  const store = (s: StoreShape): StoreShape => ({
+    ...s,
+    converse: (markdown) =>
+      Effect.suspend(() => {
+        if (markdown.includes(prompts.DISPUTE_PUT_TO_YOU_HEADING)) {
+          headingSeen = true;
+          return s.converse(markdown);
+        }
+        if (headingSeen && !held) {
+          held = true;
+          return Effect.promise(() => release.promise).pipe(Effect.andThen(s.converse(markdown)));
+        }
+        return s.converse(markdown);
+      }),
+  });
+  const { layer, probe } = testLayer(tempRepo(), {
+    ui,
+    store,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "accepted"]]), plan: "v2" },
+      // Cycle 2's response waits until the dispute's question record write is held.
+      { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(() => held)) },
+      { output: limitAnalysis },
+      { output: decisionResponse(limitAnalysis) },
+      { output: decisionResponse(limitAnalysis), gate: () => new Promise(() => {}) },
+    ],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxRounds: 1, maxIdleRounds: 5 },
+  });
+  const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
+  await response2.promise;
+  await until(() => askedWith(events, "beside").length > 0);
+  const limit = askedWith(events, "beside")[0]!;
+  assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/decide")), "taken");
+  // The plan review ends while the dispute's record write is held; the decision's disputes are withdrawn.
+  await until(() => conversation(probe.dir).includes(prompts.disputeWithdrawnByDecisionLine(1, "Decision 1")));
+  const before = events.length;
+  release.resolve();
+  await sleep(200);
+  const disputeAsked = askedWith(events.slice(before), "beside").filter((e) => e.beside !== limit.beside);
+  assert.deepEqual(disputeAsked.map((e) => e.prompt), [], "no dispute question appears after its decision ended");
+  const pendingNow = await Effect.runPromise(ui.pending);
+  assert.ok(pendingNow === null || pendingNow.beside === limit.beside || pendingNow.beside === null, `pending: ${JSON.stringify(pendingNow)}`);
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.equal(exit._tag, "Success", String(exit));
+  assert.equal(await Effect.runPromise(ui.pending), null);
 });
