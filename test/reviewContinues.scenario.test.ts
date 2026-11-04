@@ -6,14 +6,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Effect, Fiber } from "effect";
+import { Effect, Fiber, Layer } from "effect";
 import { exitCodeOf, program } from "../src/program.ts";
 import * as prompts from "../src/prompts.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import { run } from "../src/run.ts";
 import { makeWebUi } from "../src/webUi.ts";
 import { emptyRun, foldEvent } from "../web/src/state.ts";
-import { finished, issue, questionEntry, respond, runRefinement, runTask, scriptedStart, summaryReply, tempRepo, testLayer, testWiring } from "./helpers.ts";
+import { reviewLoop } from "../src/review.ts";
+import { type Services, Store } from "../src/services.ts";
+import { planSubject } from "../src/subjects.ts";
+import { NO_STEP_CHECKS } from "../src/schema.ts";
+import { finished, issue, questionEntry, scriptedRecordedPlan, TEST_ROOT, respond, runRefinement, runTask, scriptedStart, summaryReply, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 const conversation = (dir: string) => fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
@@ -271,4 +275,112 @@ test("(16) review P1-R6-1: the plan review ending while the limit's analysis is 
   assert.equal(view.pending, null);
   assert.deepEqual(view.deciding, []);
   await Effect.runPromise(Fiber.await(d.fiber));
+});
+
+test("(17) W2-R2-1: an answer to the limit's question after the final boundary read is refused, never silently taken", async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const held = signal();
+  const reached = signal();
+  let holding = true;
+  const { layer } = testLayer(tempRepo(), {
+    ui,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "accepted"]]), plan: "v2" },
+      { output: respond([["B", "accepted"]]), plan: "v3" },
+    ],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxRounds: 2 },
+    store: (store) => ({
+      ...store,
+      converse: (markdown) =>
+        holding && markdown.includes("has converged")
+          ? Effect.sync(() => {
+              holding = false;
+              reached.resolve();
+            }).pipe(Effect.andThen(Effect.promise(() => held.promise)), Effect.andThen(store.converse(markdown)))
+          : store.converse(markdown),
+    }),
+  });
+  const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
+  await reached.promise;
+  const limit = askedWith(events, "beside")[0]!;
+  const result = await Effect.runPromise(ui.answer(limit.prompt, "0"));
+  held.resolve();
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.equal(result, "notWaiting");
+  assert.ok(!events.some((e) => e._tag === "Answered" && e.prompt === limit.prompt), "no Answered was published");
+  assert.ok(events.some((e) => e._tag === "PromptCancelled" && e.prompt === limit.prompt));
+  assert.equal(exit._tag, "Success", String(exit));
+});
+
+test("(18) W2-R2-1, P3-R1-1: a final boundary whose Retry resumes the loop reopens acceptance, so a Stop to the limit is still taken", async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const review2 = signal();
+  const review3 = signal();
+  const reached2 = signal();
+  const reached3 = signal();
+  const { layer } = testLayer(tempRepo(), {
+    ui,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "accepted"]]), plan: "v2" },
+      { output: respond([["B", "accepted"]]) },
+      { output: respond([["B", "accepted"]]) },
+      { output: noQuestions, plan: "v3" },
+    ],
+    reviews: [
+      { issues: [issue("A")] },
+      { issues: [issue("B")] },
+      { issues: [], gate: () => (reached2.resolve(), review2.promise) },
+      { issues: [], gate: () => (reached3.resolve(), review3.promise) },
+      { issues: [] },
+    ],
+    execs: [finished],
+    config: { maxRounds: 1 },
+  });
+  /** The prompt of the beside question of the given origin. */
+  const besidePrompt = (kind: string): number => {
+    const numbers = events.flatMap((e) => (e._tag === "Notified" && e.event._tag === "QuestionPresented" && e.event.question.origin.kind === kind ? [e.event.question.number] : []));
+    return askedWith(events, "beside").find((a) => numbers.includes(a.beside!))!.prompt;
+  };
+  const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
+  await reached2.promise;
+  await until(() => askedWith(events, "beside").length >= 2);
+  assert.equal(await Effect.runPromise(ui.answer(besidePrompt("unchanged"), "retry")), "taken");
+  review2.resolve();
+  await reached3.promise;
+  const limit = besidePrompt("limit");
+  assert.equal(await Effect.runPromise(ui.answer(limit, "0")), "taken");
+  assert.ok(events.some((e) => e._tag === "Answered" && e.prompt === limit));
+  review3.resolve();
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.ok(exit._tag === "Failure" && String(exit.cause).includes("RoundLimitStop"), String(exit));
+});
+
+test("(12) a review of the same subject continued in one phase continues its round numbers and leaves the earlier rounds' files alone", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: respond([["A", "accepted"]]), plan: "v2" }, { output: respond([["B", "accepted"]]), plan: "v3" }],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+  });
+  const files = (n: number) => [`review-${n}.json`, `round-${n}.json`].map((f) => path.join(probe.dir, "planning-1", f));
+  const bytes = () => [1, 2, 3].flatMap(files).map((f) => fs.readFileSync(f, "utf8"));
+  const subject = planSubject(TEST_ROOT, 1, false, null, NO_STEP_CHECKS);
+  const first = await Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* Store;
+      yield* store.init("task");
+      yield* store.savePlan(scriptedRecordedPlan("v1"));
+      return yield* reviewLoop(subject);
+    }).pipe(Effect.provide(layer as Layer.Layer<Services>)),
+  );
+  assert.deepEqual(first, { result: "converged", round: 3 });
+  const before = bytes();
+  const second = await Effect.runPromise(reviewLoop(subject, { result: "converged", round: 3 }).pipe(Effect.provide(layer as Layer.Layer<Services>)));
+  assert.deepEqual(second, { result: "converged", round: 4 });
+  for (const f of files(4)) assert.ok(fs.existsSync(f), f);
+  assert.deepEqual(bytes(), before);
 });

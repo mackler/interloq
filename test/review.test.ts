@@ -138,11 +138,11 @@ test("(k) Stop at the exhaustion pause halts with AgentUnreachable, and the chec
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [], fault: issue26 }, { issues: [], fault: issue26 }],
-    answers: [prompts.TRANSPORT_ANSWERS.stop],
+    answers: [{ beside: prompts.TRANSPORT_ANSWERS.stop }],
     config: quick,
   });
   await runFails(layer, "AgentUnreachable", /Codex could not be reached after 2 attempts/);
-  assert.equal(probe.ui.asked[0], prompts.withOffer(prompts.transportPrompt));
+  assert.equal(probe.ui.asked[0], prompts.transportPrompt);
   const { readCheckpoint } = await import("../src/records.ts");
   const checkpoint = await Effect.runPromise(readCheckpoint(probe.dir).pipe(Effect.provide(platformLayer)));
   // The halt comes during the first review, before any transition of planning 1 was committed.

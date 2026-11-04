@@ -262,6 +262,11 @@ export type RunView = Readonly<{
    * once and its prompt published only when nothing stands over it, and again each time it is shown again.
    */
   presentedBy: ReadonlyMap<number, Readonly<{ question: PresentedQuestion; time: string }>>;
+  /**
+   * W2-R2-2: the prompts of the questions open beside the run, each with its question's number, from its Asked until
+   * it is answered, closed or cancelled: an analysis of such a question waits for it to be asked again.
+   */
+  besideOpen: ReadonlyMap<number, number>;
   /** The band of the phase the next message belongs to (issue #15): set when a phase begins, kept until the next one. */
   phase: Band | null;
   /** The last time the right panel displays, a message's or a band label's: what its next message's time is measured from. */
@@ -568,6 +573,7 @@ export const emptyRun = (id: number): RunView => ({
   expired: null,
   answered: [],
   cancelled: [],
+  besideOpen: new Map(),
   busy: false,
   calls: [],
   retry: null,
@@ -1159,6 +1165,9 @@ const optionsOf = (question: PresentedQuestion): Widget["options"] =>
     return "token" in o.answer ? [{ label: description === "" ? label : `${label} — ${description}`, sends: o.answer.token }] : [];
   });
 
+/** A map without one key, the map itself where it has none. */
+const withoutKey = <K, V>(m: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> => (m.has(key) ? new Map([...m].filter(([k]) => k !== key)) : m);
+
 /** One event of a run with its time, in its order. Pure; the replay folds the same function. */
 export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
   // The lines said for an interview turn or a relayed question are absorbed only while they follow it directly.
@@ -1179,11 +1188,22 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
           const own = r.presented?.question.number === event.beside;
           const options = shown === null ? [] : optionsOf(shown.question);
           const pending: Widget = { asked: event, options, choices: event.choices, question: shown?.question ?? null, presentedAt: shown?.time ?? time, hint: pagePromptText(event.kind, event.text), countdown: null, held: true, decision: "none" };
-          return { ...r, pending, ...(own ? { presented: null, questionOptions: [] } : {}), dismissed: null };
+          // W2-R2-2: an analysis of this question, waiting for its prompt, gets this one.
+          const analysis = r.analysis !== null && r.analysis.prompt === null && r.analysis.event.presented.number === event.beside ? { ...r.analysis, prompt: event.prompt } : r.analysis;
+          const besideOpen = new Map(r.besideOpen).set(event.prompt, event.beside);
+          return { ...r, pending, analysis, besideOpen, ...(own ? { presented: null, questionOptions: [] } : {}), dismissed: null };
         }
         const extra = r.questionOptions;
-        // Presented options belong to this prompt alone (P1-R1-2); an analysis waiting for its prompt gets this one.
-        const analysis = r.analysis !== null && r.analysis.prompt === null ? { ...r.analysis, prompt: event.prompt } : r.analysis;
+        // Presented options belong to this prompt alone (P1-R1-2); an analysis waiting for its prompt gets this one unless
+        // the prompt presents another question (W2-R2-2). One of another question waits only for a question open beside the
+        // run; any other can never be shown again and goes.
+        const analysis = ((): RunView["analysis"] => {
+          if (r.analysis === null || r.analysis.prompt !== null) return r.analysis;
+          const number = r.analysis.event.presented.number;
+          // A prompt presenting no question cannot be another question's.
+          if (r.presented === null || r.presented.question.number === number) return { ...r.analysis, prompt: event.prompt };
+          return [...r.besideOpen.values()].includes(number) ? r.analysis : null;
+        })();
         const hint = pagePromptText(event.kind, event.text);
         const pending: Widget = { asked: event, options: extra, choices: event.choices, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time, hint, countdown: event.countdown, held: event.countdown === null, decision: "none" };
         return { ...r, pending, expired: r.expired, questionOptions: [], presented: null, analysis, dismissed: null };
@@ -1215,9 +1235,14 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       case "PromptCancelled": {
         const entry = r.deciding.find((d) => d.prompt === event.prompt);
         const deciding = r.deciding.filter((d) => d.prompt !== event.prompt);
+        // W2-R2-2: a cancelled prompt takes its analysis with it: one bound to it, or one of its beside question not yet bound.
+        const question = r.besideOpen.get(event.prompt);
+        const analysisGoes = event._tag === "PromptCancelled" && r.analysis !== null && (r.analysis.prompt === event.prompt || (r.analysis.prompt === null && r.analysis.event.presented.number === question));
         return {
           ...r,
           ...(event._tag === "PromptCancelled" ? { cancelled: [...r.cancelled, event.prompt] } : {}),
+          ...(analysisGoes ? { analysis: null } : {}),
+          besideOpen: withoutKey(r.besideOpen, event.prompt),
           deciding,
           termsRequested: entry === undefined ? r.termsRequested : r.termsRequested.filter((n) => n !== entry.question),
           dashboard: withoutStaleDraft(r.dashboard, deciding),

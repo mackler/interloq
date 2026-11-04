@@ -2,7 +2,7 @@
 // rounds end when a review contains no counted issue or when the user chooses to proceed.
 // The procedure is applied to three subjects: the question list, the requirements, and the plan.
 
-import { Effect, Fiber, Option as O, Ref, Result, Schema } from "effect";
+import { Effect, Fiber, Ref, Result, Schema } from "effect";
 import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
@@ -20,7 +20,7 @@ import { parseUnchangedAnswer } from "./input.ts";
 import { advance, type Asks, type Beside, type BesideKey, subjectOf, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
-import { type Decider, OpenQuestions, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, type ReviewSchema, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
+import { type Decider, OpenQuestions, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, type ReviewSchema, RunConfig, RunKind, type Services, Store, type StoreError, type Taken, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { ASK, type Exhaustion, FAIL, withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
@@ -355,6 +355,9 @@ export const analysisProgress = (decision: number, question: number | null, chec
  * against the services, and the command that yields an event (the last of its batch) drives the next
  * transition. The pauses, the log update and the progress checks are all in `advance`.
  */
+/** W2-R2-1: the answers to a loop's own beside questions, and whether it still accepts one. */
+type LoopAnswers = Readonly<{ accepting: boolean; answers: ReadonlyMap<BesideKey, string> }>;
+
 /** How a review loop ended, and in which round. */
 export type LoopEnd = Readonly<{ result: LoopResult; round: number }>;
 
@@ -370,6 +373,11 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
     const openQuestions = yield* OpenQuestions;
     /** This loop's questions open beside the review (limits, idle, unchanged), by key. */
     const besides = yield* Ref.make<ReadonlyMap<string, BesideHandle>>(new Map());
+    /**
+     * W2-R2-1: the answers to this loop's own questions (limits, idle, unchanged), each accepted or refused in one step
+     * with `accepting`, which the final boundary's read turns off, so no answer is taken that nothing will read.
+     */
+    const loopAnswers = yield* Ref.make<LoopAnswers>({ accepting: true, answers: new Map() });
     /** The keys of this loop's disputes, in the run's registry. */
     const disputeKeys = yield* Ref.make<readonly BesideKey[]>([]);
     yield* Effect.addFinalizer(() => Ref.get(disputeKeys).pipe(Effect.flatMap((keys) => openQuestions.loopEnded(keys))));
@@ -486,7 +494,9 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
         const q = beside.question;
         const loopScoped = (hint: string, draft: QuestionDraft, acceptable: (a: string) => boolean) =>
           Effect.gen(function* () {
-            const handle = yield* openBeside(loopScope, hint, draft, acceptable, { offer: true });
+            const onAccepted = (text: string) =>
+              Ref.modify(loopAnswers, (l): readonly [Taken, LoopAnswers] => (l.accepting ? ["kept", { ...l, answers: new Map(l.answers).set(beside.key, text) }] : ["refused", l]));
+            const handle = yield* openBeside(loopScope, hint, draft, acceptable, { offer: true, onAccepted });
             yield* Ref.update(besides, (m) => new Map(m).set(beside.key, handle));
           });
         switch (q.kind) {
@@ -587,14 +597,12 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
             yield* openQuestions.acknowledge(command.keys);
             return null;
           case "AwaitBoundary": {
-            // The answers taken so far, each stored in the Ui's own take, so none is missed; nothing is waited for.
-            const answers: { key: string; text: string }[] = [];
-            for (const [key, handle] of yield* Ref.get(besides)) {
-              const answer = yield* handle.answer;
-              if (O.isSome(answer)) answers.push({ key, text: answer.value });
-            }
-            const read = new Set(answers.map((a) => a.key));
-            yield* Ref.update(besides, (m) => new Map([...m].filter(([k]) => !read.has(k))));
+            // The answers taken so far, each stored in the Ui's own take, so none is missed; nothing is waited for. At the
+            // loop's final boundary the read closes acceptance in the same step (W2-R2-1): a later answer is refused.
+            const finishing = state.step.name === "finishingAtBoundary";
+            const read = yield* Ref.modify(loopAnswers, (l): readonly [ReadonlyMap<BesideKey, string>, LoopAnswers] => [l.answers, { accepting: l.accepting && !finishing, answers: new Map() }]);
+            const answers: { key: string; text: string }[] = [...read].map(([key, text]) => ({ key, text }));
+            yield* Ref.update(besides, (m) => new Map([...m].filter(([k]) => !read.has(k as BesideKey))));
             for (const a of yield* openQuestions.peek(yield* Ref.get(disputeKeys))) answers.push({ key: a.dispute.key, text: a.text });
             return { kind: "BoundaryReached", answers };
           }
@@ -671,12 +679,19 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
           const outcome = yield* execute(command, transition.state);
           if (outcome === null) continue;
           if ("finished" in outcome) return { result: outcome.finished, round: transition.state.round };
-          return yield* interpret(advance(transition.state, outcome));
+          const next = advance(transition.state, outcome);
+          // P3-R1-1: a final boundary whose answers resume the loop reopens acceptance for the rounds that follow.
+          if (transition.state.step.name === "finishingAtBoundary" && !next.commands.some((c) => c.kind === "Finish" || c.kind === "Halt"))
+            yield* Ref.update(loopAnswers, (l) => ({ ...l, accepting: true }));
+          return yield* interpret(next);
         }
         return yield* Effect.die(new Error("the review loop ended a batch without an event"));
       });
 
     const setup: ReviewSetup = { subject: id, heading, fileLabel, dirName: subjectDir(id), phase, idNumber: typeof id === "object" && "decision" in id ? id.decision : typeof id === "object" && "verdict" in id ? id.verdict : phase, proceed: subject.proceed, hasAmend: subject.amend !== null, leaveOnAcceptance: subject.leaveOnAcceptance, leaveOnDecision: subject.leaveOnDecision, onUnchanged: subject.onUnchanged, disputesSettledBy: subject.disputesSettledBy, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor };
     const begun = yield* store.observeFile(id);
-    return yield* interpret(advance(initialState(setup, config, continueFrom), { kind: "Begin", hash: begun.hash, text: begun.text, log: yield* store.loadLog(id) }));
+    return yield* interpret(advance(initialState(setup, config, continueFrom), { kind: "Begin", hash: begun.hash, text: begun.text, log: yield* store.loadLog(id) })).pipe(
+      // W2-R2-1: however the loop ends, no answer is accepted once it has, before its scope cancels its questions.
+      Effect.ensuring(Ref.update(loopAnswers, (l) => ({ ...l, accepting: false }))),
+    );
   }));

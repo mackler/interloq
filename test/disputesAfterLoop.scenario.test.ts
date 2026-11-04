@@ -66,6 +66,42 @@ test("a work-review dispute answered for Codex's position while its loop leaves 
   assert.equal(decisions.match(/issue W1-R1-1, raised again/g)?.length, 1, decisions);
 });
 
+test("W2-R2-3: answered for Codex's position after the plan review ended and before execution, it is applied and reviewed in the same phase first", async () => {
+  const converged = signal();
+  let records: string | null = null;
+  let before: string[] | null = null;
+  const reviewFile = (n: number) => path.join(records!, "planning-1", `review-${n}.json`);
+  const seen: { review4: boolean; applied: boolean }[] = [];
+  const { wiring, probe } = testWiring(tempRepo(), {
+    ...disputedPlan([{ beside: "1", when: () => converged.promise }], [{ output: noQuestions, plan: "v2" }], [{ issues: [] }]),
+    execs: [finished],
+    execScripts: [
+      {
+        onCall: () =>
+          void seen.push({
+            review4: fs.existsSync(reviewFile(4)),
+            applied: probe.planner.prompts.some((p) => p.includes("user-decisions.md has new entries") && p.includes("plan.json")),
+          }),
+      },
+    ],
+    store: (store) => ({
+      ...store,
+      converse: (markdown) =>
+        before === null && markdown.includes("The review of plan.json has converged")
+          ? Effect.sync(() => {
+              records = store.dir;
+              before = [1, 2, 3].map((n) => fs.readFileSync(reviewFile(n), "utf8"));
+              converged.resolve();
+            }).pipe(Effect.andThen(store.converse(markdown)))
+          : store.converse(markdown),
+    }),
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.match(read(records!, "user-decisions.md"), /issue B, raised again/);
+  assert.deepEqual(seen, [{ review4: true, applied: true }], "the application and the review of round 4 came before the execution");
+  assert.deepEqual([1, 2, 3].map((n) => fs.readFileSync(reviewFile(n), "utf8")), before, "the earlier rounds' files are unchanged");
+});
+
 test("a dispute unanswered at the run's end is withdrawn and recorded as settled without the developer; the item is implemented after", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { ...disputedPlan([]), execs: [finished] });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);

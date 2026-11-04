@@ -3761,4 +3761,36 @@ describe("a question open beside the run (issue #243)", () => {
     expect(runOf(cancelled, "implementation")?.followed).toEqual([]);
     expect(modeWaiting(cancelled, "implementation")).toBe(false);
   });
+
+  // Work review 2, W2-R2-2: Help me decide at a beside question binds the analysis to that question when it is asked
+  // again, and the analysis leaves with it.
+  const offeredBeside = (prompt: number, question: number): RunEvent => ({ ...(asked(prompt, prompts.withOffer(prompts.limitPrompt)) as Extract<RunEvent, { _tag: "Asked" }>), beside: question });
+  const deciding = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question, beside: null });
+  const analyzedBeside: RunEvent = notified({ _tag: "DecisionAnalyzed", decision: 1, question: "Beside?", presented: pq(1, "Beside?"), options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } });
+  const decidedBeside = [started, presentedAs(1, "Beside?"), offeredBeside(1, 1), { _tag: "Answered", prompt: 1, text: "/decide" } as RunEvent, deciding(2, 1), analyzedBeside, { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent, offeredBeside(1, 1)];
+
+  test("W2-R2-2: the analysis of a beside question is bound to that question when it is asked again", () => {
+    const r = runOf(fold(live(decidedBeside)), "implementation");
+    expect(r?.pending?.asked.prompt).toBe(1);
+    expect(r?.analysis?.prompt).toBe(1);
+  });
+
+  test("W2-R2-2: once that question is answered and closed, a later foreground question carries no analysis", () => {
+    const events = [...decidedBeside, { _tag: "Answered", prompt: 1, text: "2" } as RunEvent, { _tag: "PromptClosed", prompt: 1 } as RunEvent, presentedAs(3, "Other?"), asked(4, prompts.decisionPrompt)];
+    const r = runOf(fold(live(events)), "implementation");
+    expect(r?.pending?.asked.prompt).toBe(4);
+    expect(r?.analysis).toBeNull();
+  });
+
+  test("W2-R2-2: an analysis left unbound is not bound to a foreground question of another number", () => {
+    const events = [started, presentedAs(1, "Beside?"), offeredBeside(1, 1), { _tag: "Answered", prompt: 1, text: "/decide" } as RunEvent, deciding(2, 1), analyzedBeside, { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent, presentedAs(3, "Other?"), asked(4, prompts.decisionPrompt)];
+    const r = runOf(fold(live(events)), "implementation");
+    expect(r?.analysis?.prompt ?? null).toBeNull();
+  });
+
+  test("W2-R2-2: PromptCancelled of the beside prompt clears its analysis, bound or not", () => {
+    expect(runOf(fold(live([...decidedBeside, { _tag: "PromptCancelled", prompt: 1 } as RunEvent])), "implementation")?.analysis).toBeNull();
+    const unbound = decidedBeside.slice(0, -1);
+    expect(runOf(fold(live([...unbound, { _tag: "PromptCancelled", prompt: 1 } as RunEvent])), "implementation")?.analysis).toBeNull();
+  });
 });
