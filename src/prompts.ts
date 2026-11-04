@@ -2307,7 +2307,7 @@ export function suiteRepeatLine(label: string, command: string): string {
 }
 /** Issue #181: the question when the final suite was stopped outside the work after the one automatic repeat. */
 export function suiteStoppedQuestion(label: string, command: string): string {
-  return `${label}, the whole suite ${command} that Interloq runs before the run can finish, was stopped again before it finished; the reason and its output are shown under "${attachedHeading("suiteStop")}". Do you want Interloq to run the suite again, or to stop the run?`;
+  return `${label}, the whole suite ${command} that Interloq runs before the run can finish, was stopped again before it finished; the reason and its output are shown under "${attachedHeading("suiteStop")}". The suite is running again meanwhile. Do you want Interloq to run the suite again after this run, or to stop the run?`;
 }
 export const SUITE_RUN_AGAIN = "Run the suite again";
 export const SUITE_STOP = "Stop the run";
@@ -3672,7 +3672,7 @@ export function transportRecoveredLine(agent: "claude" | "codex"): string {
  * by the program. The attempts and the fault, whose length the program does not choose, are in its details.
  */
 export function transportExhaustedQuestion(agent: "claude" | "codex", what: string): string {
-  return `${agentName(agent)} could not be reached for ${what}; the attempts and the last error are shown under "${attachedHeading("fault")}". Do you want Interloq to retry again, or to stop the run?`;
+  return `${agentName(agent)} could not be reached for ${what}; the attempts and the last error are shown under "${attachedHeading("fault")}". Interloq keeps trying meanwhile. Do you want Interloq to retry again at once with a full set of retries, or to stop the run?`;
 }
 /**
  * The exhaustion pause's details (S52, P6-R1-1): the attempts in the program's words, and the last fault. The fault is
@@ -4684,6 +4684,18 @@ export const unchangedContinuesLine = (fileLabel: string, round: number, pass: P
 /** Issue #243: a Retry answered to an earlier cycle's unchanged question, carried out as a decision the planner applies. */
 export const unchangedRetryDecision = (fileLabel: string, round: number, accepted: readonly string[]): string =>
   `Carry out the accepted points ${accepted.join(", ")} of cycle ${round}, which left ${fileLabel} unchanged.`;
+/** Issue #243: a suite stopped outside the work after its one repeat runs again at once, the question open beside it. */
+export const suiteRunningAgainLine = (name: string, command: string): string =>
+  `${name}: Interloq runs ${command} again at once; the question about it waits for your answer beside the run.`;
+/** Issue #243: the answer to the suite's question, recorded. */
+export const suiteAnswerLine = (choice: "retry" | "stop", command: string): string =>
+  `**User decision:** ${choice === "stop" ? "stop the run" : `run ${command} again`}.\n\n`;
+/** Issue #243: the tracker's repeats used up: Interloq repeats again, the question open beside the repeats. */
+export const trackerBesideRetryLine = (tracker: string, what: string, attempts: number, seconds: number): string =>
+  `${what} on ${tracker} failed after ${attempts} attempts; Interloq repeats it in ${durationText(seconds * 1000)}, and the question about it waits for your answer beside the repeats.`;
+/** Issue #243: the transport retries used up with no network code: Interloq keeps trying, the question open beside the call. */
+export const transportBesideLine = (agent: "claude" | "codex", what: string, tries: number, seconds: number): string =>
+  `${agent === "claude" ? "Claude Code" : "Codex"} could not be reached for ${what} after its retries; Interloq tries again in ${durationText(seconds * 1000)} (try ${tries}), and the question about it waits for your answer beside the call.`;
 /** Issue #243: an answer to a disagreement given after its review ended, recorded where the run can still change the work. */
 export const disputeAnsweredLine = (heading: string, text: string): string =>
   `${heading}: your answer "${text}" to a disagreement put to you there is recorded in user-decisions.md, and the run follows it from here.`;

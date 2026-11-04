@@ -24,7 +24,7 @@ import { disputeSettledWithoutYouLine, PREPARATION_STOPPED, preparationNotWritte
 import { Decider, OpenQuestions, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
 import type { CommentId, ItemComment, TrackerItem } from "./tracker.ts";
-import { readCommentsWithRetry, type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
+import { noTrackerQuestion, readCommentsWithRetry, type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 
 /** What a preparation came to: its questions written, the item set aside with why, or comments the tracker refused for good. */
 export type PreparationOutcome =
@@ -86,7 +86,7 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
     const store: StoreShape = (wiring.store ?? ((s: StoreShape) => s))(opened.success);
     const { ui } = yield* unattendedUi;
     const record = (line: string) => store.converse(`${line}\n\n`).pipe(Effect.ignore);
-    const env: TrackerRetryEnv = unattendedTrackerEnv({ ui, settings, record: (markdown) => store.converse(markdown), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" });
+    const env: TrackerRetryEnv = unattendedTrackerEnv({ ui, settings, record: (markdown) => store.converse(markdown), openQuestion: noTrackerQuestion, exhausted: "stop" });
     const withTracker = <A, E>(use: (t: TrackerShape) => Effect.Effect<A, E>): Effect.Effect<A, E> => Effect.flatMap(Tracker, use).pipe(Effect.provide(trackerLayer.success));
     const key = runCommentKey(rootName(root.success));
     const deleteAll = (ids: readonly CommentId[]) => withTracker((t) => Effect.forEach(ids, (comment) => writeWithRetry(t, { kind: "deleteComment", item: item.id, comment }, env), { discard: true }));

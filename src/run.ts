@@ -1,7 +1,7 @@
 // The complete run: planning phase K, execution phase K and work review K, until Claude Code reports
 // 'finished' and the work review converges.
 
-import { Clock, Effect, Exit, Fiber, Option, Queue, Ref, Result } from "effect";
+import { Clock, Deferred, Effect, Exit, Fiber, Option, Queue, Ref, Result, Scope } from "effect";
 import { NEW_SANITIZER, type ProcessKey, processKeyOf, type Sanitizer, sanitizeChunk } from "./liveOutput.ts";
 import { commentDateOf, commentText, refinementTaskText, runCommentKey } from "./itemComments.ts";
 import { bringUpToDate } from "./bringUpToDate.ts";
@@ -10,7 +10,7 @@ import { rootName } from "./park.ts";
 import { type ItemText, type Refinement, refinementOf } from "./refinement.ts";
 import { stateAtEnd, stateAtStart } from "./runMode.ts";
 import type { ItemComment, ItemId } from "./tracker.ts";
-import { describe, isTrackerError, NotRefinedStopped, type RunError, SuiteStopped, TrackerStepFailed, trackerFailureText } from "./errors.ts";
+import { describe, isTrackerError, NotRefinedStopped, type RunError, SuiteStopped, TrackerStepFailed, trackerFailureText, type UserStopped } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { askAgreed, questionPhase } from "./interview.ts";
@@ -18,14 +18,14 @@ import { type PreparationFound, preparationOf } from "./preparedComments.ts";
 import { renderQuestions } from "./render.ts";
 import { type EarlierPlan, undonePlan } from "./earlierPlan.ts";
 import { issueObsoleteLine, issueUpdatedLine, PREPARED_TERMS_CHOICE_LINE, preparationCleanupFailedLine, preparationUsedLine, continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, fallenCountsText, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, SUITE_OUTPUT_NAME,
-  suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution, disputeAnsweredLine, disputesRevisionLine, disputeSettledWithoutYouLine, DISPUTE_SENT_BACK_NOTE } from "./prompts.ts";
+  suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution, suiteAnswerLine, suiteRunningAgainLine, disputeAnsweredLine, disputesRevisionLine, disputeSettledWithoutYouLine, DISPUTE_SENT_BACK_NOTE } from "./prompts.ts";
 import { pathOf, recordPath, type RunRoot } from "./artifacts.ts";
 import { type CommandReport, fallenCounts, suiteReportedOf } from "./testCounts.ts";
 import type { Baseline } from "./records.ts";
 import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, type LoopEnd, planningCall, reviewLoop, type Subject, userQuestionsValidation } from "./review.ts";
 import type { Answered, Withdrawn } from "./openDisputes.ts";
-import { askOffering, byLine, programContext, type QuestionDraft, saveOptionFigures, suiteStoppedOptions } from "./offer.ts";
+import { type BesideQuestion, openBeside, programContext, type QuestionDraft, saveOptionFigures, suiteStoppedOptions } from "./offer.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
@@ -555,43 +555,87 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
      * question names every stop of this call's loop and the stop that used the repeat (W1-R1-1).
      */
     const finalSuite = ({ key, command }: S.FinalCommand, k: number) =>
-      Effect.gen(function* () {
+      Effect.suspend(() => {
         // The stops outside the work of this call's loop, in order.
         let here: readonly SuiteStop[] = [];
-        for (;;) {
-          const n = suiteRuns.length + 1;
-          const { verdict, log, tail, reports } = yield* suitePhase(command, n, key);
-          suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed", key, reports }];
-          if (verdict._tag === "Passed") return null;
-          if (verdict._tag === "WorkFailed") return { _tag: "SuiteFailed", suite: n, command, reason: verdict.reason, tail, log } satisfies RevisionCause;
-          // The next suite run of this iteration is foreseen first, so that the lines name this one as the run now numbers it.
-          yield* foreseeShape;
-          const name = label("suite", n);
-          yield* sayAndWrite(suiteStoppedLine(name, command, verdict.reason, log));
-          const latest: SuiteStop = { suite: n, reason: verdict.reason, log };
-          const stops: readonly [...SuiteStop[], SuiteStop] = [...here, latest];
-          here = stops;
-          if (repeated === null) {
-            repeated = latest;
-            yield* sayAndWrite(suiteRepeatLine(name, command));
-            continue;
+        /**
+         * Issue #243: the question after a stop that used the repeat no longer waits. It is opened beside the suite,
+         * which runs again at once, in a Scope of its own, with the Deferred its answer completes in the Ui's take.
+         */
+        let question: Readonly<{ handle: BesideQuestion; scope: Scope.Closeable; answered: Deferred.Deferred<void> }> | null = null;
+        const closeQuestion = Effect.suspend(() => {
+          const open = question;
+          question = null;
+          return open === null ? Effect.void : Scope.close(open.scope, Exit.void);
+        });
+        /** The answer the question holds now: Stop the run, or Run the suite again, which consumes the question. */
+        const answeredNow = Effect.gen(function* () {
+          if (question === null) return "none" as const;
+          const answer = yield* question.handle.answer;
+          if (Option.isNone(answer)) return "none" as const;
+          const choice = parseTransportAnswer(answer.value) ?? "stop";
+          yield* store.converse(suiteAnswerLine(choice, command));
+          yield* closeQuestion;
+          return choice;
+        });
+        /** Completes when Stop the run is answered; a Run the suite again consumes the question and waits no more. */
+        const stopAnswered = (open: NonNullable<typeof question>): Effect.Effect<"stop", UserStopped | StoreError> =>
+          Effect.raceFirst(
+            Deferred.await(open.answered).pipe(Effect.andThen(answeredNow), Effect.flatMap((c) => (c === "stop" ? Effect.succeed("stop" as const) : Effect.never))),
+            Fiber.join(open.handle.fiber).pipe(Effect.matchEffect({ onFailure: (e) => (e._tag === "UserStopped" ? Effect.fail(e) : Effect.never), onSuccess: () => Effect.never })),
+          );
+        const stoppedBy = (stops: readonly SuiteStop[]) => {
+          const last = stops[stops.length - 1]!;
+          return Effect.fail(new SuiteStopped({ command, suite: last.suite, stops: stops.length, reason: suiteFailureText(last.reason) }));
+        };
+        return Effect.gen(function* () {
+          for (;;) {
+            const n = suiteRuns.length + 1;
+            const open = question;
+            const running = Effect.map(suitePhase(command, n, key), (r) => ({ _tag: "Ran", r }) as const);
+            const ran = yield* (open === null ? running : Effect.raceFirst(running, Effect.map(stopAnswered(open), () => ({ _tag: "Stopped" }) as const)));
+            // Stop the run answered while the suite ran: the run is interrupted (its process group killed), and the run halts.
+            if (ran._tag === "Stopped") return yield* stoppedBy(here);
+            const { verdict, log, tail, reports } = ran.r;
+            suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed", key, reports }];
+            // A Stop given as the run ended is honored too.
+            if ((yield* answeredNow) === "stop") return yield* stoppedBy(here);
+            if (verdict._tag === "Passed") return null;
+            if (verdict._tag === "WorkFailed") return { _tag: "SuiteFailed", suite: n, command, reason: verdict.reason, tail, log } satisfies RevisionCause;
+            // The next suite run of this iteration is foreseen first, so that the lines name this one as the run now numbers it.
+            yield* foreseeShape;
+            const name = label("suite", n);
+            yield* sayAndWrite(suiteStoppedLine(name, command, verdict.reason, log));
+            const latest: SuiteStop = { suite: n, reason: verdict.reason, log };
+            const stops: readonly [...SuiteStop[], SuiteStop] = [...here, latest];
+            here = stops;
+            if (repeated === null) {
+              repeated = latest;
+              yield* sayAndWrite(suiteRepeatLine(name, command));
+              continue;
+            }
+            if (question === null) {
+              const reason = suiteFailureText(verdict.reason);
+              const origin: QuestionOrigin = { kind: "suiteStopped", command, suite: n, stops: stops.length, reason };
+              const draft: QuestionDraft = {
+                origin,
+                context: programContext(origin),
+                history: suiteStoppedHistory(stops, repeated),
+                explanations: [],
+                question: plainPieces(suiteStoppedQuestion(name, command)),
+                options: suiteStoppedOptions(),
+                attached: attachedOf("suiteStop", suiteStoppedDetails(stops, repeated)),
+                explain: suiteStoppedFacts(command, stops, repeated),
+                decision: null,
+              };
+              const scope = yield* Scope.make();
+              const answered = yield* Deferred.make<void>();
+              const handle = yield* openBeside(scope, transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.asVoid(Deferred.succeed(answered, undefined)) }).pipe(inPhase({ kind: "suite", n }));
+              question = { handle, scope, answered };
+            }
+            yield* sayAndWrite(suiteRunningAgainLine(name, command));
           }
-          const reason = suiteFailureText(verdict.reason);
-          const origin: QuestionOrigin = { kind: "suiteStopped", command, suite: n, stops: stops.length, reason };
-          const draft: QuestionDraft = {
-            origin,
-            context: programContext(origin),
-            history: suiteStoppedHistory(stops, repeated),
-            explanations: [],
-            question: plainPieces(suiteStoppedQuestion(name, command)),
-            options: suiteStoppedOptions(),
-            attached: attachedOf("suiteStop", suiteStoppedDetails(stops, repeated)),
-            explain: suiteStoppedFacts(command, stops, repeated),
-            decision: null,
-          };
-          const answer = yield* askOffering(byLine((p) => ui.ask(p)), transportPrompt, draft, (a) => parseTransportAnswer(a) !== null).pipe(inPhase({ kind: "suite", n }));
-          if (parseTransportAnswer(answer) === "stop") return yield* Effect.fail(new SuiteStopped({ command, suite: n, stops: stops.length, reason }));
-        }
+        }).pipe(Effect.ensuring(closeQuestion));
       });
 
     const openQuestions = yield* OpenQuestions;

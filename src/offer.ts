@@ -562,9 +562,11 @@ export const openBeside = (
   draft: QuestionDraft,
   acceptable: (answer: string) => boolean,
   options: BesideOptions,
-): Effect.Effect<BesideQuestion, RunError, Ui | Store | Decider | OpenQuestions> =>
+): Effect.Effect<BesideQuestion, RunError, Ui | Store | Decider> =>
   Effect.gen(function* () {
-    const open = yield* OpenQuestions;
+    // The run's OpenQuestions where the caller has it; without it (an adapter's own retry) "q" still fails the producer's
+    // fiber with UserStopped, which that caller watches.
+    const open = yield* Effect.serviceOption(OpenQuestions);
     const presented = yield* Deferred.make<number>();
     const stored = yield* Ref.make(Option.none<Readonly<{ raw: string; text: string }>>());
     const onTaken = (raw: string, shown: readonly OfferedOption[]): Effect.Effect<void> => {
@@ -573,7 +575,7 @@ export const openBeside = (
         case "Answer":
           return Ref.set(stored, Option.some({ raw: accepted.raw, text: accepted.text })).pipe(Effect.andThen(options.onAccepted === undefined ? Effect.void : options.onAccepted(accepted.text)));
         case "Quit":
-          return open.quit(new UserStopped({ where: hint }));
+          return Option.isSome(open) ? open.value.quit(new UserStopped({ where: hint })) : Effect.void;
         case "Decide":
         case "Rejected":
           return Effect.void;
@@ -581,7 +583,7 @@ export const openBeside = (
     };
     const place: Place = { _tag: "Beside", offer: options.offer, presented, onTaken, stored: Effect.map(Ref.get(stored), Option.map((s) => s.raw)) };
     const producer = askOffering(byLine((): Effect.Effect<string> => Effect.never), hint, draft, acceptable, null, options.resolve ?? null, place).pipe(
-      Effect.tapError((e) => (e._tag === "UserStopped" ? Effect.void : open.fail(e))),
+      Effect.tapError((e) => (e._tag === "UserStopped" || Option.isNone(open) ? Effect.void : open.value.fail(e))),
     );
     const fiber = yield* Effect.forkIn(producer, scope);
     const number = yield* Effect.raceFirst(Deferred.await(presented), Effect.andThen(Fiber.join(fiber), Effect.never));
@@ -602,13 +604,14 @@ export const openBesideUnoffered = (
   hint: string,
   draft: QuestionDraft,
   acceptable: (answer: string) => boolean,
+  onAccepted: () => Effect.Effect<void> = () => Effect.void,
 ): Effect.Effect<BesideQuestion, RunError> =>
   Effect.gen(function* () {
     const { question, present } = yield* presentUnoffered(env.ui, env.record, draft);
     const stored = yield* Ref.make(Option.none<string>());
     const onTaken = (raw: string): Effect.Effect<void> => {
       const parsed = parseAskLine(raw);
-      return parsed.kind === "answer" && acceptable(parsed.text) ? Ref.set(stored, Option.some(parsed.text)) : Effect.void;
+      return parsed.kind === "answer" && acceptable(parsed.text) ? Ref.set(stored, Option.some(parsed.text)).pipe(Effect.andThen(onAccepted())) : Effect.void;
     };
     const producer = Effect.scoped(
       Effect.gen(function* () {

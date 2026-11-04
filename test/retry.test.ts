@@ -14,11 +14,13 @@ import { exhaustedStep, type ExhaustionKind, networkRetryDelaySeconds } from "..
 import type { NetworkCode } from "../src/transport.ts";
 import { type LimitReset, timeOfDayIn, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import * as S from "../src/schema.ts";
-import { Decider, type DeciderShape, RunConfig, Store, Ui } from "../src/services.ts";
+import { Decider, type DeciderShape, RunConfig, Store, Ui, type UiShape } from "../src/services.ts";
+import type { RunEvent } from "../src/protocol.ts";
+import { makeWebUi } from "../src/webUi.ts";
 import { makeStore } from "../src/store.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import { countdownView } from "../web/src/state.ts";
-import { finished, issue, noDecider, respond, ScriptedUi, steppingClock, tempRepo, testLayer , TEST_ROOT } from "./helpers.ts";
+import { finished, issue, noDecider, respond, type ScriptedAnswer, ScriptedUi, steppingClock, tempRepo, testLayer , TEST_ROOT } from "./helpers.ts";
 import { run } from "../src/run.ts";
 import { para } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
@@ -44,13 +46,13 @@ const scripted = (script: Script) => {
   return { calls, attempt };
 };
 
-const setup = async (answers: string[], decider: DeciderShape = noDecider) => {
+const setup = async (answers: ScriptedAnswer[], decider: DeciderShape = noDecider, ui0?: UiShape) => {
   const repo = tempRepo();
   const store = await Effect.runPromise(makeStore(repo, TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(store.init("task"));
   const ui = new ScriptedUi(answers);
   const config = { ...S.defaultConfig, maxTransportRetries: 2, transportRetryDelaySeconds: 0.01 };
-  const layer = Layer.mergeAll(Layer.succeed(Store, { ...store, saveChoice: () => Effect.void }), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(Decider, decider));
+  const layer = Layer.mergeAll(Layer.succeed(Store, { ...store, saveChoice: () => Effect.void }), Layer.succeed(Ui, ui0 ?? ui), Layer.succeed(RunConfig, config), Layer.succeed(Decider, decider));
   const conversation = () => fs.readFileSync(path.join(store.dir, "conversation.md"), "utf8");
   const usage = () => (fs.existsSync(path.join(store.dir, "usage.jsonl")) ? fs.readFileSync(path.join(store.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>) : []);
   const checkpoint = () => JSON.parse(fs.readFileSync(path.join(store.dir, "checkpoint.json"), "utf8")) as Record<string, unknown>;
@@ -88,7 +90,7 @@ test("a fault, then success: one retry, notified and said, then recovered", asyn
 });
 
 test("faults beyond the retries, then Retry again, then success: the backoff restarts", async () => {
-  const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.retry]);
+  const { layer, ui } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.retry }]);
   const { calls, attempt } = scripted(["fault", "fault", "fault", "fault", "ok"]);
   const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void), layer);
   assert.deepEqual(exit, Exit.succeed("reply 5"));
@@ -98,7 +100,7 @@ test("faults beyond the retries, then Retry again, then success: the backoff res
 });
 
 test("faults beyond the retries, then Stop: AgentUnreachable with the agent, the attempts and the last fault", async () => {
-  const { layer, conversation } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
+  const { layer, conversation } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop }]);
   const { calls, attempt } = scripted(["fault", "fault", "fault"]);
   const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void), layer));
   assert.equal(error._tag, "AgentUnreachable");
@@ -136,23 +138,6 @@ test("an interruption during the backoff ends the call: no further attempt", asy
   assert.deepEqual(calls, [1]);
 });
 
-test("Help me decide at the exhaustion pause runs a decision and asks again", async () => {
-  const requests: unknown[] = [];
-  const decider: DeciderShape = {
-    at: () => decider,
-    withTask: () => decider,
-    explain: (request) => Effect.succeed(programWritten(request)),
-    decide: (request) => Effect.sync(() => (requests.push(request), { decision: 1, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } }, result: "converged" as const })),
-  };
-  const { layer, ui } = await setup([DECIDE, prompts.TRANSPORT_ANSWERS.retry], decider);
-  const { attempt } = scripted(["fault", "fault", "fault", "ok"]);
-  const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void), layer);
-  assert.deepEqual(exit, Exit.succeed("reply 4"));
-  assert.equal(requests.length, 1);
-  assert.deepEqual((requests[0] as { options: { label: string }[] }).options.map((o) => o.label), [prompts.TRANSPORT_RETRY_AGAIN, prompts.TRANSPORT_STOP]);
-  assert.equal(ui.asked.length, 2);
-});
-
 // The seams of the pause: the page's buttons, the parser of src/input.ts and decision support's options, from one source.
 // S8: the pause's options are its cards, each sending the answer it shows; the widget adds only the offer and the quit.
 test("every option of the exhaustion pause sends the answer its label names, and exactly one option matches it", () => {
@@ -183,7 +168,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
   };
   for (const agent of ["codex", "claude"] as const) {
     explained.length = 0;
-    const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop], decider);
+    const { layer, ui } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop }], decider);
     const attempt = () => Effect.fail(new TransportFault({ agent, message: "read ECONNRESET", status: null, networkCode: null }));
     await exitOf(withTransportRetry(agent, "review", "the review", attempt, Effect.void), layer);
     const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
@@ -201,7 +186,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
 // its attached material, so that a long fault cannot push the answers out of view.
 test("at the exhaustion pause, the attached material holds the attempts and the whole fault; the question does not", async () => {
   const long = `stream disconnected: <endpoint> ${"e".repeat(2500)}`;
-  const { layer, ui, conversation } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
+  const { layer, ui, conversation } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop }]);
   await exitOf(withTransportRetry("claude", "review", "the review", () => Effect.fail(new TransportFault({ agent: "claude", message: long, status: null, networkCode: null })), Effect.void), layer);
   const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
   assert.ok(!piecesText(q.question).includes(long.slice(0, 40)), piecesText(q.question));
@@ -530,7 +515,7 @@ test("one budget for both: a transport fault, then process endings until the ret
 });
 
 test("a process ending, then transport faults until the retries are used up: the exhaustion pause is asked", async () => {
-  const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
+  const { layer, ui } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop }]);
   const { calls, attempt } = endingScripted(["ended", "fault", "fault", "fault", "ok"]);
   const error = errorOf(await exitOf(withTransportRetry("claude", "review", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
   assert.equal(error._tag, "AgentUnreachable");
@@ -568,7 +553,7 @@ test("background: exhausted retries go on every five minutes, each try counted a
   assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => (e._tag === "TransportRetrying" ? e.attempt : 0)), [1, 2]);
 });
 
-const wokenBackground = async (answers: string[], script: Script) => {
+const wokenBackground = async (answers: ScriptedAnswer[], script: Script) => {
   const { layer, ui } = await setup(answers);
   let waiting = false;
   const woken = await Effect.runPromise(Latch.make(false));
@@ -580,14 +565,14 @@ const wokenBackground = async (answers: string[], script: Script) => {
 };
 
 test("background: the developer waiting ends the try's sleep, and the next exhaustion asks; Stop is AgentUnreachable", async () => {
-  const { exit, ui, calls } = await wokenBackground([prompts.TRANSPORT_ANSWERS.stop], ["fault", "fault", "fault", "fault"]);
+  const { exit, ui, calls } = await wokenBackground([{ beside: prompts.TRANSPORT_ANSWERS.stop }], ["fault", "fault", "fault", "fault"]);
   assert.equal(errorOf(exit)._tag, "AgentUnreachable");
   assert.deepEqual(calls, [1, 2, 3, 4]);
   assert.equal(ui.asked.length, 1);
 });
 
 test("background: Retry again at the question once the developer waits starts a full set", async () => {
-  const { exit, ui, calls } = await wokenBackground([prompts.TRANSPORT_ANSWERS.retry], ["fault", "fault", "fault", "fault", "fault", "ok"]);
+  const { exit, ui, calls } = await wokenBackground([{ beside: prompts.TRANSPORT_ANSWERS.retry }], ["fault", "fault", "fault", "fault", "fault", "ok"]);
   assert.deepEqual(exit, Exit.succeed("reply 6"));
   assert.deepEqual(calls, [1, 2, 3, 4, 5, 6]);
   assert.equal(ui.asked.length, 1);
@@ -619,7 +604,7 @@ test("network: faults with a network code beyond the retries are tried again wit
 });
 
 test("network: a fault without a code after network tries asks at that failure", async () => {
-  const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
+  const { layer, ui } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop }]);
   const { clock } = steppingClock(START);
   const { calls, attempt } = scripted(["net", "net", "net", "net", "fault"]);
   const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer));
@@ -660,7 +645,7 @@ for (const kind of ["ask", "fail", "background"] as const) {
     for (const code of [null, "EAI_AGAIN"] as const) {
       const expected = exhaustedStep(kind, waiting, code).kind;
       test(`seam: ${kind}, waiting ${waiting}, code ${code ?? "none"}: the combinator does ${expected}`, async () => {
-        const { layer, ui, conversation } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
+        const { layer, ui, conversation } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop }]);
         const { clock, sleeps } = steppingClock(START);
         const step = code === null ? "fault" : "net";
         const { attempt } = scripted([...configuredMs.map(() => step), step, "ok"]);
@@ -712,4 +697,62 @@ test("a Codex 429: the refusal's text is said and written before the wait line; 
   const { attempt: claudeAttempt } = limitScripted([limitedBy(UNKNOWN, null), "ok"]);
   await exitOf(withTransportRetry("claude", "review", "the plan", claudeAttempt, Effect.void).pipe(withClock(steppingClock(START).clock)), claude.layer);
   assert.ok(!claude.ui.said.some((l) => l.startsWith("Codex refused")), "a Claude limit said a Codex refusal");
+});
+
+// ---- Issue #243: the exhaustion question beside the call, which Interloq keeps trying ----
+
+test("#243: retries used up with no network code: the question is presented, the call is tried again after USAGE_LIMIT_RETRY_SECONDS with nothing answered, and on success the question is cancelled", async () => {
+  const events: RunEvent[] = [];
+  const web = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const { layer, conversation } = await setup([], noDecider, web);
+  const { clock, sleeps } = steppingClock(START);
+  const { calls, attempt } = scripted(["fault", "fault", "fault", "ok"]);
+  const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 4"));
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.ok(sleeps.includes(RETRY_MS), String(sleeps));
+  assert.ok(conversation().includes(prompts.transportBesideLine("codex", "the review", 1, USAGE_LIMIT_RETRY_SECONDS)));
+  const asked = events.find((e) => e._tag === "Asked" && e.beside !== null);
+  assert.ok(asked !== undefined && asked._tag === "Asked");
+  assert.ok(events.some((e) => e._tag === "PromptCancelled" && e.prompt === asked.prompt));
+  assert.equal(await Effect.runPromise(web.pending), null);
+});
+
+test("#243: Stop answered while an attempt is held is honored even where that attempt succeeds", async () => {
+  const release = (() => {
+    let resolve = () => {};
+    return { promise: new Promise<void>((r) => (resolve = r)), resolve: () => resolve() };
+  })();
+  const { layer, conversation } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop, when: () => release.promise }]);
+  const { clock } = steppingClock(START);
+  let n = 0;
+  const attempt = (k: number): Effect.Effect<string, TransportFault> =>
+    Effect.suspend(() => (++n <= 3 ? Effect.fail(fault()) : Effect.promise(async () => (release.resolve(), await new Promise((r) => setTimeout(r, 20)), `reply ${k}`))));
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer));
+  assert.equal(error._tag, "AgentUnreachable");
+  assert.match(conversation(), /\*\*User decision:\*\* stop/);
+});
+
+test("#243: q answered while an attempt is held and never released ends the call at once with UserStopped", async () => {
+  const release = (() => {
+    let resolve = () => {};
+    return { promise: new Promise<void>((r) => (resolve = r)), resolve: () => resolve() };
+  })();
+  const { layer } = await setup([{ beside: "q", when: () => release.promise }]);
+  const { clock } = steppingClock(START);
+  let n = 0;
+  const attempt = (): Effect.Effect<string, TransportFault> => Effect.suspend(() => (++n <= 3 ? Effect.fail(fault()) : Effect.sync(() => release.resolve()).pipe(Effect.andThen(Effect.never))));
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer));
+  assert.equal(error._tag, "UserStopped");
+});
+
+test("#243: Retry again, then a second exhaustion: a second, new question is presented", async () => {
+  const { layer, ui } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.retry }, { beside: prompts.TRANSPORT_ANSWERS.stop }]);
+  const { clock } = steppingClock(START);
+  const { attempt } = scripted(["fault", "fault", "fault", "fault", "fault", "fault"]);
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer));
+  assert.equal(error._tag, "AgentUnreachable");
+  const presented = ui.notified.filter((e) => e._tag === "QuestionPresented").map((e) => (e._tag === "QuestionPresented" ? e.question.number : 0));
+  assert.equal(presented.length, 2);
+  assert.notEqual(presented[0], presented[1]);
 });

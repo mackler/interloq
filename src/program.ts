@@ -6,7 +6,7 @@ import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSy
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, isTrackerError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped, type NoAnswer, type SendBackUnanswered, type WriteCheck } from "./errors.ts";
-import { heldTrackerEnv, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
+import { heldTrackerEnv, noTrackerQuestion, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
 import { abandonAfterSendBackLine, abandonedRecord, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { type ImplementationEnd, implementationRun, type RefinementEnd, type RefinementSource, refinementRun, run, type UsedPreparation } from "./run.ts";
@@ -545,7 +545,7 @@ const programWith = (
             if (Result.isFailure(facts)) return yield* notReturned(describe(facts.failure), { _tag: "NotSent" }, itemNotReturnedLine(start.item, describe(facts.failure), null));
             if (itemReturnOf(facts.success)._tag !== "Return") return null;
             // Its waits and read-back recorded as any tracker write's, a record that fails ignored so it cuts no retry short.
-            const env: TrackerRetryEnv = { ui, settings: config, record: (markdown) => records.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" };
+            const env: TrackerRetryEnv = { ui, settings: config, record: (markdown) => records.converse(markdown).pipe(Effect.ignore), openQuestion: noTrackerQuestion, exhausted: "stop" };
             const write = Effect.flatMap(Tracker, (t) => writeWithRetry(t, { kind: "setState", item: start.item, state: listedState("implementation") }, env)).pipe(Effect.provide(tracker));
             const outcome = yield* (bounded ? write.pipe(Effect.timeoutOption(`${RETURN_AFTER_FAULT_MS} millis`)) : write.pipe(Effect.map(Option.some))).pipe(Effect.exit);
             if (Exit.isSuccess(outcome)) {

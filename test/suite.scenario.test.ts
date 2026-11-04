@@ -120,7 +120,7 @@ for (const [name, stop] of [["(f) a suite stopped by its limit", timedOut], ["(i
 }
 
 test("(g) a suite stopped twice asks Run the suite again or Stop; Run the suite again, then passed, finishes", async () => {
-  const { wiring, probe } = testWiring(tempRepo(), { ...one, answers: [TRANSPORT_ANSWERS.retry], suite: [timedOut, timedOut], config: { suiteCommand: SUITE } });
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, answers: [{ beside: TRANSPORT_ANSWERS.retry }], suite: [timedOut, timedOut], config: { suiteCommand: SUITE } });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
   assert.equal(suiteQuestions(probe).length, 1);
   assert.equal(probe.suite.runs.length, 3);
@@ -139,10 +139,11 @@ test("(g) a suite stopped twice asks Run the suite again or Stop; Run the suite 
 });
 
 test("(h) a suite stopped twice, answered Stop: the run halts with 1 and SuiteStopped", async () => {
-  const { wiring, probe } = testWiring(tempRepo(), { ...one, answers: [TRANSPORT_ANSWERS.stop], suite: [timedOut, timedOut], config: { suiteCommand: SUITE } });
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, answers: [{ beside: TRANSPORT_ANSWERS.stop }], suite: [timedOut, timedOut], config: { suiteCommand: SUITE } });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 1);
   assert.equal(suiteQuestions(probe).length, 1);
-  assert.equal(probe.suite.runs.length, 2);
+  // Issue #243: the suite ran again beside the question, and the Stop interrupted that third run.
+  assert.ok(probe.suite.runs.length >= 2);
   const halt = suiteStoppedText(SUITE, 2, 2, "it ran longer than 40 minutes and was stopped");
   assert.ok(probe.ui.said.some((line) => line.includes(halt)), probe.ui.said.join("\n"));
 });
@@ -164,7 +165,7 @@ test("(j) a suite ended by a signal is a fault of the work: the plan is revised 
 
 test("(k) the automatic repeat is once per run: a later stop in another iteration asks at once", async () => {
   const { wiring, probe } = testWiring(tempRepo(), {
-    answers: [TRANSPORT_ANSWERS.retry],
+    answers: [{ beside: TRANSPORT_ANSWERS.retry }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
@@ -346,4 +347,22 @@ test("(s) a suite that fails and then passes with fewer passed tests: the second
   assert.ok(conversation.includes(failedLine), conversation);
   const fall = fallenCountsText([{ name: "npm run test:unit", before: 812, after: 790 }], `${FULL_SUITE_PHASE} 1`);
   assert.ok(conversation.includes(`${suitePassedLine(`${FULL_SUITE_PHASE} 2`, SUITE, [unit(790)])} ${fall}`), conversation);
+});
+
+// ---- Issue #243: the question after a stop that used the repeat no longer waits ----
+
+test("#243: a second stop outside the work runs the suite again with nothing answered, and the run finishes when it passes", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, suite: [timedOut, timedOut], config: { suiteCommand: SUITE } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.equal(suiteQuestions(probe).length, 1);
+  assert.equal(probe.suite.runs.length, 3);
+  assert.deepEqual(probe.ui.asked, []);
+});
+
+test("#243: Run the suite again answered, then another stop outside the work: a fresh question is presented", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, answers: [{ beside: TRANSPORT_ANSWERS.retry }], suite: [timedOut, timedOut, timedOut], config: { suiteCommand: SUITE } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const numbers = suiteQuestions(probe).map((q) => q.number);
+  assert.equal(numbers.length, 2, String(numbers));
+  assert.notEqual(numbers[0], numbers[1]);
 });

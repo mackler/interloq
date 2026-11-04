@@ -1,10 +1,10 @@
 // The transport retry of issue #26: a call that produced no reply, because of a transport fault, is made again with
 // backoff; when the retries are exhausted the user decides.
 
-import { Clock, Duration, Effect, Exit, Result } from "effect";
-import { AgentUnreachable, type ProcessEnded, type RunError, type TransportFault, type UsageLimited } from "./errors.ts";
+import { Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result, Scope } from "effect";
+import { AgentUnreachable, type ProcessEnded, type RunError, type TransportFault, type UsageLimited, type UserStopped } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
-import { askOffering, byLine, programContext, type QuestionDraft, transportOptions } from "./offer.ts";
+import { type BesideQuestion, openBeside, programContext, type QuestionDraft, transportOptions } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as prompts from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
@@ -42,6 +42,7 @@ export const ASK: Exhaustion = { kind: "ask" };
 export const FAIL: Exhaustion = { kind: "fail" };
 
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
+const isUserStopped = (e: unknown): e is UserStopped => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "UserStopped";
 const isProcessEnded = (e: unknown): e is ProcessEnded => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "ProcessEnded";
 const isLimited = (e: unknown): e is UsageLimited => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "UsageLimited";
 
@@ -67,6 +68,21 @@ export const withTransportRetry = <A, E, R>(
   attempt: (n: number) => Effect.Effect<A, E | TransportFault | UsageLimited, R>,
   beforeRetry: Effect.Effect<void, RunError, R>,
   onExhausted: Exhaustion = ASK,
+): Effect.Effect<A, Exclude<E, TransportFault | UsageLimited> | AgentUnreachable | RunError, R | Ui | Decider | Store | RunConfig> =>
+  Effect.suspend(() => {
+    /** Issue #243: the exhaustion question open beside the call, closed (its prompt cancelled) however the call ends. */
+    const held: { close: Effect.Effect<void> } = { close: Effect.void };
+    return retrying(agent, purpose, what, attempt, beforeRetry, onExhausted, held).pipe(Effect.ensuring(Effect.suspend(() => held.close)));
+  });
+
+const retrying = <A, E, R>(
+  agent: "claude" | "codex",
+  purpose: string,
+  what: string,
+  attempt: (n: number) => Effect.Effect<A, E | TransportFault | UsageLimited, R>,
+  beforeRetry: Effect.Effect<void, RunError, R>,
+  onExhausted: Exhaustion,
+  held: { close: Effect.Effect<void> },
 ): Effect.Effect<A, Exclude<E, TransportFault | UsageLimited> | AgentUnreachable | RunError, R | Ui | Decider | Store | RunConfig> =>
   Effect.gen(function* () {
     const config = yield* RunConfig;
@@ -99,9 +115,45 @@ export const withTransportRetry = <A, E, R>(
         }),
       );
     const reportEarlyEnd = (wait: number, subject: prompts.WaitSubject) => ui.notify({ _tag: "WaitEndedEarly", wait }).pipe(Effect.andThen(say(prompts.waitEndedLine(subject))));
+    /**
+     * Issue #243: the exhaustion question, open beside the call while Interloq keeps trying, in a Scope of its own: its
+     * handle, and a Deferred its answer completes (set in the Ui's take, so the wait before the next try ends at once).
+     */
+    let question: Readonly<{ handle: BesideQuestion; scope: Scope.Closeable; answered: Deferred.Deferred<void> }> | null = null;
+    const closeQuestion = Effect.suspend(() => {
+      const open = question;
+      question = null;
+      return open === null ? Effect.void : Scope.close(open.scope, Exit.void);
+    });
+    held.close = closeQuestion;
+    /** Fails at once when the question is answered "q" (its producer fails with UserStopped); otherwise never completes. */
+    const quitWatch = (open: NonNullable<typeof question>): Effect.Effect<never, UserStopped> =>
+      Fiber.join(open.handle.fiber).pipe(
+        Effect.matchEffect({ onFailure: (e) => (e._tag === "UserStopped" ? Effect.fail(e) : Effect.never), onSuccess: () => Effect.never }),
+      );
+    /** The answer the question holds now, read after every attempt and every wait: Stop fails, Retry again starts afresh. */
+    const answeredNow = (n: number, lastFault: string) =>
+      Effect.gen(function* () {
+        if (question === null) return "none" as const;
+        const answer = yield* question.handle.answer;
+        if (Option.isNone(answer)) return "none" as const;
+        const choice = parseTransportAnswer(answer.value) ?? "stop";
+        yield* store.converse(prompts.transportDecisionLine(choice, agent, what));
+        yield* closeQuestion;
+        if (choice === "stop") return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault }));
+        retried = 0;
+        tries = 0;
+        networkTries = 0;
+        return "retry" as const;
+      });
+    let lastFault = "";
     for (let n = 1; ; n++) {
-      const result = yield* Effect.result(attempt(n));
+      const open = question;
+      const result = yield* Effect.result(open === null ? attempt(n) : Effect.raceFirst(attempt(n), quitWatch(open)));
+      // A Stop answered while the attempt ran is honored even where the attempt succeeded: the developer chose to stop.
+      yield* answeredNow(n, lastFault);
       if (Result.isSuccess(result)) {
+        yield* closeQuestion;
         if (faulted) yield* ui.notify({ _tag: "TransportRecovered", agent });
         return result.success;
       }
@@ -147,6 +199,7 @@ export const withTransportRetry = <A, E, R>(
         continue;
       }
       limitState = NO_LIMIT_WAIT;
+      if (isUserStopped(error)) return yield* Effect.fail(error);
       const ended = isProcessEnded(error);
       if (!isFault(error) && !ended) return yield* Effect.fail(error as Exclude<E, TransportFault | UsageLimited>);
       faulted = true;
@@ -166,6 +219,7 @@ export const withTransportRetry = <A, E, R>(
       }
       // The retries are used up; a ProcessEnded has passed through above, so the failure is a TransportFault.
       const fault = error as TransportFault;
+      lastFault = fault.message;
       const waiting = onExhausted.kind === "background" ? yield* onExhausted.waiting : false;
       const step = exhaustedStep(onExhausted.kind, waiting, fault.networkCode);
       switch (step.kind) {
@@ -194,18 +248,24 @@ export const withTransportRetry = <A, E, R>(
         case "fail":
           return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: fault.message }));
         case "ask": {
-          const origin: QuestionOrigin = { kind: "transport", agent, what, attempts: n, fault: fault.message };
-          // S10 (G-R1-1): the context of a pause for Claude Code is the program's own at once, since a context call would
-          // need the agent that cannot be reached; a pause for Codex gets its context from Claude Code (S12).
-          const facts = prompts.transportFacts(agent, what, n, fault.message);
-          const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.transportExhaustedQuestion(agent, what)), options: transportOptions(), attached: attachedOf("fault", prompts.transportDetails(n, fault.message)), ...(agent === "codex" ? { explain: facts } : {}), decision: null };
-          const answer = yield* askOffering(byLine((p) => ui.ask(p)), prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null);
-          const choice = parseTransportAnswer(answer) ?? "stop";
-          yield* store.converse(prompts.transportDecisionLine(choice, agent, what));
-          if (choice === "stop") return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: fault.message }));
-          retried = 0;
-          tries = 0;
-          networkTries = 0;
+          // Issue #243: the question no longer waits. It is opened beside the call (where none is open), and the call is
+          // tried again every USAGE_LIMIT_RETRY_SECONDS with no limit; the answer is read after every attempt and wait.
+          if (question === null) {
+            const origin: QuestionOrigin = { kind: "transport", agent, what, attempts: n, fault: fault.message };
+            // S10 (G-R1-1): the context of a pause for Claude Code is the program's own at once, since a context call would
+            // need the agent that cannot be reached; a pause for Codex gets its context from Claude Code (S12).
+            const facts = prompts.transportFacts(agent, what, n, fault.message);
+            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.transportExhaustedQuestion(agent, what)), options: transportOptions(), attached: attachedOf("fault", prompts.transportDetails(n, fault.message)), ...(agent === "codex" ? { explain: facts } : {}), decision: null };
+            const scope = yield* Scope.make();
+            const answered = yield* Deferred.make<void>();
+            const handle = yield* openBeside(scope, prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.asVoid(Deferred.succeed(answered, undefined)) });
+            question = { handle, scope, answered };
+          }
+          tries++;
+          yield* say(prompts.transportBesideLine(agent, what, tries, USAGE_LIMIT_RETRY_SECONDS));
+          const open = question;
+          yield* Effect.raceFirst(Effect.raceFirst(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)), Deferred.await(open.answered)), quitWatch(open));
+          yield* answeredNow(n, fault.message);
           break;
         }
       }

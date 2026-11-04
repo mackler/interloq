@@ -4,7 +4,10 @@
 // whose records are held and whose question has no offer) and, once, the run's (runTrackerEnv, over testLayer).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Cause, Effect, Exit, Fiber, Option, Ref, Result } from "effect";
+import { Cause, Clock, Effect, Exit, Fiber, Option, Ref, Result } from "effect";
+import { USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
+import type { RunEvent } from "../src/protocol.ts";
+import { makeWebUi } from "../src/webUi.ts";
 import { FileSystemError, TrackerAuthRefused, TrackerRequestRefused, TrackerUnreachable } from "../src/errors.ts";
 import * as prompts from "../src/prompts.ts";
 import { OPENING_LINE, readRefinement, refinementOf } from "../src/refinement.ts";
@@ -15,7 +18,7 @@ import { commentKeyOf, commentText } from "../src/itemComments.ts";
 import { heldTrackerEnv, unattendedTrackerEnv, readCommentsWithRetry, readWithRetry, runTrackerEnv, type TrackerWrite, TrackerWriteFailed, writeWithRetry } from "../src/trackerRetry.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { makeFakeTracker, type FakeItem } from "./fakeTracker.ts";
-import { ScriptedUi, tempRepo, testLayer } from "./helpers.ts";
+import { type ScriptedAnswer, ScriptedUi, steppingClock, tempRepo, testLayer } from "./helpers.ts";
 
 const ID = "155" as ItemId;
 const ITEM: FakeItem = { id: ID, title: "t", body: "the developer's text", state: "unrefined", open: true, url: Option.none() };
@@ -27,7 +30,8 @@ const setRefined: TrackerWrite = { kind: "setState", item: ID, state: "refined" 
 
 const setup = async (answers: readonly string[] = [], retries = 2, delay = 0.01) => {
   const fake = await Effect.runPromise(makeFakeTracker([ITEM]));
-  const ui = new ScriptedUi(answers);
+  // Issue #243: every answer of these tests is to the exhaustion question, open beside the repeats.
+  const ui = new ScriptedUi(answers.map((beside) => ({ beside })));
   const held = Effect.runSync(Ref.make<readonly string[]>([]));
   const env = heldTrackerEnv(ui, { ...S.defaultConfig, maxTrackerRetries: retries, trackerRetryDelaySeconds: delay }, held);
   const failNext = (op: "read" | "writeRefinement" | "setState", error: TrackerUnreachable | TrackerAuthRefused | TrackerRequestRefused, times = 1) =>
@@ -139,7 +143,8 @@ test("Retry again makes a full new set of repeats, numbered from 1, and the requ
   await t.failNext("read", unreached(), 4);
   const item = await Effect.runPromise(readWithRetry(t.fake.tracker, ID, t.env));
   assert.equal(item.id, ID);
-  assert.deepEqual(tagged(t.ui.notified, "TrackerRetrying").map((e) => e._tag === "TrackerRetrying" && e.attempt), [1, 2, 1]);
+  // Issue #243: the third wait is the one beside the question, which the answer ends at once.
+  assert.deepEqual(tagged(t.ui.notified, "TrackerRetrying").map((e) => e._tag === "TrackerRetrying" && e.attempt), [1, 2, 3, 1]);
   assert.equal(t.ui.asked.length, 1);
   assert.ok(t.held().some((r) => r.includes(prompts.trackerDecisionLine("retry", "GitHub", "reading item 155"))));
 });
@@ -154,9 +159,9 @@ test("an interruption during a wait interrupts the request", async () => {
   assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
 });
 
-test("in a run, the question carries the offer of decision support and the records go to conversation.md", async () => {
+test("in a run, the question is put beside the repeats without the offer, and the records go to conversation.md", async () => {
   const repo = tempRepo();
-  const { layer, probe } = testLayer(repo, { answers: ["s"], config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 } });
+  const { layer, probe } = testLayer(repo, { answers: [{ beside: "s" }], config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 } });
   const fake = await Effect.runPromise(makeFakeTracker([ITEM]));
   await Effect.runPromise(Effect.forEach([1, 2], () => fake.failNext("read", unreached()), { discard: true }));
   const exit = await Effect.runPromiseExit(
@@ -166,7 +171,7 @@ test("in a run, the question carries the offer of decision support and the recor
     }).pipe(Effect.provide(layer)),
   );
   assert.equal(failureOf(exit)._tag, "TrackerUnreachable");
-  assert.deepEqual(probe.ui.asked, [prompts.withOffer(prompts.transportPrompt)]);
+  assert.deepEqual(probe.ui.asked, [prompts.transportPrompt]);
   const fs = await import("node:fs");
   const conversation = fs.readFileSync(`${probe.dir}/conversation.md`, "utf8");
   assert.ok(conversation.includes("retry 1 of 1"));
@@ -346,4 +351,73 @@ test("a repeat's wait ended early: the read is made again at once, and the line 
   const line = prompts.waitEndedLine({ kind: "tracker", tracker: "GitHub", what: prompts.trackerOperationText({ kind: "read", item: ID }) });
   assert.ok(t.held().join("").includes(line), t.held().join(""));
   assert.deepEqual(tagged(t.ui.notified, "WaitEndedEarly"), [{ _tag: "WaitEndedEarly", wait: waiting.wait }]);
+});
+
+// ---- Issue #243: the repeats used up, the question open beside further repeats ----
+
+const besideSetup = (answers: readonly ScriptedAnswer[]) => {
+  const ui = new ScriptedUi(answers);
+  const held = Effect.runSync(Ref.make<readonly string[]>([]));
+  const env = heldTrackerEnv(ui, { ...S.defaultConfig, maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 }, held);
+  return { ui, env, held: () => Effect.runSync(Ref.get(held)) };
+};
+const scriptedReads = (results: readonly ("fail" | "ok" | "hang")[], onAttempt: (n: number) => void = () => {}) => {
+  let n = 0;
+  const tracker = {
+    read: () =>
+      Effect.suspend(() => {
+        const r = results[n] ?? "ok";
+        n += 1;
+        onAttempt(n);
+        return r === "fail" ? Effect.fail(unreached()) : r === "hang" ? Effect.never : Effect.succeed({ ...ITEM, state: "unrefined" as const });
+      }),
+  } as unknown as Parameters<typeof readWithRetry>[0];
+  return { tracker, attempts: () => n };
+};
+
+test("#243: with no answer the repeats go on after USAGE_LIMIT_RETRY_SECONDS, and the question is cancelled when one succeeds", async () => {
+  const events: RunEvent[] = [];
+  const web = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const held = Effect.runSync(Ref.make<readonly string[]>([]));
+  const env = heldTrackerEnv(web, { ...S.defaultConfig, maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 }, held);
+  const { clock, sleeps } = steppingClock(Date.UTC(2026, 10, 4));
+  const r = scriptedReads(["fail", "fail", "fail", "ok"]);
+  const item = await Effect.runPromise(readWithRetry(r.tracker, ID, env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(item.id, ID);
+  assert.equal(r.attempts(), 4);
+  assert.ok(sleeps.includes(USAGE_LIMIT_RETRY_SECONDS * 1000), String(sleeps));
+  assert.ok(events.some((e) => e._tag === "Notified" && e.event._tag === "QuestionPresented"), "the question was presented");
+  assert.equal(await Effect.runPromise(web.pending), null, "no question is left open");
+});
+
+test("#243: Stop answered while a repeat is held fails even where that repeat succeeds", async () => {
+  let release = () => {};
+  const during = new Promise<void>((r) => (release = r));
+  const t = besideSetup([{ beside: "s", when: () => during }]);
+  const { clock } = steppingClock(Date.UTC(2026, 10, 4));
+  const r = scriptedReads(["fail", "fail", "ok"], (n) => (n === 3 ? release() : undefined));
+  const slow = { read: () => r.tracker.read(ID).pipe(Effect.tap(() => Effect.promise(() => new Promise((res) => setTimeout(res, 20))))) } as unknown as Parameters<typeof readWithRetry>[0];
+  const exit = await Effect.runPromiseExit(readWithRetry(slow, ID, t.env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(failureOf(exit)._tag, "TrackerUnreachable");
+});
+
+test("#243: q answered while a repeat is held and never released fails with UserStopped at once", async () => {
+  let release = () => {};
+  const during = new Promise<void>((r) => (release = r));
+  const t = besideSetup([{ beside: "q", when: () => during }]);
+  const { clock } = steppingClock(Date.UTC(2026, 10, 4));
+  const r = scriptedReads(["fail", "fail", "hang"], (n) => (n === 3 ? release() : undefined));
+  const exit = await Effect.runPromiseExit(readWithRetry(r.tracker, ID, t.env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(failureOf(exit)._tag, "UserStopped");
+});
+
+test("#243: Retry again then a second exhaustion: a second, new question is presented and answerable", async () => {
+  // The real clock: each answer ends the wait beside its question at once, long before USAGE_LIMIT_RETRY_SECONDS.
+  const t = besideSetup([{ beside: "r" }, { beside: "s" }]);
+  const r = scriptedReads(["fail", "fail", "fail", "fail", "fail"]);
+  const exit = await Effect.runPromiseExit(readWithRetry(r.tracker, ID, t.env));
+  assert.equal(failureOf(exit)._tag, "TrackerUnreachable");
+  const numbers = t.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question.number] : []));
+  assert.equal(numbers.length, 2);
+  assert.notEqual(numbers[0], numbers[1]);
 });

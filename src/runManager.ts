@@ -17,7 +17,7 @@ import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
 import { defectText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainReselectText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
-import { type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
+import { noTrackerQuestion, type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
 import { type ItemComment, type ItemId, itemIdOf, type TrackerItem } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
@@ -458,7 +458,7 @@ export const makeRunManager = (
     const preparationView: Effect.Effect<PreparationView> = Effect.suspend(() => Effect.all([Ref.get(state), pass.status])).pipe(Effect.map(([s, status]) => ({ settings: s.preparation.settings, status })));
     /** A tracker request of the server's own made with no question and no record, a failure ignored: the deletion of a released set-aside. */
     const silentEnv = (ui: UiShape, config: Config): TrackerRetryEnv =>
-      unattendedTrackerEnv({ ui, settings: config, record: () => Effect.void, ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" });
+      unattendedTrackerEnv({ ui, settings: config, record: () => Effect.void, openQuestion: noTrackerQuestion, exhausted: "stop" });
     const pass: PreparationPass = yield* makePreparationPass({
       kept: Effect.map(Ref.get(state), (s) => s.preparation),
       closing: Effect.map(Ref.get(state), (s) => s.closing),
@@ -504,7 +504,7 @@ export const makeRunManager = (
         if (Result.isFailure(kept)) return yield* record(store, { _tag: "NotReturned", cause: describe(kept.failure) });
         if (kept.success) return;
         const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0), output: () => Effect.void, enterQuestion: () => Effect.succeed({ askDuring: (_p, _k, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })), askBeside: () => Effect.never }), openWait: unendableWait };
-        const env: TrackerRetryEnv = { ui: silent, settings: config.success, record: (markdown) => store.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" };
+        const env: TrackerRetryEnv = { ui: silent, settings: config.success, record: (markdown) => store.converse(markdown).pipe(Effect.ignore), openQuestion: noTrackerQuestion, exhausted: "stop" };
         const written = yield* withTracker((t) =>
           t.read(item).pipe(
             Effect.flatMap((read): Effect.Effect<ItemReturnOutcome | null> =>

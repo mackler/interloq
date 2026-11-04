@@ -55,7 +55,7 @@ test("an implementation whose plan review's Codex turn is unreachable beyond its
 });
 
 test("a Codex fault without a network code still asks at exhaustion; Stop ends the run 1 with AgentUnreachable", async () => {
-  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: codexUnreachable(undefined, configuredMs.length + 1), answers: [prompts.TRANSPORT_ANSWERS.stop] });
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: codexUnreachable(undefined, configuredMs.length + 1), answers: [{ beside: prompts.TRANSPORT_ANSWERS.stop }] });
   const { clock } = steppingClock(START);
   const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
   assert.equal(code, 1);

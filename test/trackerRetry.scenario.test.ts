@@ -23,13 +23,13 @@ const FAST = { maxTrackerRetries: 2, trackerRetryDelaySeconds: 0.01 };
 const unrefined: FakeItem = { ...scriptedItem, id: Result.getOrThrow(itemIdOf("155")), title: "Retry", body: "Repeat a failed request.", state: "unrefined" };
 const refined: FakeItem = { ...unrefined, id: Result.getOrThrow(itemIdOf("171")), body: Result.getOrThrow(withRefinement("Repeat it.", Result.getOrThrow(refinementOf("# Requirements")))), state: "refined" };
 const oneQuestion = (answers: readonly string[] = []): TestOptions => ({
-  answers: ["A", ...answers],
+  answers: ["A", ...answers.map((beside) => ({ beside }))],
   steps: [{ output: { questions: [q("Q1")] } }],
   closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }],
   reviews: [{ issues: [] }, { issues: [] }],
   config: FAST,
 });
-const converging = (answers: readonly string[] = []): TestOptions => ({ answers, steps: [{ output: { questions_for_user: [] }, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished], config: FAST });
+const converging = (answers: readonly string[] = []): TestOptions => ({ answers: answers.map((beside) => ({ beside })), steps: [{ output: { questions_for_user: [] }, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished], config: FAST });
 
 const unreached = () => new TrackerUnreachable({ tracker: "GitHub", message: "reached no answer from GitHub", status: null });
 const serverError = () => new TrackerUnreachable({ tracker: "GitHub", message: "GitHub answered PATCH 155 with status 500", status: 500 });
@@ -95,14 +95,14 @@ test("a state set to refined answered 500 after it applied is found by the read-
   assert.ok(!probe.ui.asked.some((p) => p.includes(prompts.transportPrompt)));
 });
 
-test("an implementation whose state cannot be set to implementing asks, with the offer, and Stop halts naming the check before any agent call", async () => {
+test("an implementation whose state cannot be set to implementing asks beside its repeats, and Stop halts naming the check before any agent call", async () => {
   const tracker = fakeTrackerOf([refined]);
   await failTimes(tracker, "setState", serverError(), 3);
   const { exit, probe } = await implement(tracker, converging(["s"]));
   const error = failureOf(exit);
   assert.equal(error._tag, "TrackerStepFailed");
   assert.match(describe(error), /setting item 171 to implementing could not be completed[^]*After the last attempt, item 171 was in the state refined\./u);
-  assert.deepEqual(probe.ui.asked, [prompts.withOffer(prompts.transportPrompt)]);
+  assert.deepEqual(probe.ui.asked, [prompts.transportPrompt]);
   assert.deepEqual([probe.planner.prompts, probe.reviewer.prompts], [[], []]);
 });
 

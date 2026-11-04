@@ -23,7 +23,7 @@ import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { bashResult, bashUse, changed, monitorResult, monitorUse, noTasksChanged, notification, started, watchChanged, watchNotification, watchStarted, watchSummary, watchUpdated } from "./backgroundMessages.ts";
 import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limitResult, messages, rateLimit, reportStep, success, type Script } from "./fakeSdk.ts";
-import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, para, plain, term , TEST_ROOT } from "./helpers.ts";
+import { noDecider, noReporter, type ScriptedAnswer, ScriptedUi, steppingClock, tempRepo, questionOf, para, plain, term , TEST_ROOT } from "./helpers.ts";
 import { planningCall } from "../src/review.ts";
 import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
 import { timeOfDayIn, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
@@ -32,7 +32,7 @@ import { timeOfDayIn, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 const run = <A, E>(effect: Effect.Effect<A, E, Decider>, decider: DeciderShape = noDecider): Promise<A> => Effect.runPromise(effect.pipe(Effect.provideService(Decider, decider)));
 
 /** A Claude Code planner over a fake SDK, a scripted Ui and a store on a temporary repository. */
-const planner = async (scripts: Script[], answers: string[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}, backgroundBoundMs: number = prompts.BACKGROUND_WAIT_BOUND_MS, env: Readonly<Record<string, string | undefined>> = {}): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string; deps: Layer.Layer<Store | Ui | Sdk | RunConfig | RunKind> }> => {
+const planner = async (scripts: Script[], answers: ScriptedAnswer[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}, backgroundBoundMs: number = prompts.BACKGROUND_WAIT_BOUND_MS, env: Readonly<Record<string, string | undefined>> = {}): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string; deps: Layer.Layer<Store | Ui | Sdk | RunConfig | RunKind> }> => {
   const store = await run(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await run(store.init("task"));
   const ui = new ScriptedUi(answers);
@@ -941,7 +941,7 @@ test("an execution call that fails for another reason is aborted, as before: no 
 test("faults beyond the retries, then Stop at the exhaustion pause: executing fails with AgentUnreachable", async () => {
   // A 503 carries no network code (issue #201), so its exhausted retries still ask.
   const dropping: Script = messages(init(), { type: "result", subtype: "success", is_error: true, api_error_status: 503, terminal_reason: "api_error", result: "API Error: 503 upstream", total_cost_usd: 0, num_turns: 1 } as unknown as SDKMessage);
-  const fake = await planner([dropping, dropping], [prompts.TRANSPORT_ANSWERS.stop], quickRetry);
+  const fake = await planner([dropping, dropping], [{ beside: prompts.TRANSPORT_ANSWERS.stop }], quickRetry);
   await assert.rejects(run(fake.planner.executing("implement the plan", noReporter)), (e: unknown) => tag(e) === "AgentUnreachable");
   assert.equal(fake.sdk.calls.length, 2);
 });

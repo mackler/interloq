@@ -629,7 +629,7 @@ describe("the first read of the item, repeated", () => {
   test("a first read whose repeats run out asks without Help me decide, and Stop halts with 1, the failure named, its repeats and halt recorded", async () => {
     const tracker = fakeTrackerOf([scriptedItem]);
     await failReads(tracker, 3);
-    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: ["s"] });
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: [{ beside: "s" }] });
     assert.equal(await runProgram(probe, wiring), 1);
     assert.deepEqual(probe.ui.asked, [transportPrompt]);
     assert.match(said(probe), /HALTED: the GitHub issue tracker could not be reached: reached no answer from GitHub/);
@@ -658,7 +658,7 @@ describe("the first read of the item, repeated", () => {
   test("Retry again, then a read that succeeds: the run goes on, the question and the decision in conversation.md", async () => {
     const tracker = fakeTrackerOf([scriptedItem]);
     await failReads(tracker, 3);
-    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: ["r"] });
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: [{ beside: "r" }] });
     assert.equal(await runProgram(probe, wiring), 0);
     const conversation = conversationOf(probe);
     assert.ok(conversation.includes(trackerExhaustedQuestion("GitHub", "reading item 1")), conversation);
@@ -678,7 +678,7 @@ describe("the first read of the item, repeated", () => {
   test("End the run at the first read's question ends the run with 130", async () => {
     const tracker = fakeTrackerOf([scriptedItem]);
     await failReads(tracker, 3);
-    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: ["q"] });
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: [{ beside: "q" }] });
     assert.equal(await runProgram(probe, wiring), 130);
     assert.match(said(probe), /INTERRUPTED by the user\./);
   });

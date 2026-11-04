@@ -237,7 +237,7 @@ const heldClock = () => steppingClock(Date.UTC(2026, 9, 19, 12), (ms) => (ms ===
 
 test("S7-2: once the list is used up with the connection still down, the question is asked; Stop ends the run with AgentUnreachable", timeout, async () => {
   const l = late();
-  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), prompts.TRANSPORT_ANSWERS.stop], replies: [FAULT, FAULT, FAULT], config: fewRetries }, "unchecked", heldClock());
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), { beside: prompts.TRANSPORT_ANSWERS.stop }], replies: [FAULT, FAULT, FAULT], config: fewRetries }, "unchecked", heldClock());
   l.bind(s.ui);
   const exit = await s.run();
   assert.ok(Exit.isFailure(exit));
@@ -249,7 +249,7 @@ test("S7-2: once the list is used up with the connection still down, the questio
 
 test("S7-3: Retry again at that question runs a full set of attempts, and on success the interview goes on to the summary", timeout, async () => {
   const l = late();
-  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), prompts.TRANSPORT_ANSWERS.retry], replies: [FAULT, FAULT, FAULT, FAULT, { output: ack() }], closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", heldClock());
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), { beside: prompts.TRANSPORT_ANSWERS.retry }], replies: [FAULT, FAULT, FAULT, FAULT, { output: ack() }], closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", heldClock());
   l.bind(s.ui);
   const exit = await s.run();
   succeeded(exit);

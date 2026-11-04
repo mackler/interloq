@@ -2,10 +2,11 @@
 // error, is repeated with backoff; when the repeats run out the developer is asked. This part is pure: the run's
 // writes as data, the waits, which failures are repeated, and whether the item already holds a write's outcome.
 
-import { Clock, Data, Effect, Option, Ref, Result } from "effect";
-import type { HeldState, RunError, TrackerUnreachable, WriteCheck } from "./errors.ts";
+import { Clock, Data, Deferred, Effect, Exit, Fiber, Option, Ref, Result, Scope } from "effect";
+import type { HeldState, RunError, TrackerUnreachable, UserStopped, WriteCheck } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
-import { askOffering, byLine, askUnoffered, programContext, type QuestionDraft, trackerOptions } from "./offer.ts";
+import { type BesideQuestion, openBeside, openBesideUnoffered, programContext, type QuestionDraft, trackerOptions } from "./offer.ts";
+import { USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
 import { plainPieces } from "./pieces.ts";
 import * as prompts from "./prompts.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
@@ -97,13 +98,20 @@ export type TrackerRetryEnv = Readonly<{
   ui: UiShape;
   settings: TrackerRetrySettings;
   record: (markdown: string) => Effect.Effect<void, RunError>;
-  ask: (draft: QuestionDraft) => Effect.Effect<string, RunError>;
+  /**
+   * Issue #243: opens the exhaustion question beside the repeats, in `scope`; `onAccepted` is called in the Ui's take of
+   * an answer the question accepts. The repeats go on with no limit while it is open.
+   */
+  openQuestion: (scope: Scope.Scope, draft: QuestionDraft, onAccepted: () => Effect.Effect<void>) => Effect.Effect<BesideQuestion, RunError>;
   /**
    * Issue #185 (G-R1-1): what the repeats do when they are used up: ask Retry again or Stop, or, after a run was
    * abandoned for want of an answer and the developer is away, stop with no question and no decision recorded.
    */
   exhausted: "ask" | "stop";
 }>;
+
+/** Issue #243: the question of an environment that never asks (its repeats stop when used up): never opened. */
+export const noTrackerQuestion: TrackerRetryEnv["openQuestion"] = () => Effect.die(new Error("this tracker environment asks no question"));
 
 /** One attempt's success: its value, and the tracker whose read-back found a write applied after a server error, or null. */
 type Attempted<A> = Readonly<{ value: A; landed: string | null }>;
@@ -119,53 +127,101 @@ const UNCHECKED: WriteCheck = { kind: "unchecked" };
  * developer is asked through `env.ask`: Retry again starts a full new set of waits, Stop fails with the last failure.
  * A success after a failure, or a write the read-back found applied (`landed`), is notified as TrackerRecovered.
  */
-const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<Attempted<A>, AttemptFailed | RunError>): Effect.Effect<A, AttemptFailed | RunError> => {
-  const delays = trackerRetryDelays(env.settings);
-  const say = (text: string) => env.ui.say(text).pipe(Effect.andThen(env.record(`${text}\n\n`)));
-  /** Attempt `n` of the current set (from 1), `total` attempts made before it, and the tracker of an earlier failure. */
-  const step = (n: number, total: number, faulted: string | null): Effect.Effect<A, AttemptFailed | RunError> =>
-    Effect.gen(function* () {
-      const result = yield* Effect.result(attempt);
-      if (Result.isSuccess(result)) {
-        const recovered = result.success.landed ?? faulted;
-        if (recovered !== null) yield* env.ui.notify({ _tag: "TrackerRecovered", tracker: recovered });
-        return result.success.value;
-      }
-      const failed = result.failure;
-      if (failed._tag !== "AttemptFailed" || !retryable(failed.error)) return yield* Effect.fail(failed);
-      const error = failed.error;
-      const delay = delays[n - 1];
-      if (delay !== undefined) {
+const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<Attempted<A>, AttemptFailed | RunError>): Effect.Effect<A, AttemptFailed | RunError> =>
+  Effect.suspend(() => {
+    const delays = trackerRetryDelays(env.settings);
+    const say = (text: string) => env.ui.say(text).pipe(Effect.andThen(env.record(`${text}\n\n`)));
+    /** Issue #243: the exhaustion question open beside the repeats, in a Scope of its own, and its answer's signal. */
+    let question: Readonly<{ handle: BesideQuestion; scope: Scope.Closeable; answered: Deferred.Deferred<void> }> | null = null;
+    const closeQuestion = Effect.suspend(() => {
+      const open = question;
+      question = null;
+      return open === null ? Effect.void : Scope.close(open.scope, Exit.void);
+    });
+    /** Fails at once when the question is answered "q" (its producer fails with UserStopped); otherwise never completes. */
+    const quitWatch = (open: NonNullable<typeof question>): Effect.Effect<never, UserStopped> =>
+      Fiber.join(open.handle.fiber).pipe(Effect.matchEffect({ onFailure: (e) => (e._tag === "UserStopped" ? Effect.fail(e) : Effect.never), onSuccess: () => Effect.never }));
+    /** The question's answer, read after every attempt and wait: Stop fails with the last failure, Retry again starts afresh. */
+    const answeredNow = (tracker: string, last: AttemptFailed | null) =>
+      Effect.gen(function* () {
+        if (question === null) return "none" as const;
+        const answer = yield* question.handle.answer;
+        if (Option.isNone(answer)) return "none" as const;
+        const choice = parseTransportAnswer(answer.value) ?? "stop";
+        yield* env.record(prompts.trackerDecisionLine(choice, tracker, what));
+        yield* closeQuestion;
+        if (choice === "stop" && last !== null) return yield* Effect.fail(last);
+        return choice;
+      });
+    /**
+     * Attempt `n` of the current set (from 1), `total` attempts made before it, the tracker of an earlier failure, and
+     * the last failure, which a Stop answered later fails with.
+     */
+    const step = (n: number, total: number, faulted: string | null, last: AttemptFailed | null): Effect.Effect<A, AttemptFailed | RunError> =>
+      Effect.gen(function* () {
+        const open = question;
+        const result = yield* Effect.result(open === null ? attempt : Effect.raceFirst(attempt, quitWatch(open)));
+        // A Stop answered while the attempt ran is honored even where it succeeded: the developer chose to stop.
+        const before = yield* answeredNow(faulted ?? "", last);
+        if (Result.isSuccess(result)) {
+          yield* closeQuestion;
+          const recovered = result.success.landed ?? faulted;
+          if (recovered !== null) yield* env.ui.notify({ _tag: "TrackerRecovered", tracker: recovered });
+          return result.success.value;
+        }
+        const failed = result.failure;
+        if (failed._tag !== "AttemptFailed" || !retryable(failed.error)) return yield* Effect.fail(failed);
+        const error = failed.error;
+        if (before === "retry") return yield* step(1, total + 1, error.tracker, failed);
+        const delay = question === null ? delays[n - 1] : undefined;
+        if (delay !== undefined) {
+          const fromMs = yield* Clock.currentTimeMillis;
+          const untilMs = fromMs + delay * 1000;
+          // Issue #215: the developer may end the wait early; the repeat then follows at once, as after a wait that ran out.
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const handle = yield* env.ui.openWait;
+              yield* env.ui.notify({ _tag: "TrackerRetrying", tracker: error.tracker, what, attempt: n, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs, wait: handle.id });
+              yield* say(prompts.trackerRetryLine(error.tracker, what, n, delays.length, delay, error.message));
+              if ((yield* handle.sleepUntil(untilMs)) === "endedEarly") {
+                yield* env.ui.notify({ _tag: "WaitEndedEarly", wait: handle.id });
+                yield* say(prompts.waitEndedLine({ kind: "tracker", tracker: error.tracker, what }));
+              }
+            }),
+          );
+          return yield* step(n + 1, total + 1, error.tracker, failed);
+        }
+        const attempts = total + 1;
+        if (env.exhausted === "stop") {
+          yield* say(prompts.trackerRepeatsExhaustedLine(error.tracker, what, attempts, error.message));
+          return yield* Effect.fail(failed);
+        }
+        // Issue #243: the question no longer waits. It is opened beside the repeats, which go on every
+        // USAGE_LIMIT_RETRY_SECONDS with no limit, each wait one the developer may end early.
+        if (question === null) {
+          const origin: QuestionOrigin = { kind: "tracker", tracker: error.tracker, what, attempts, fault: error.message };
+          const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.trackerExhaustedQuestion(error.tracker, what)), options: trackerOptions(), attached: attachedOf("fault", prompts.transportDetails(attempts, error.message)), decision: null };
+          const scope = yield* Scope.make();
+          const answered = yield* Deferred.make<void>();
+          const handle = yield* env.openQuestion(scope, draft, () => Effect.asVoid(Deferred.succeed(answered, undefined)));
+          question = { handle, scope, answered };
+        }
+        const waiting = question;
         const fromMs = yield* Clock.currentTimeMillis;
-        const untilMs = fromMs + delay * 1000;
-        // Issue #215: the developer may end the wait early; the repeat then follows at once, as after a wait that ran out.
+        const untilMs = fromMs + USAGE_LIMIT_RETRY_SECONDS * 1000;
         yield* Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* env.ui.openWait;
-            yield* env.ui.notify({ _tag: "TrackerRetrying", tracker: error.tracker, what, attempt: n, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs, wait: handle.id });
-            yield* say(prompts.trackerRetryLine(error.tracker, what, n, delays.length, delay, error.message));
-            if ((yield* handle.sleepUntil(untilMs)) === "endedEarly") {
-              yield* env.ui.notify({ _tag: "WaitEndedEarly", wait: handle.id });
-              yield* say(prompts.waitEndedLine({ kind: "tracker", tracker: error.tracker, what }));
-            }
+            yield* env.ui.notify({ _tag: "TrackerRetrying", tracker: error.tracker, what, attempt: attempts, of: attempts, delaySeconds: USAGE_LIMIT_RETRY_SECONDS, fault: error.message, fromMs, untilMs, wait: handle.id });
+            yield* say(prompts.trackerBesideRetryLine(error.tracker, what, attempts, USAGE_LIMIT_RETRY_SECONDS));
+            yield* Effect.raceFirst(Effect.raceFirst(handle.sleepUntil(untilMs), Deferred.await(waiting.answered)), quitWatch(waiting));
           }),
         );
-        return yield* step(n + 1, total + 1, error.tracker);
-      }
-      const attempts = total + 1;
-      if (env.exhausted === "stop") {
-        yield* say(prompts.trackerRepeatsExhaustedLine(error.tracker, what, attempts, error.message));
-        return yield* Effect.fail(failed);
-      }
-      const origin: QuestionOrigin = { kind: "tracker", tracker: error.tracker, what, attempts, fault: error.message };
-      const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.trackerExhaustedQuestion(error.tracker, what)), options: trackerOptions(), attached: attachedOf("fault", prompts.transportDetails(attempts, error.message)), decision: null };
-      const choice = parseTransportAnswer(yield* env.ask(draft)) ?? "stop";
-      yield* env.record(prompts.trackerDecisionLine(choice, error.tracker, what));
-      if (choice === "stop") return yield* Effect.fail(failed);
-      return yield* step(1, attempts, error.tracker);
-    });
-  return step(1, 0, null);
-};
+        if ((yield* answeredNow(error.tracker, failed)) === "retry") return yield* step(1, attempts, error.tracker, failed);
+        return yield* step(n, attempts, error.tracker, failed);
+      });
+    return step(1, 0, null, null).pipe(Effect.ensuring(Effect.suspend(() => closeQuestion)));
+  });
 
 /** A read of the run's, repeated; fails with the last tracker failure. */
 const readRetried = <A>(env: TrackerRetryEnv, op: TrackerOperation, read: Effect.Effect<A, TrackerError>): Effect.Effect<A, TrackerError | RunError> =>
@@ -274,7 +330,7 @@ export const runTrackerEnv: Effect.Effect<TrackerRetryEnv, never, Ui | Store | R
     ui,
     settings,
     record: (markdown) => store.converse(markdown),
-    ask: (draft) => askOffering(byLine((p) => ui.ask(p)), prompts.transportPrompt, draft, acceptable).pipe(Effect.provideContext(context)),
+    openQuestion: (scope, draft, onAccepted) => openBeside(scope, prompts.transportPrompt, draft, acceptable, { offer: false, onAccepted: () => onAccepted() }).pipe(Effect.provideContext(context)),
     exhausted: "ask",
   };
 });
@@ -296,7 +352,7 @@ export const unattendedTrackerEnv = (env: TrackerRetryEnv): TrackerRetryEnv => (
  */
 export const heldTrackerEnv = (ui: UiShape, settings: TrackerRetrySettings, held: Ref.Ref<readonly string[]>): TrackerRetryEnv => {
   const record = (markdown: string) => Ref.update(held, (rs) => [...rs, markdown]);
-  return { ui, settings, record, ask: (draft) => askUnoffered((p) => ui.ask(p), ui, record, prompts.transportPrompt, draft, acceptable), exhausted: "ask" };
+  return { ui, settings, record, openQuestion: (scope, draft, onAccepted) => openBesideUnoffered(scope, { ui, record }, prompts.transportPrompt, draft, acceptable, onAccepted), exhausted: "ask" };
 };
 
 const acceptable = (answer: string): boolean => parseTransportAnswer(answer) !== null;
