@@ -136,10 +136,9 @@ test("(c) exit (iii): a decision on a reraised work issue leaves for planning 2 
   const repo = tempRepo();
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
-    answers: ["act on it"],
-    // Issue #38: the point is asked after its investigation, when Codex raises it a third time.
+    answers: [{ beside: "act on it" }],
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
     config: { maxIdleRounds: 5 },
   });
@@ -156,57 +155,32 @@ test("(c1) a decision on a second clarification, asked after its investigation, 
   const repo = tempRepo();
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
-    answers: ["this is what I mean"],
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    answers: [{ beside: "this is what I mean" }],
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
     config: { maxIdleRounds: 5 },
   });
   assert.equal(await runTask(layer), 2);
   const round2 = workLog(probe.dir).filter((e) => e.round === 2);
-  assert.deepEqual(round2.map((e) => [e.source, e.action]), [["review", "clarification_requested"]]);
-  const recorded = round2[0] as unknown as { investigations: readonly { pause: string }[] };
-  assert.ok(recorded.investigations.some((i) => i.pause === "secondClarification"));
-  assert.deepEqual(workLog(probe.dir).filter((e) => e.round === 3).map((e) => [e.source, e.action]), [["user", "decided_by_user"]]);
+  assert.deepEqual(round2.map((e) => [e.source, e.action]), [["review", "clarification_requested"], ["user", "decided_by_user"]]);
   assert.equal((await capture.verify())?.stage, "decided");
 });
 
 test("(c4) exit (ii), idle rounds: the decision leaves for planning 2; the log holds the round once and the decided checkpoint is valid", async () => {
   const repo = tempRepo();
+  let resolve2 = () => {};
+  const round2 = { promise: new Promise<void>((r) => (resolve2 = r)), resolve: () => resolve2() };
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
-    answers: ["decide"],
-    config: { maxIdleRounds: 1 },
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    answers: [{ beside: "decide", when: () => round2.promise }],
+    config: { maxIdleRounds: 1, maxRounds: 9 },
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")], onCall: () => round2.resolve() }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
   });
   assert.equal(await runTask(layer), 2);
   assert.equal(workLog(probe.dir).filter((e) => e.id === "W1-R1-1" && e.source === "review").length, 1);
-  assert.equal((await capture.verify())?.stage, "decided");
-});
-
-test("(c3) exit (ii), identical content: a diff back to an earlier round's text, then a decision, leaves for planning 2", async () => {
-  const repo = tempRepo();
-  const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
-  let saved = "";
-  const change = (round: number) => {
-    const file = path.join(repo, "a.txt");
-    if (round === 1) {
-      saved = fs.readFileSync(file, "utf8");
-      fs.appendFileSync(file, "temporary\n");
-    } else fs.writeFileSync(file, saved);
-  };
-  const { layer, probe } = testLayer(repo, {
-    answers: ["keep the first version"],
-    config: { maxIdleRounds: 5 },
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }, { issues: [] }, { issues: [] }],
-    execs: [finished, finished],
-    store: changeAfterResponse(repo, change),
-  });
-  assert.equal(await runTask(layer), 2);
-  assert.match(presentedSubjects(probe.ui)[0], /alternating versions of changes\.diff/);
   assert.equal((await capture.verify())?.stage, "decided");
 });
 
@@ -224,10 +198,10 @@ test("(d) an empty decision at the idle pause continues the work review", async 
 
 test("(e) the round limit of a work review has no p, and p stops the run", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["p"],
+    answers: [{ beside: "p" }],
     config: { maxRounds: 1, maxIdleRounds: 5 },
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }],
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]]) }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }],
     execs: [finished],
   });
   await runFails(layer, "RoundLimitStop", /Work review 1/);

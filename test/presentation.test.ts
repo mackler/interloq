@@ -130,9 +130,9 @@ test("S12: a pause, the cycle limit and the unchanged pause are presented with t
   assert.ok(pause.probe.planner.contextPrompts[0].includes(JSON.stringify(paused?.attached?.blocks ?? "?")));
 
   const limit = testLayer(tempRepo(), {
-    answers: ["p"],
+    answers: [{ beside: "p" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: { maxRounds: 1 },
   });
@@ -143,7 +143,7 @@ test("S12: a pause, the cycle limit and the unchanged pause are presented with t
   assert.match(limit.probe.planner.contextPrompts[0], new RegExp(prompts.limitFacts("Planning phase 1", 1, [1], "review").replace(/[.()]/g, "\\$&")));
 
   const unchanged = testLayer(tempRepo(), {
-    answers: [prompts.UNCHANGED_ANSWERS.proceed],
+    answers: [{ beside: prompts.UNCHANGED_ANSWERS.proceed }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]) }, { output: respond([["P1-R1-1", "accepted"]]) }],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],

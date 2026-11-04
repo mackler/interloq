@@ -89,9 +89,9 @@ test("a refinement with an empty agreed list whose section cannot be written cla
 
 test("a refinement run that halts or is stopped leaves the item unrefined and its body unchanged", async () => {
   const halted = refine({
-    answers: ["0"],
-    steps: [{ output: { questions: [q("Q1")] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [q("Q1")] } }],
-    reviews: [{ issues: [{ id: "Q-R1-1", severity: "major", location: "Q1", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }],
+    answers: [{ beside: "0" }],
+    steps: [{ output: { questions: [q("Q1")] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [q("Q1")] } }, { output: { ...respond([["Q-R2-1", "rejected"]]), questions: [q("Q1")] } }],
+    reviews: [{ issues: [{ id: "Q-R1-1", severity: "major", location: "Q1", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }, { issues: [{ id: "Q-R2-1", severity: "major", location: "Q1", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }],
     config: { maxRounds: 1 },
   });
   assert.equal(failureOf(await halted.exit)._tag, "RoundLimitStop");

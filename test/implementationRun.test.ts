@@ -10,7 +10,7 @@ import { readRefinement, refinementOf, withRefinement } from "../src/refinement.
 import { implementationRun } from "../src/run.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
-import { fakeTrackerOf, finished, issue, respond, scriptedItem, type TestOptions, tempRepo, testLayer, TEST_ROOT } from "./helpers.ts";
+import { fakeTrackerOf, finished, issue, questionOf, respond, scriptedItem, type TestOptions, tempRepo, testLayer, TEST_ROOT } from "./helpers.ts";
 
 // Issue #120, S7 (the developer's decisions of 8 Oct 2026): an implementation run has no question phase; it sets its item
 // to implementing before any agent call and implemented when it finishes; one that halts or is stopped sets nothing more.
@@ -73,15 +73,16 @@ test("the item's section is the run's requirements.md, and the plan review and t
 
 test("a halt in the work review and a stop leave the item implementing", async () => {
   const halted = await implement(withSection, {
-    answers: ["0"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["W1-R1-1", "rejected"]]) }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }],
+    answers: [{ beside: "0" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]]) }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }],
     execs: [finished],
     config: { maxRounds: 1 },
   });
   assert.equal(failureOf(halted.exit)._tag, "RoundLimitStop");
   assert.equal(await stateOf(halted.tracker, withSection), "implementing");
-  const stopped = await implement(withSection, { answers: ["q"], steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }], reviews: [{ issues: [issue("P1-R1-1")] }], config: { maxRounds: 1 } });
+  // Issue #243: a question that still waits, Claude Code's own, answered q.
+  const stopped = await implement(withSection, { answers: ["q"], steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]], { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }) }], reviews: [{ issues: [issue("P1-R1-1")] }] });
   assert.equal(failureOf(stopped.exit)._tag, "UserStopped");
   assert.equal(await stateOf(stopped.tracker, withSection), "implementing");
 });

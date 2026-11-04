@@ -108,24 +108,33 @@ test("an accepted issue with analysis.json unchanged gets a corrective turn in t
   assert.ok(fs.existsSync(path.join(probe.dir, "decision-1", "cc-1-corrective-1.json")));
 });
 
-test("a disputed issue pauses as in behavior 7", async () => {
+test("a disputed issue is opened beside the decision's review, which goes on; Codex's position answered then is recorded and applied", async () => {
+  let third = () => {};
+  const round3 = new Promise<void>((r) => (third = r));
   const { layer, probe } = await setUp({
-    // Issue #38: the decision on the raised-again issue, asked after its investigation: the second re-raise.
-    answers: ["keep it"],
-    steps: [{ output: analysis() }, { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) }, { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) }, { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) }],
-    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }],
-    config: { maxIdleRounds: 5 },
+    answers: [{ beside: "1", when: () => round3 }],
+    steps: [
+      { output: analysis() },
+      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
+      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
+      { output: { analysis: analysis() } },
+    ],
+    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [], onCall: () => third() }, { issues: [] }],
   });
   const end = await Effect.runPromise(loop(layer));
   assert.equal(end.result, "converged");
   assert.ok(presentedSubjects(probe.ui).some((a) => /issue D1-R1-1, raised again/.test(a)), presentedSubjects(probe.ui).join("\n"));
-  assert.deepEqual((await probe.loadLog({ decision: 1 })).filter((e) => e.source === "user").map((e) => [e.id, e.rationale]), [["D1-R1-1", "keep it"]]);
+  assert.deepEqual((await probe.loadLog({ decision: 1 })).filter((e) => e.source === "user").map((e) => e.id), ["D1-R1-1"]);
 });
 
 test("0 at the cycle limit halts with RoundLimitStop; p proceeds to the choice", async () => {
-  const rejected = { steps: [{ output: analysis() }, { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) }], reviews: [{ issues: [issue("D1-R1-1")] }], config: { maxRounds: 1 } };
-  await fails((await setUp({ ...rejected, answers: ["0"] })).layer, "RoundLimitStop");
-  const proceeding = await setUp({ ...rejected, answers: ["p"] });
+  const rejected = {
+    steps: [{ output: analysis() }, { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) }, { output: decisionResponse([["D1-R2-1", "rejected"]], analysis()) }],
+    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R2-1")] }, { issues: [] }],
+    config: { maxRounds: 1, maxIdleRounds: 9 },
+  };
+  await fails((await setUp({ ...rejected, answers: [{ beside: "0" }] })).layer, "RoundLimitStop");
+  const proceeding = await setUp({ ...rejected, answers: [{ beside: "p" }] });
   assert.equal((await Effect.runPromise(loop(proceeding.layer))).result, "proceed");
   // S5: the proceed choice is an option of the presented question, described in the subject's words.
   const limit = proceeding.probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" && e.question.origin.kind === "limit" ? [e.question] : []));
@@ -294,75 +303,29 @@ const runTaskWith = async (options: TestOptions) => {
   return { ...t, finished: await Effect.runPromise(run("task").pipe(Effect.map((end) => (end._tag === "Finished" ? end.phases : 0)), Effect.provide(t.layer))) };
 };
 
-test("a disputed pause offers Help me decide; the analysis runs in the phase, and the chosen position is the decision", async () => {
+test("a disputed pause is put to the developer beside the review without Help me decide, and Codex's position answered is the decision", async () => {
   const { probe } = await runTaskWith({
-    answers: ["/decide", "1"],
+    answers: [{ beside: "1" }],
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["P1-R1-1", "rejected"]]) },
-      // Issue #38: the response that investigates the point raised again.
       { output: respond([["P1-R1-1", "rejected"]]) },
-      // Issue #159: the columns are headed by the outcome labels the user was shown.
-      { output: twoColumns(prompts.positionLabels("reraised", "review").reviewer, prompts.positionLabels("reraised", "review").planner) },
-      { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" },
+      { output: noQuestions, plan: "v2" },
     ],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finishedExec],
     config: { maxIdleRounds: 5 },
   });
-  // The pause is presented, asked with the offer, presented again after the analysis and asked again, without the offer (issue #133).
-  assert.equal(presentedSubjects(probe.ui).filter((a) => a.includes("raised again")).length, 2);
-  assert.deepEqual(probe.ui.asked.slice(0, 2), [prompts.withOffer(prompts.decisionPrompt), prompts.decisionPrompt]);
-  // S5: the options are presented with the question, each with the number that chooses it.
+  // Issue #243: a dispute's question may outlive its review into an execution phase, so it carries no offer.
+  assert.deepEqual(probe.ui.asked.slice(0, 1), [prompts.decisionPrompt]);
   const presented = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" && e.question.origin.kind === "pause" ? [e.question] : []));
   assert.ok(presented.length > 0);
   // Issue #183: in the plan review the option names what each agent states would differ in the work and what it costs.
   const scripted = { kind: "differs", difference: "scripted" } as unknown as import("../src/schema.ts").WorkEffect;
   const described = `p e ${prompts.positionLine(SCRIPTED_POSITION.concern, SCRIPTED_POSITION.remedy)} ${prompts.followCodexChanges({ reviewer: scripted, planner: scripted })} ${prompts.followCodexCost(false)}`;
   assert.deepEqual(presented[0].options[0], { label: plain(prompts.positionLabels("reraised", "review").reviewer), description: plain(described), figure: null, answer: { token: "1" } });
-  assert.deepEqual(json(probe.dir, "decision-1/question.json").phase, { kind: "planning", n: 1 });
-  assert.equal(json(probe.dir, "decision-1/chosen.json").option, prompts.REVIEWER_POSITION);
+  assert.ok(!fs.existsSync(path.join(probe.dir, "decision-1")));
   assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), new RegExp(`Decision: ${prompts.REVIEWER_POSITION.replace(/[()]/g, "\\$&")}: p e`));
-});
-
-test("a decision inside a decision: a pause of decision 1 opens decision 2 in the same phase and returns to decision 1", async () => {
-  const { probe } = await runTaskWith(askedInPlanReview({
-    // The question of Claude Code's response to the first plan review offers the options; decision 1's review disputes
-    // an issue twice; its pause is decided with decision 2; then that question is answered.
-    // Issue #38: decision 1's pause is asked after its investigation, at the second re-raise.
-    answers: ["/decide", "/decide", "2", "1"],
-    steps: [
-      { output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: question.options })] }, plan: "v1" },
-      { output: analysis() },
-      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
-      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
-      { output: twoColumns(prompts.positionLabels("reraised", "review").reviewer, prompts.positionLabels("reraised", "review").planner) },
-      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
-      { output: noQuestions },
-    ],
-    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finishedExec],
-    config: { maxIdleRounds: 5 },
-  }));
-  assert.deepEqual(json(probe.dir, "decision-2/question.json").phase, { kind: "planning", n: 1 });
-  assert.equal(json(probe.dir, "decision-2/chosen.json").option, prompts.PLANNER_POSITION);
-  assert.equal(json(probe.dir, "decision-1/chosen.json").option, "SQLite");
-  assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), /Subject: question from Claude Code: Which database\?\nDecision: SQLite: a file/);
-});
-
-test("at the cycle limit Help me decide is offered, and a number afterwards adds cycles", async () => {
-  const threeColumns: DecisionAnalysis = { ...analysis(), columns: [prompts.LIMIT_PROCEED, prompts.LIMIT_STOP, prompts.LIMIT_MORE].map((option, i) => ({ kind: "argued", option, advantages: [entry(`E${i + 1}`)], disadvantages: [] })) };
-  const { probe, finished } = await runTaskWith({
-    config: { maxRounds: 1 },
-    answers: ["/decide", "1"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }, { output: threeColumns }],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finishedExec],
-  });
-  assert.equal(finished, 1);
-  assert.ok(probe.ui.asked[0].startsWith(prompts.OFFER_LINE));
-  assert.deepEqual(json(probe.dir, "decision-1/question.json").options.map((o: { label: string }) => o.label), [prompts.LIMIT_PROCEED, prompts.LIMIT_STOP, prompts.LIMIT_MORE]);
-  assert.deepEqual(json(probe.dir, "decision-1/chosen.json"), { version: 2, decision: 1, answer: "1", option: prompts.LIMIT_MORE });
 });
 
 // W1-R1-1: an answer the caller rejects is not recorded; the question is asked again.

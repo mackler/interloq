@@ -596,8 +596,14 @@ test("an Asked without deciding decodes with null; deciding and PromptWithdrawn 
   const frame = { type: "event", run: 1, seq: 0, time: "t", event: asked };
   const old = decoded(decodeServer(JSON.stringify(frame)));
   assert.ok(old.type === "event" && old.event._tag === "Asked" && old.event.deciding === null);
-  const deciding = { ...frame, event: { ...asked, deciding: 3 } };
+  assert.ok(old.type === "event" && old.event._tag === "Asked" && old.event.beside === null);
+  const deciding = { ...frame, event: { ...asked, deciding: 3, beside: null } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(deciding))), deciding);
+  // Issue #243: a question open beside the run, and a cancelled prompt, round-trip.
+  const beside = { ...frame, event: { ...asked, deciding: null, beside: 2 } };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(beside))), beside);
+  const cancelled = { ...frame, event: { _tag: "PromptCancelled", prompt: 5 } };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(cancelled))), cancelled);
   const withdrawn = { ...frame, event: { _tag: "PromptWithdrawn", prompt: 4 } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(withdrawn))), withdrawn);
   // Issue #217: a frame's answer accepted closes its prompt.

@@ -98,9 +98,9 @@ const escaped = (s: string) => s.replace(/[()]/g, "\\$&");
 test("a context reply whose labels name an agent is repaired, and the answer is paired with its position", async () => {
   const { probe, finished } = await runTaskWith({
     config: { maxIdleRounds: 5 },
-    answers: ["1"],
+    answers: [{ beside: "1" }],
     contexts: relabeled([prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION], [ACCEPT_LABEL, LEAVE_LABEL]),
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: noQuestions, plan: "v2" }],
     reviews: REVIEWS,
     execs: [finishedExec],
   });
@@ -115,13 +115,12 @@ test("a context reply whose labels name an agent is repaired, and the answer is 
 test("a typed label the context call wrote is recorded as its position (P1-R1-1)", async () => {
   const { probe } = await runTaskWith({
     config: { maxIdleRounds: 5 },
-    answers: ["/decide", LEAVE_LABEL],
+    answers: [{ beside: LEAVE_LABEL }],
     contexts: relabeled([ACCEPT_LABEL, LEAVE_LABEL]),
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: twoColumns(ACCEPT_LABEL, LEAVE_LABEL) }, { output: respond([["P1-R1-1", "rejected"]]) }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
     reviews: REVIEWS,
     execs: [finishedExec],
   });
-  assert.equal(JSON.parse(read(probe.dir, "decision-1/chosen.json")).option, prompts.PLANNER_POSITION);
   assert.match(read(probe.dir, "user-decisions.md"), new RegExp(`Decision: ${escaped(prompts.PLANNER_POSITION)}`));
 });
 
@@ -149,7 +148,7 @@ test("a permission request keeps its matching: a rephrased Allow label typed is 
 test("two refused context replies fall back to the program's outcome labels, and 2 records Claude Code's position", async () => {
   const { probe, finished } = await runTaskWith({
     config: { maxIdleRounds: 5 },
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     contexts: relabeled([prompts.REVIEWER_POSITION, LEAVE_LABEL], ["Codex wins", "Claude wins"]),
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
     reviews: REVIEWS,

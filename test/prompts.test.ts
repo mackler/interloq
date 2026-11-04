@@ -147,7 +147,7 @@ test("an action not sent because the page is no longer connected, with the answe
 // Issue #14: the user reads "cycle", never "round", at the limit; the agents' prompts and the records keep "round".
 // S8: the counts are in the question (limitQuestion), the hint says only how to answer.
 test("the cycle limit's question and hints, in the hints and in the page, speak of cycles", () => {
-  assert.equal(prompts.limitQuestion("Planning phase 1", 5), "Planning phase 1 has completed 5 cycles without convergence. How do you want the run to continue?");
+  assert.equal(prompts.limitQuestion("Planning phase 1", 5), "Planning phase 1 has completed 5 cycles and Codex still raises points. The review goes on meanwhile; your answer applies when the current cycle ends. How do you want the run to continue?");
   assert.match(prompts.limitPrompt, /more cycles/);
   assert.match(prompts.limitNoProceedPrompt, /more cycles/);
   assert.doesNotMatch(prompts.limitPrompt + prompts.limitNoProceedPrompt, /round/);
@@ -592,10 +592,9 @@ test("the questions the program composes embed no agent-written or SDK-written t
   const headings = ["Question review", "Terms review", "Requirements review", "Planning phase 12", "Work review 3", "Decision 7"];
   const files = ["questions.json", "terms.json", "requirements.md", "plan.json", "analysis.json", "changes.diff"];
   for (const heading of headings) {
-    assert.ok(prompts.limitQuestion(heading, 5).length < 200, heading);
-    for (const file of files) assert.ok(prompts.unchangedQuestion(heading, file).length < 200, `${heading} ${file}`);
+    assert.ok(prompts.limitQuestion(heading, 5).length < 250, heading);
+    for (const file of files) assert.ok(prompts.unchangedQuestion(heading, file).length < 300, `${heading} ${file}`);
   }
-  for (const file of files) for (const pause of ["identical"] as const) assert.ok(prompts.pauseQuestion({ pause, fileLabel: file, heading: "Planning phase 1", round: 1 } as never, "review").length < 200, file);
 });
 test("the transport pause's details hold the attempts and the whole fault; the fallback context points to them", () => {
   const fault = `read ECONNRESET ${"z".repeat(2500)}`;

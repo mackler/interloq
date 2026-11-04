@@ -12,6 +12,7 @@ import * as prompts from "../src/prompts.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import { run } from "../src/run.ts";
 import { makeWebUi } from "../src/webUi.ts";
+import { emptyRun, foldEvent } from "../web/src/state.ts";
 import { finished, issue, questionEntry, respond, runRefinement, runTask, scriptedStart, summaryReply, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -107,21 +108,23 @@ test("(6) a refinement run's question-list review reaching its limit goes on the
   assert.ok(fs.existsSync(probe.requirements));
 });
 
-test("(7) an accepted point that leaves the plan unchanged after its corrective turn goes on; Retry answered then issues another corrective turn", async () => {
+test("(7) an accepted point that leaves the plan unchanged after its corrective turn goes on; Retry answered during the next cycle is recorded and applied", async () => {
+  const next = signal();
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: [{ beside: "retry" }],
+    answers: [{ beside: "retry", when: () => next.promise }],
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"]]) },
       { output: respond([["A", "accepted"]]) },
-      { output: respond([["A", "accepted"]]), plan: "v2" },
+      { output: noQuestions, plan: "v2" },
     ],
-    reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [], onCall: () => next.resolve() }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
   assert.equal(await runTask(layer), 1);
-  assert.ok(fs.existsSync(path.join(probe.dir, "planning-1", "cc-1-corrective-2.json")), "the Retry took a second corrective turn");
   assert.ok(conversation(probe.dir).includes(prompts.unchangedContinuesLine("plan.json", 1, "review")));
+  assert.ok(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8").includes(prompts.unchangedRetryDecision("plan.json", 1, ["A"])));
+  assert.ok(fs.existsSync(path.join(probe.dir, "planning-1", "review-3.json")), "another cycle reviewed the applied Retry");
 });
 
 test("(8) a disputed point goes on with Claude Code's position; Codex's position answered during the loop is recorded and applied at the next boundary", async () => {
@@ -188,4 +191,84 @@ test("(13) a Stop to the first of two unchanged questions, given during the seco
   });
   const exit = await Effect.runPromiseExit(run("task").pipe(Effect.provide(layer)));
   assert.ok(exit._tag === "Failure" && String(exit.cause).includes("AcceptedWithoutChange"), String(exit));
+});
+
+test("(9) a dispute in the work review answered for Codex's position during the loop leaves for a revision", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: [{ beside: "1" }],
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["W1-R1-1", "rejected"]]) },
+      { output: respond([["W1-R1-1", "rejected"]]) },
+      { output: noQuestions, plan: "v2" },
+    ],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+  });
+  assert.equal(await runTask(layer), 2);
+  assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), /W1-R1-1/);
+});
+
+test("(10) Stop at the limit answered during the final review, which raises nothing, halts with RoundLimitStop", async () => {
+  const last = signal();
+  const { layer } = testLayer(tempRepo(), {
+    ...fourRounds,
+    answers: [{ beside: "0", when: () => last.promise }],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("C")] }, { issues: [], onCall: () => last.resolve() }],
+  });
+  const exit = await Effect.runPromiseExit(run("task").pipe(Effect.provide(layer)));
+  assert.ok(exit._tag === "Failure" && String(exit.cause).includes("RoundLimitStop"), String(exit));
+});
+
+/** The run's Asked events with the given field set. */
+const askedWith = (events: readonly RunEvent[], field: "beside" | "deciding") => events.flatMap((e) => (e._tag === "Asked" && e[field] !== null ? [e] : []));
+const until = async (condition: () => boolean): Promise<void> => {
+  for (let i = 0; i < 2000 && !condition(); i++) await sleep(5);
+  if (!condition()) throw new Error("the condition never held");
+};
+/** A plan review at its limit after cycle 1, its cycle 2 held, the limit answered Help me decide and its analysis held. */
+const decidingAtLimit = async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const review2 = signal();
+  const analysisCalled = signal();
+  const { layer, probe } = testLayer(tempRepo(), {
+    ui,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "accepted"]]), plan: "v2" },
+      { output: { decision: "d", columns: [], recommendation: { option: "", reason: "" } }, gate: () => new Promise(() => {}), onCall: () => analysisCalled.resolve() },
+    ],
+    reviews: [{ issues: [issue("A")] }, { issues: [], gate: () => review2.promise }, { issues: [] }],
+    execs: [finished],
+    config: { maxRounds: 1 },
+  });
+  const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
+  await until(() => askedWith(events, "beside").length > 0);
+  const limit = askedWith(events, "beside")[0]!;
+  assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/decide")), "taken");
+  await analysisCalled.promise;
+  await until(() => askedWith(events, "deciding").length > 0);
+  return { events, ui, review2, fiber, probe, analysisPrompt: askedWith(events, "deciding")[0]!.prompt };
+};
+
+test("(15) with the web Ui: 0 answered while the limit's analysis is prepared, the final review released: the run halts and the decision's abandoned records are written", async () => {
+  const d = await decidingAtLimit();
+  assert.equal(await Effect.runPromise(d.ui.answer(d.analysisPrompt, "0")), "taken");
+  d.review2.resolve();
+  const exit = await Effect.runPromise(Fiber.await(d.fiber));
+  assert.ok(exit._tag === "Failure" && String(exit.cause).includes("RoundLimitStop"), String(exit));
+  await until(() => fs.existsSync(path.join(d.probe.dir, "decision-1", "chosen.json")));
+  assert.ok(conversation(d.probe.dir).includes(prompts.decisionAbandonedLine(1)));
+});
+
+test("(16) review P1-R6-1: the plan review ending while the limit's analysis is prepared cancels the analysis's prompt; the page then has no pending prompt and no deciding entry", async () => {
+  const d = await decidingAtLimit();
+  d.review2.resolve();
+  await until(() => d.events.some((e) => e._tag === "Notified" && e.event._tag === "PhaseBegan" && e.event.phase.kind === "execution"));
+  assert.ok(d.events.some((e) => e._tag === "PromptCancelled" && e.prompt === d.analysisPrompt));
+  const view = d.events.reduce((r, event) => foldEvent(r, { time: "2026-11-04T00:00:00.000Z", event }), emptyRun(1));
+  assert.equal(view.pending, null);
+  assert.deepEqual(view.deciding, []);
+  await Effect.runPromise(Fiber.await(d.fiber));
 });

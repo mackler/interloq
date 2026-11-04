@@ -827,21 +827,6 @@ test("a chained run's question counts down the configured wait; an answer after 
   await ended(h, id);
 });
 
-test("an answer after a review limit's expiry is refused with the text that the review went on", async () => {
-  const h = await chained(
-    [{ steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }], reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }], execs: [finished], config: { maxRounds: 1 } }],
-    // The manager reads the wait from the project's file; the program takes its configuration from the scripted wiring.
-    { answerTimeoutSeconds: 1 },
-  );
-  const id = await started(h);
-  const asked = await pendingAsk(h, id);
-  assert.equal(asked.countdown?.then, "extend");
-  await until("the expiry", () => eventsOf(h, id).some((e) => e._tag === "AnswerExpired"), 10_000);
-  assert.deepEqual(await run(h.manager.answer(h.manager.incarnation, id, asked.prompt, "3")), { refused: limitAnswerExpiredText, mode: "implementation" });
-  await ended(h, id);
-  assert.equal(endCode(h, id), 0);
-});
-
 test("a manual run with the mode off counts nothing down", async () => {
   const h = await harness(tempRepo(), [askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] })]);
   const id = await started(h);

@@ -119,9 +119,9 @@ test("seam: a plan review run until Codex raises no counted issue qualifies, one
   assert.equal(planReviewConverged(readRecords(agreedRun.dir, ROOT)), true);
 
   const proceeded = await implement({
-    answers: ["p"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }],
+    answers: [{ beside: "p" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R2-1", "rejected"]]) }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R2-1")] }, { issues: [] }],
     execs: [finished],
     config: { maxRounds: 1 },
   });

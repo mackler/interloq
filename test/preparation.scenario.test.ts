@@ -51,19 +51,14 @@ test("a two-question item gets two question comments then its own, read back as 
   assert.equal(found.key, runCommentKey(dir!));
 });
 
-test("a question review that reaches its idle limit sets the item aside with one comment, no question comment, nothing answered", async () => {
+test("a question review that reaches its idle limit goes on, and the item is prepared with nothing answered (issue #243)", async () => {
   const s = setup({
     config: { maxIdleRounds: 1 },
-    steps: [{ output: { questions: [q("Q1")] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [q("Q1")] } }],
-    reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R2-1")] }],
+    steps: [{ output: { questions: [q("Q1")] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [q("Q1")] } }, { output: { ...respond([["Q-R2-1", "rejected"]]), questions: [q("Q1")] } }],
+    reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R2-1")] }, { issues: [] }],
   });
   const outcome = await Effect.runPromise(s.prepare());
-  assert.equal(outcome._tag, "SetAside");
-  assert.equal(outcome._tag === "SetAside" && outcome.cause._tag, "Paused");
-  assert.equal(outcome._tag === "SetAside" && outcome.cause._tag === "Paused" && outcome.cause.phase, "questions");
-  const after = await s.held();
-  assert.equal((after.comments ?? []).length, 1);
-  assert.equal(preparationOf(after.comments ?? [], after, 1)._tag, "SetAside");
+  assert.deepEqual(outcome, { _tag: "Prepared", count: 1 });
   assert.equal(s.probe.ui.asked.length, 0);
 });
 
@@ -151,14 +146,16 @@ test("(a) a stale statement amended unattended: one writeText, then the question
   assert.equal(preparationOf(after.comments ?? [], after, 1)._tag, "Prepared");
 });
 
-test("(b) a marked dispute raised again sets the item aside as Paused and writes no text", async () => {
+test("(b) a marked dispute raised again goes on unattended; the item is prepared and its text unchanged (issue #243)", async () => {
   const marked = { ...respond([["U-R1-1", "rejected", true]]), issue: { title: ITEM.title, text: ITEM.body }, outcome: { kind: "current" }, developer_passages: [] };
-  // Issue #38: the marked dispute stops the check after its investigation, at the third check.
-  const s = setup({ steps: [{ output: marked }, { output: marked }, { output: marked }], updateChecks: [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }], config: { maxIdleRounds: 5 } });
+  const s = setup({
+    steps: [{ output: marked }, { output: marked }, { output: { questions: [q("Q1")] } }],
+    updateChecks: [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [] }],
+    reviews: [{ issues: [] }],
+    config: { maxIdleRounds: 5 },
+  });
   const outcome = await Effect.runPromise(s.prepare());
-  assert.equal(outcome._tag, "SetAside");
-  assert.ok(outcome._tag === "SetAside" && outcome.cause._tag === "Paused");
-  assert.equal(outcome.cause.phase, "update");
+  assert.deepEqual(outcome, { _tag: "Prepared", count: 1 });
   assert.equal((await s.held()).body, ITEM.body);
 });
 

@@ -156,17 +156,13 @@ test("(i) a disputed fact is settled by the agents and recorded; a marked one ra
   assert.match(settled.read("conversation.md"), new RegExp(prompts.WORDING_DISPUTE_HEADING.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
   assert.equal(settled.probe.ui.asked.length, 0);
   const marked = await phase(
-    [
-      { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) },
-      // Issue #38: the response that investigates the marked dispute raised again, before the developer is asked.
-      { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) },
-      { output: { issue: kept, outcome: { kind: "current" }, developer_passages: [QUOTE], decided: [], questions_for_user: [] } },
-      { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) },
-    ],
-    [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [] }],
-    { answers: ["2"] },
+    [{ output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) }, { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) }],
+    [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [] }],
+    { answers: [{ beside: "2" }] },
   );
   outcomeOf(marked.exit);
+  // Issue #243: the marked dispute is put to the developer beside the check, which goes on.
   assert.ok(marked.probe.ui.asked.length > 0, "the marked dispute was asked");
+  assert.match(marked.read("conversation.md"), new RegExp(prompts.DISPUTE_PUT_TO_YOU_HEADING, "u"));
 });
 

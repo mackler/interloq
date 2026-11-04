@@ -67,11 +67,10 @@ test("a verdict Codex objects to and Claude Code accepts leads to a plan, its re
 
 test("a disagreement that persists asks the developer, and his answer adopting Codex's position leads to a plan", async () => {
   const { code, probe } = await runIt({
-    answers: ["1"],
-    // Issue #38: the objection is asked after its investigation, when Codex raises it a third time.
+    answers: [{ beside: "1" }],
+    config: { maxIdleRounds: 3 },
     steps: [{ output: notRefined(MISSING) }, { output: verdictResponse([["V1-R1-1", "rejected"]]) }, { output: verdictResponse([["V1-R1-1", "rejected"]]) }, { output: {}, plan: "v1" }],
-    reviews: [objection, objection, objection, { issues: [] }, { issues: [] }],
-    config: { maxIdleRounds: 5 },
+    reviews: [objection, objection, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
   assert.equal(presentedQuestions(probe.ui).length, 1);

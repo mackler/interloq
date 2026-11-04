@@ -196,12 +196,12 @@ test("/quit in the clarification, confirmed, ends the run with exit code 130", a
 
 test("Stop at the cycle limit, confirmed, stays a halt with exit code 1; declined, it returns to the limit", async () => {
   const prompts = await import("../src/prompts.ts");
-  const limited = (answers: string[]) =>
+  const limited = (answers: readonly string[]) =>
     testWiring(tempRepo(), {
       steps: [{ output: noQuestions, plan: "v1" }, { output: { dispositions: [{ id: "P1-R1-1", action: "rejected", rationale: "r", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] } }],
-      reviews: [{ issues: [{ id: "P1-R1-1", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }],
+      reviews: [{ issues: [{ id: "P1-R1-1", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }, { issues: [] }],
       config: { maxRounds: 1 },
-      answers,
+      answers: answers.map((beside) => ({ beside })),
       confirmEnds: true,
     });
   const halted = limited(["", "y"]);

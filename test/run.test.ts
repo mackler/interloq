@@ -37,13 +37,12 @@ test("one accepted issue, then convergence, then finished", async () => {
 
 test("a rejected issue raised again produces one prompt", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["keep the rejection"],
-    // Issue #38: B is asked after its investigation, when Codex raises it a third time.
+    answers: [{ beside: "keep the rejection" }],
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" },
       { output: respond([["B", "rejected"]]) },
-      { output: respond([["B", "rejected"]]) },
+      { output: noQuestions, plan: "v3" },
     ],
     reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
     config: { maxIdleRounds: 5 },
@@ -144,7 +143,7 @@ test("a change to an ignored path does not halt the run", async () => {
 // Behavior 7 as amended (issue #30): a corrective turn, then the pause; Stop halts, and the log holds the round.
 test("an accepted issue without a plan change: a corrective turn, then the pause, whose Stop halts the run", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["s"],
+    answers: [{ beside: "s" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]) }, { output: respond([["A", "accepted"]]) }],
     reviews: [{ issues: [issue("A")] }],
   });
@@ -156,7 +155,7 @@ test("an accepted issue without a plan change: a corrective turn, then the pause
 
 test("the pause's Retry takes another corrective turn, which applies the amendment", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["r"],
+    answers: [{ beside: "r" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]) }, { output: respond([["A", "accepted"]]) }, { output: respond([["A", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -168,7 +167,7 @@ test("the pause's Retry takes another corrective turn, which applies the amendme
 
 test("the pause's Proceed continues with the next cycle, and the log shows the file unchanged", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["p"],
+    answers: [{ beside: "p" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]) }, { output: respond([["A", "accepted"]]) }],
     reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -179,28 +178,11 @@ test("the pause's Proceed continues with the next cycle, and the log shows the f
   assert.match(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), /\*\*User decision:\*\* proceed with plan\.json unchanged after cycle 1/);
 });
 
-test("Help me decide at the pause runs a decision and asks again", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["/decide", "p"],
-    steps: [
-      { output: noQuestions, plan: "v1" },
-      { output: respond([["A", "accepted"]]) },
-      { output: respond([["A", "accepted"]]) },
-      { output: { decision: "d", columns: [["Retry"], ["Proceed"], ["Stop the run"]].map(([option]) => ({ kind: "argued", option, advantages: [], disadvantages: [] })), recommendation: { option: "", reason: "" } } },
-    ],
-    reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
-  });
-  assert.equal(await runTask(layer), 1);
-  assert.equal(probe.ui.asked.length, 2);
-  assert.ok(probe.ui.notified.some((e) => e._tag === "DecisionAnalyzed"));
-});
-
 test("the round limit offers to proceed to implementation", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["p"],
+    answers: [{ beside: "p" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
-    reviews: [{ issues: [issue("A")] }, { issues: [] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: { maxRounds: 1 },
   });
@@ -220,8 +202,7 @@ test("a reversal and a disputed self-correction each produce a prompt and a deci
     self_corrections: [{ id: "A", new_action: "rejected" as const, explanation: "A breaks the migration" }, { id: "", new_action: "plan_error" as const, explanation: "wrong module" }],
   };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["keep A", "keep A again"],
-    // Issue #38: both disputes have their investigation turn, and are asked at the next review, which raises C again.
+    answers: [{ beside: "keep A" }, { beside: "keep A again" }],
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"]]), plan: "v2" },
@@ -243,31 +224,12 @@ test("a reversal and a disputed self-correction each produce a prompt and a deci
 
 test("0 at the round limit stops with RoundLimitStop", async () => {
   const { layer } = testLayer(tempRepo(), {
-    answers: ["0"],
+    answers: [{ beside: "0" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
-    reviews: [{ issues: [issue("A")] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [] }],
     config: { maxRounds: 1 },
   });
   await runFails(layer, "RoundLimitStop", /stopped by the user at the cycle limit of Planning phase 1/);
-});
-
-test("q at the round limit stops with UserStopped", async () => {
-  const { layer } = testLayer(tempRepo(), {
-    answers: ["q"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
-    reviews: [{ issues: [issue("A")] }],
-    config: { maxRounds: 1 },
-  });
-  await runFails(layer, "UserStopped", /stopped by the user/);
-});
-
-test("q at a decision prompt stops with UserStopped", async () => {
-  const { layer } = testLayer(tempRepo(), {
-    answers: ["q"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" }, { output: respond([["B", "rejected"]]) }],
-    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }],
-  });
-  await runFails(layer, "UserStopped", /stopped by the user/);
 });
 
 test("a missing disposition, after its repair turn, stops with RoundInvalid naming the id", async () => {
@@ -295,28 +257,20 @@ test("Codex changing the reviewed file stops with ReviewedFileChanged", async ()
 
 // Finding 14 of docs/functional-design-review.md: after an idle-round decision appended a second hash for one
 // round, the position in the history was printed as a round number.
-test("the identical-content message names the round after which the content was seen, also after an idle decision", async () => {
-  const reject = (id: string, plan?: string) => ({ output: respond([[id, "rejected"]]), ...(plan === undefined ? {} : { plan }) });
+test("the identical-content line names the round after which the content was seen, and asks nothing", async () => {
+  const reject = (id: string, plan: string) => ({ output: respond([[id, "rejected"]]), plan });
   const { layer, probe } = testLayer(tempRepo(), {
-    // round 1: unexplained change (recorded, not asked, issue #208), idle prompt (a decision that applies changes -> v3)
-    // rounds 2 and 3: unexplained change and idle prompt, no decisions; round 4: the plan is v4 again
-    answers: ["apply the missing step", "", "", "", "", ""],
-    steps: [
-      { output: noQuestions, plan: "v1" },
-      reject("A", "v2"),
-      { output: noQuestions, plan: "v3" }, // applies the decision of round 1
-      reject("B", "v4"),
-      reject("C", "v5"),
-      reject("D", "v4"),
-    ],
-    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("C")] }, { issues: [issue("D")] }, { issues: [] }, { issues: [] }],
+    steps: [{ output: noQuestions, plan: "v1" }, reject("A", "v2"), reject("B", "v3"), reject("C", "v2")],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("C")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { maxIdleRounds: 1, maxRounds: 6 },
+    config: { maxIdleRounds: 9, maxRounds: 6 },
   });
   assert.equal(await runTask(layer), 1);
-  const identical = presentedQuestions(probe.ui).map((q) => blocksMarkdown(q.attached?.blocks ?? [])).filter((line) => /is identical to plan\.json after/.test(line));
-  assert.equal(identical.length, 1, presentedSubjects(probe.ui).join("\n"));
-  assert.match(identical[0], /identical to plan\.json after cycle 2\b/);
+  // Issue #243: identical content is a line, asking nothing.
+  const identical = probe.ui.said.filter((line) => /is identical to plan\.json after/.test(line));
+  assert.equal(identical.length, 1, probe.ui.said.join("\n"));
+  assert.match(identical[0]!, /after cycle 3 is identical to plan\.json after cycle 1\b/);
+  assert.deepEqual(probe.ui.asked, []);
 });
 
 // Finding 3 of docs/functional-design-review.md: duplicate or extra dispositions and duplicate review ids passed
@@ -369,15 +323,15 @@ test("a missing disposition still halts after its repair turn, as RoundInvalid, 
 // Finding 5 of docs/functional-design-review.md: the extra-rounds answer accepted integers beyond safe range.
 test("at the round limit, an integer beyond the safe range is an invalid answer and stops; a small one adds rounds", async () => {
   const huge = testLayer(tempRepo(), {
-    answers: ["99999999999999999999"],
+    answers: [{ beside: "99999999999999999999" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
-    reviews: [{ issues: [issue("A")] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [] }],
     config: { maxRounds: 1 },
   });
   await runFails(huge.layer, "RoundLimitStop", /cycle limit/);
 
   const three = testLayer(tempRepo(), {
-    answers: ["3"],
+    answers: [{ beside: "3" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -672,12 +626,12 @@ test("an execution that ends in AgentUnreachable halts the run, and a started st
 // the user, as behavior 7 has it.
 test("issue #112: on the plan, an issue raised again after a partial acceptance is still put to the user", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["keep it"],
+    answers: [{ beside: "keep it" }],
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "partially_accepted"]]), plan: "v2" },
       { output: respond([["A", "rejected"]]) },
-      { output: respond([["A", "rejected"]]) },
+      { output: noQuestions, plan: "v3" },
     ],
     reviews: [{ issues: [issue("A")] }, { issues: [issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }],
     config: { maxIdleRounds: 5 },

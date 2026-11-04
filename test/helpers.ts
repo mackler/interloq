@@ -220,7 +220,17 @@ export class ScriptedUi implements UiShape {
         this.asked.push(prompt);
         this.order.push("beside");
         this.asks.signal();
-        return Effect.flatMap(givenAt(next.beside, next.when), (text) => taking(prompt, kind, onTaken, text));
+        // The page confirms an answer that ends the run (behavior 1) before it sends it: the next beside answer is the reply.
+        const mode = kind === "line" ? "ask" : "message";
+        const confirmed = (text: string): Effect.Effect<string, UserStopped> => {
+          if (!this.confirmEnds || endingOf(promptOf(prompt).kind, mode, text) === null) return taking(prompt, kind, onTaken, text);
+          const reply = this.answers[0];
+          if (reply === undefined || typeof reply === "string" || !("beside" in reply)) return Effect.never;
+          this.answers.shift();
+          this.asked.push(confirmEndText(endingOf(promptOf(prompt).kind, mode, text)!));
+          return parseConfirmEnd(reply.beside) ? taking(prompt, kind, onTaken, text) : askBeside(prompt, kind, onTaken);
+        };
+        return Effect.flatMap(givenAt(next.beside, next.when), confirmed);
       });
     return Effect.succeed({ askDuring, askBeside });
   }

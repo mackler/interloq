@@ -114,25 +114,21 @@ test("a gap that Claude Code accepts produces a second interview whose summary i
 });
 
 // Issue #30 (G-R1-1): the requirements go straight to the pause, without a corrective turn; its Retry is another interview.
-test("a gap accepted but the summary unchanged: the pause, and Retry holds another interview", async () => {
+test("a gap accepted but the summary unchanged: the question is opened beside the review, which goes on (issue #243)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", "no change", "r", "retries: 3"],
+    answers: ["A", "no change"],
     closings: closing("Q1: A"),
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["G-R1-1", "accepted"]]), findings: [{ id: "G-R1-1", kind: "unresolved" }], requirements: null } },
       { output: turn("How many retries?", []) },
       { output: turn("Complete.", ["G-R1-1"], "Q1: A") }, // the summary unchanged
-      { output: turn("How many retries, then?", []) }, // Retry: another interview
-      { output: turn("Complete.", ["G-R1-1"], "Q1: A\nRetries: 3") },
-      { output: noQuestions, plan: "v1" },
     ],
-    reviews: [{ issues: [] }, { issues: [issue("G-R1-1", "retry count absent")] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    reviews: [{ issues: [] }, { issues: [issue("G-R1-1", "retry count absent")] }, { issues: [] }],
   });
   await runRefinement(layer);
-  assert.equal(read(probe.dir, "requirements.md"), "Q1: A\nRetries: 3\n");
-  assert.ok(probe.ui.asked.some((p) => p.endsWith(prompts.unchangedPrompt)), "the pause was not asked");
+  assert.equal(read(probe.dir, "requirements.md"), "Q1: A\n");
+  assert.ok(presentedQuestions(probe.ui).some((p) => p.origin.kind === "unchanged"), "the question was not presented");
   assert.equal(probe.planner.prompts.some((p) => /did not change during your response/.test(p)), false, "a corrective turn was taken");
 });
 
@@ -424,13 +420,12 @@ const pausesOf = (ui: Parameters<typeof presentedQuestions>[0]) => presentedQues
 
 test("issue #156: a marked rejection of a request to drop a question, raised again, reaches the developer with both readings", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1"],
+    answers: [{ beside: "1" }],
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
-      // Issue #38: the response that investigates the marked dispute raised again, before the developer is asked.
       { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
-      { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [] } },
+      { output: { questions: [] } },
     ],
     reviews: [{ issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [] }, { issues: [] }],
     contexts: failedContext,

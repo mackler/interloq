@@ -110,14 +110,14 @@ test("the explanations are validated: a changed wording, an unused explanation, 
 test("the terms review at its cycle limit: p proceeds to the clarification with the explanations as they are; 0 halts", async () => {
   const limited = (answer: string) =>
     testLayer(tempRepo(), {
-      answers: [answer, "1"],
+      answers: [{ beside: answer }, "1"],
       steps: [{ output: { questions: [entry] } }],
     closings: interviewClosings(),
-      terms: [{ output: terms("A library.") }, { output: { ...respond([["T-R1-1", "rejected"]]), ...terms("A library.") } }],
-      termsReviews: [{ issues: [issue("T-R1-1", "The explanation says too little.")] }],
+      terms: [{ output: terms("A library.") }, { output: { ...respond([["T-R1-1", "rejected"]]), ...terms("A library.") } }, { output: { ...respond([["T-R2-1", "rejected"]]), ...terms("A library.") } }],
+      termsReviews: [{ issues: [issue("T-R1-1", "The explanation says too little.")] }, { issues: [issue("T-R2-1", "Still too little.")] }],
       reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
       execs: [finished],
-      config: { maxRounds: 1 },
+      config: { maxRounds: 1, maxIdleRounds: 9 },
     });
   const proceeding = limited("p");
   await runRefinement(proceeding.layer);
