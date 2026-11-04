@@ -20,7 +20,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { limitPauseOf, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState, dismissNotice, notice } from "./state.ts";
+import { limitPauseOf, shownAnalysis, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState, dismissNotice, notice } from "./state.ts";
 import { type ConnectionCondition, connectionNotices, messages, type Notices } from "./notices.ts";
 import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
@@ -3792,6 +3792,30 @@ describe("a question open beside the run (issue #243)", () => {
     expect(runOf(fold(live([...decidedBeside, { _tag: "PromptCancelled", prompt: 1 } as RunEvent])), "implementation")?.analysis).toBeNull();
     const unbound = decidedBeside.slice(0, -1);
     expect(runOf(fold(live([...unbound, { _tag: "PromptCancelled", prompt: 1 } as RunEvent])), "implementation")?.analysis).toBeNull();
+  });
+
+  // W4-R2-2: a held analysis is shown only beside its own question; another question pending gets its own pane.
+  test("W4-R2-2: an analysis bound to a covered beside question is held, not shown, while another question is pending", () => {
+    const covered = fold(live([...decidedBeside, presentedAs(2, "Second?"), besideAsked(4, 2)]));
+    const r = runOf(covered, "implementation")!;
+    expect(r.pending?.asked.prompt).toBe(4);
+    expect(questionText(covered)).toBe("Second?");
+    expect(r.analysis?.prompt).toBe(1);
+    expect(shownAnalysis(r)).toBeNull();
+    const back = runOf(fold(live([...decidedBeside, presentedAs(2, "Second?"), besideAsked(4, 2), { _tag: "Answered", prompt: 4, text: "p" } as RunEvent, { _tag: "PromptClosed", prompt: 4 } as RunEvent, offeredBeside(1, 1)])), "implementation")!;
+    expect(shownAnalysis(back)?.event.presented.number).toBe(1);
+  });
+
+  test("W4-R2-2: an analysis is shown beside its own pending question, bound or still unbound", () => {
+    expect(shownAnalysis(runOf(fold(live(decidedBeside)), "implementation")!)).not.toBeNull();
+  });
+
+  test("W4-R2-3: PromptCancelled of a beside question after its analysis removes its followed entries and cancels their prompts", () => {
+    const events = [started, presentedAs(1, "Beside?"), offeredBeside(1, 1), { _tag: "Answered", prompt: 1, text: "/decide" } as RunEvent, deciding(2, 1), { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent, analyzedBeside, { _tag: "PromptCancelled", prompt: 1 } as RunEvent];
+    const r = runOf(fold(live(events)), "implementation")!;
+    expect(r.followed.filter((f) => f.question === 1)).toEqual([]);
+    expect(r.cancelled).toContain(1);
+    expect(r.cancelled).toContain(2);
   });
 
   // W2-R2-2, raised again in work review 3: the analysis finished, its deciding prompt withdrawn, and the beside question

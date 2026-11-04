@@ -433,7 +433,7 @@ export const askOffering = <E, R = never>(
       Effect.gen(function* () {
         const onTaken = beside === null ? undefined : takenBy;
         let during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber), onTaken);
-        while (during._tag === "Answered" && (isDecide(during.text) || isTermsRequest(during.text) || !acceptable(during.text))) {
+        while (during._tag === "Answered" && besideRejects(during.text, false, acceptable)) {
           yield* rejected;
           during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber), onTaken);
         }
@@ -469,7 +469,7 @@ export const askOffering = <E, R = never>(
         const terms = yield* requested(asked);
         if (terms._tag === "Explained") continue;
         const answer = terms._tag === "Answered" ? terms.text : asked;
-        if (acceptable(answer)) return answer;
+        if (beside === null ? acceptable(answer) : !besideRejects(answer, false, acceptable)) return answer;
         yield* rejected;
       }
     }
@@ -480,16 +480,11 @@ export const askOffering = <E, R = never>(
     for (;;) {
       // Issue #133 (S6): the offer stands until a decision is made; the question asked beside its own analysis carries
       // none, and "/decide" there is an answer like any other.
-      // Issue #243: beside the run, without the offer "/decide" is rejected, as an answer the question does not accept.
       const offered = decisions.length === 0 && (beside === null || beside.offer);
       const asked = yield* askOffered(offered ? prompts.withOffer(hint) : hint);
       const terms = yield* requested(asked);
       if (terms._tag === "Explained") continue;
       const answer = terms._tag === "Answered" ? terms.text : asked;
-      if (beside !== null && !offered && isDecide(answer)) {
-        yield* rejected;
-        continue;
-      }
       if (terms._tag === "NotAsked" && offered && isDecide(answer)) {
         const options = optionsShown();
         const asked = decisionQuestionOf(explained);
@@ -515,7 +510,9 @@ export const askOffering = <E, R = never>(
         yield* present;
         continue;
       }
-      if (!acceptable(answer)) {
+      // W4-R2-1: beside the run, the producer rejects exactly what the Ui's take rejects (`besideRejects`), after the
+      // offered "/decide" above has reached its decision.
+      if (beside === null ? !acceptable(answer) : besideRejects(answer, offered, acceptable)) {
         yield* rejected;
         continue;
       }
@@ -536,12 +533,21 @@ export type BesideQuestion = Readonly<{
 export type BesideOptions = Readonly<{ offer: boolean; resolve?: (answer: string, options: readonly OfferedOption[]) => string; onAccepted?: (text: string) => Effect.Effect<Taken> }>;
 /** Issue #243: what an answer taken beside the run is: an answer the question accepts, an end of the run, Help me decide, or rejected. */
 type Accepted = Readonly<{ _tag: "Answer"; raw: string; text: string }> | Readonly<{ _tag: "Quit" }> | Readonly<{ _tag: "Decide" }> | Readonly<{ _tag: "Rejected" }>;
-const acceptedOf = (raw: string, offer: boolean, acceptable: (answer: string) => boolean, resolve: BesideOptions["resolve"], options: readonly OfferedOption[]): Accepted => {
+/**
+ * W4-R2-1: whether a question beside the run rejects an answer (not "q"), the one rule the Ui's take (`acceptedOf`) and
+ * the producer (`askOffering` in beside mode) share: "/decide" only where no offer stands, since an offered "/decide"
+ * starts decision support whatever `acceptable` says (P5-R1-1); "/terms", since no request for terms stands beside the
+ * run; and what `acceptable` rejects.
+ */
+export const besideRejects = (text: string, offer: boolean, acceptable: (answer: string) => boolean): boolean =>
+  isDecide(text) ? !offer : isTermsRequest(text) || !acceptable(text);
+/** Exported for the test of its agreement with `besideRejects`. */
+export const acceptedOf = (raw: string, offer: boolean, acceptable: (answer: string) => boolean, resolve: BesideOptions["resolve"], options: readonly OfferedOption[]): Accepted => {
   const parsed = parseAskLine(raw);
   if (parsed.kind === "quit") return { _tag: "Quit" };
   const text = parsed.text;
-  if (isDecide(text)) return offer ? { _tag: "Decide" } : { _tag: "Rejected" };
-  if (isTermsRequest(text) || !acceptable(text)) return { _tag: "Rejected" };
+  if (besideRejects(text, offer, acceptable)) return { _tag: "Rejected" };
+  if (isDecide(text)) return { _tag: "Decide" };
   return { _tag: "Answer", raw: text, text: resolve === undefined ? text : resolve(text, options) };
 };
 
@@ -617,14 +623,14 @@ export const openBesideUnoffered = (
     const stored = yield* Ref.make(Option.none<string>());
     const onTaken = (raw: string): Effect.Effect<Taken> => {
       const parsed = parseAskLine(raw);
-      return (parsed.kind === "answer" && acceptable(parsed.text) ? Ref.set(stored, Option.some(parsed.text)).pipe(Effect.andThen(onAccepted())) : Effect.void).pipe(Effect.as<Taken>("kept"));
+      return (parsed.kind === "answer" && !besideRejects(parsed.text, false, acceptable) ? Ref.set(stored, Option.some(parsed.text)).pipe(Effect.andThen(onAccepted())) : Effect.void).pipe(Effect.as<Taken>("kept"));
     };
     const producer = Effect.scoped(
       Effect.gen(function* () {
         const frame = yield* env.ui.enterQuestion(question.number);
         for (;;) {
           const answer = yield* frame.askBeside(hint, "line", onTaken);
-          if (acceptable(answer)) return answer;
+          if (!besideRejects(answer, false, acceptable)) return answer;
           yield* env.ui.notify({ _tag: "AnswerRejected" });
           yield* present;
         }

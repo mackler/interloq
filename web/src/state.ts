@@ -1108,6 +1108,18 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
 };
 
 /**
+ * W4-R2-2: the analysis the decision page shows: the run's analysis only beside its own question, bound to the pending
+ * prompt or, unbound, of the question the pending prompt asks; null where no prompt is pending or another question's is.
+ * The one place that decides whether the decision page is shown.
+ */
+export const shownAnalysis = (run: RunView): RunView["analysis"] => {
+  const { analysis, pending } = run;
+  if (analysis === null || pending === null) return null;
+  if (analysis.prompt !== null) return analysis.prompt === pending.asked.prompt ? analysis : null;
+  return pending.question?.number === analysis.event.presented.number ? analysis : null;
+};
+
+/**
  * Where an answer puts the analysis of its prompt: an answer to another prompt leaves it; the request for terms sets it
  * aside until its question is explained (W2-R1-1); any other answer dismisses it until the next prompt (W3-R1-1).
  */
@@ -1238,9 +1250,14 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         // W2-R2-2: a cancelled prompt takes its analysis with it: one bound to it, or one of its beside question not yet bound.
         const question = r.besideOpen.get(event.prompt);
         const analysisGoes = event._tag === "PromptCancelled" && r.analysis !== null && (r.analysis.prompt === event.prompt || (r.analysis.prompt === null && r.analysis.event.presented.number === question));
+        // W4-R2-3: a beside question cancelled will not be asked again: the prompts that followed it (Help me decide, the
+        // analysis's frame) are cancelled with it, so a draft held at one of them is withdrawn with its notice.
+        const following = event._tag === "PromptCancelled" && question !== undefined ? r.followed.filter((f) => f.question === question).map((f) => f.prompt) : [];
         return {
           ...r,
-          ...(event._tag === "PromptCancelled" ? { cancelled: [...r.cancelled, event.prompt] } : {}),
+          ...(event._tag === "PromptCancelled"
+            ? { cancelled: [...r.cancelled, ...[event.prompt, ...following].filter((p, i, all) => all.indexOf(p) === i && !r.cancelled.includes(p))], followed: r.followed.filter((f) => !following.includes(f.prompt)) }
+            : {}),
           ...(analysisGoes ? { analysis: null } : {}),
           besideOpen: withoutKey(r.besideOpen, event.prompt),
           deciding,

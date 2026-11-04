@@ -240,6 +240,30 @@ describe("a draft through Help me decide", () => {
 
 // Issue #243: a question open beside the run cancelled because what it concerned ended: its draft is withdrawn.
 describe("a draft of a cancelled prompt (issue #243)", () => {
+  // W4-R2-3: a draft held at the analysis's frame of a beside question follows its question; the question cancelled
+  // after its analysis finished withdraws it, with the notice once.
+  test("W4-R2-3: a beside question cancelled after its analysis withdraws the draft of its frame, with one notice", () => {
+    const q: RunEvent = { _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null } } };
+    const analyzed: RunEvent = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Q?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
+    const events: RunEvent[] = [
+      started,
+      q,
+      { _tag: "Asked", prompt: 1, ...promptOf(prompts.withOffer(prompts.limitPrompt)), countdown: null, deciding: null, beside: 1 },
+      { _tag: "Answered", prompt: 1, text: "/decide" },
+      { _tag: "Asked", prompt: 2, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: 1, beside: null },
+    ];
+    const rest: RunEvent[] = [{ _tag: "PromptWithdrawn", prompt: 2 }, analyzed, { _tag: "PromptCancelled", prompt: 1 }];
+    let held: Draft | null = { _tag: "Held", key: { incarnation: "a", run: 1, prompt: 2 }, text: "my text" };
+    const notices: string[] = [];
+    for (let i = 0; i <= rest.length; i++) {
+      const r = reconcile(held, live([...events, ...rest.slice(0, i)]));
+      held = r.draft;
+      if (r.notice !== null) notices.push(r.notice);
+    }
+    expect(held).toBeNull();
+    expect(notices).toEqual([prompts.draftWithdrawnNotice("my text")]);
+  });
+
   test("a PromptCancelled of the draft's prompt withdraws it with the notice, nothing else pending", () => {
     expect(reconcile(draft, live([started, asked(1), { _tag: "PromptCancelled", prompt: 1 }]))).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my unsent answer") });
   });

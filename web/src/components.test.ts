@@ -1736,6 +1736,35 @@ describe("App and the draft", () => {
     expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
   });
 
+  // W4-R2-2: an analysis held for a covered beside question is not shown over another pending question.
+  test("an analysis of a covered beside question gives way to another pending question's own pane, and returns with its question", async () => {
+    const { root, ws } = await openPage();
+    const q = (n: number, text: string) => ({ number: n, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null });
+    const presentedQ = (n: number, text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: q(n, text) } });
+    const beside = (prompt: number, question: number, text: string) => ({ _tag: "Asked", prompt, ...promptOf(text), countdown: null, deciding: null, beside: question });
+    const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "First?", presented: q(1, "First?"), options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
+    const decided = [
+      started,
+      presentedQ(1, "First?"),
+      beside(1, 1, prompts.withOffer(prompts.limitPrompt)),
+      { _tag: "Answered", prompt: 1, text: "/decide" },
+      { _tag: "Asked", prompt: 2, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: 1, beside: null },
+      analyzed,
+      { _tag: "PromptWithdrawn", prompt: 2 },
+      beside(1, 1, prompts.limitPrompt),
+      presentedQ(2, "Second?"),
+      beside(4, 2, prompts.limitPrompt),
+    ];
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp(decided) }] });
+    expect(root.querySelector('section[aria-label^="Your Choice: "]')).toBe(null);
+    expect(root.querySelector(".decision-area")).toBe(null);
+    expect(one(root, ".pane h2").textContent).toContain("Second?");
+    ws.receive({ type: "event", run: 1, seq: decided.length, time: TIME, event: { _tag: "Answered", prompt: 4, text: "p" } });
+    ws.receive({ type: "event", run: 1, seq: decided.length + 1, time: TIME, event: { _tag: "PromptClosed", prompt: 4 } });
+    ws.receive({ type: "event", run: 1, seq: decided.length + 2, time: TIME, event: beside(1, 1, prompts.limitPrompt) });
+    expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
+  });
+
   test("the right panel is titled Claude and Codex (issue #5)", async () => {
     const { root, ws } = await openPage();
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });

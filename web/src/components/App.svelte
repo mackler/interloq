@@ -55,7 +55,7 @@
   import ColumnSeparator from "./ColumnSeparator.svelte";
   import { Result } from "effect";
   import { ownName } from "../../../src/hostDir.ts";
-  import { limitPauseOf, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainRunsToggled, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissNotice, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { limitPauseOf, shownAnalysis, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainRunsToggled, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissNotice, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -311,7 +311,8 @@
   // line stay in view [visibility of system status]. Below 390 px the analysis is not laid out (decided 28 Sep 2026).
   // The toggle is kept for one decision of one run of one server start (W2-R1-3).
   let conversationFor = $state<AnalysisKey | null>(null);
-  const analysis = $derived(run?.analysis ?? null);
+  // W4-R2-2: the analysis only beside its own question; another question pending gets its own pane.
+  const analysis = $derived(run === null ? null : shownAnalysis(run));
   const analysisKey = $derived(analysis === null || run === null ? null : { incarnation: view.incarnation ?? "", run: run.id, decision: analysis.event.decision });
   const deciding = $derived(analysisKey !== null && analysisShown(conversationFor, analysisKey));
   // Issue #200 (the developer's decision at the stop of execution phase 1): below 840 px the decision page needs the

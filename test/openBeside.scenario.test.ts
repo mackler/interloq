@@ -6,7 +6,9 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber, Option, Scope, type Layer } from "effect";
-import { numberedOptions, openBeside, type OfferedOption, type QuestionDraft } from "../src/offer.ts";
+import fc from "fast-check";
+import { acceptedOf, besideRejects, numberedOptions, openBeside, type OfferedOption, type QuestionDraft } from "../src/offer.ts";
+import { parseAskLine, parseTransportAnswer, parseUnchangedAnswer } from "../src/input.ts";
 import * as prompts from "../src/prompts.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import type { DecisionAnalysis } from "../src/schema.ts";
@@ -57,9 +59,9 @@ const besidePrompt = async (events: readonly RunEvent[], count = 1): Promise<num
 const conversation = (dir: string) => fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
 const json = (dir: string, name: string) => JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
 const run = <A, E>(layer: Layer.Layer<Services>, e: Effect.Effect<A, E, Services | Scope.Scope>) => Effect.runPromise(Effect.scoped(e).pipe(Effect.provide(layer)) as Effect.Effect<A, E>);
-const open = (offer: boolean) => Effect.gen(function* () {
+const open = (offer: boolean, acceptable: (answer: string) => boolean = () => true) => Effect.gen(function* () {
   const scope = yield* Effect.scope;
-  return yield* openBeside(scope, prompts.decisionPrompt, draft, () => true, { offer });
+  return yield* openBeside(scope, prompts.decisionPrompt, draft, acceptable, { offer });
 });
 /** Waits until the handle holds an answer. */
 const answerOf = (handle: { answer: Effect.Effect<Option.Option<string>> }) =>
@@ -173,4 +175,52 @@ test("a question forked in a scope that outlives the presenting effect stays ans
     return a;
   }));
   assert.equal(answer, "1");
+});
+
+// W4-R2-1: the producer rejects exactly what the Ui's take rejects.
+for (const offer of [true, false])
+  test(`W4-R2-1: with the web Ui and offer ${offer}, /terms is rejected and asked again, and a following answer is stored and returned`, async () => {
+    const web = await webUi();
+    const { layer } = await setUp({ ui: web.ui });
+    await run(layer, Effect.gen(function* () {
+      const handle = yield* open(offer);
+      const first = yield* Effect.promise(() => besidePrompt(web.events));
+      assert.equal(yield* web.ui.answer(first, "/terms"), "taken");
+      const second = yield* Effect.promise(() => besidePrompt(web.events, 2));
+      assert.ok(web.events.some((e) => e._tag === "Notified" && e.event._tag === "AnswerRejected"), "AnswerRejected published");
+      assert.ok(!web.events.some((e) => e._tag === "PromptClosed" && e.prompt === first), "the question was not closed answered");
+      const pending = yield* web.ui.pending;
+      assert.ok(pending !== null && pending.beside === handle.number, "the question is pending again beside the run");
+      assert.deepEqual(yield* handle.answer, Option.none());
+      assert.equal(handle.fiber.pollUnsafe(), undefined, "the producer has not completed");
+      if (!offer) return;
+      assert.equal(yield* web.ui.answer(second, "p"), "taken");
+      assert.equal(yield* answerOf(handle), "p");
+      assert.equal(yield* Fiber.join(handle.fiber), "p");
+    }));
+  });
+
+test("W4-R2-1 (P5-R1-1): with offer true and the unchanged question's validator, /decide starts the decision", async () => {
+  const web = await webUi();
+  const { layer } = await setUp({ ui: web.ui, steps: [{ output: analysis, gate: () => new Promise(() => {}) }] });
+  await run(layer, Effect.gen(function* () {
+    yield* open(true, (a) => parseUnchangedAnswer(a) !== null);
+    const prompt = yield* Effect.promise(() => besidePrompt(web.events));
+    yield* web.ui.answer(prompt, "/decide");
+    yield* Effect.promise(() => until(() => web.events.some((e) => e._tag === "Asked" && e.deciding !== null)));
+    assert.ok(!web.events.some((e) => e._tag === "Notified" && e.event._tag === "AnswerRejected"));
+  }));
+});
+
+test("W4-R2-1: acceptedOf rejects exactly where besideRejects does", () => {
+  const validators: readonly ((a: string) => boolean)[] = [() => true, (a) => parseUnchangedAnswer(a) !== null, (a) => parseTransportAnswer(a) !== null];
+  fc.assert(
+    fc.property(fc.oneof(fc.string(), fc.constantFrom("/decide", "/terms", " /terms ", "retry", "proceed", "stop", "p", "1")), fc.boolean(), fc.integer({ min: 0, max: validators.length - 1 }), (raw, offer, v) => {
+      const parsed = parseAskLine(raw);
+      fc.pre(parsed.kind === "answer");
+      const acceptable = validators[v]!;
+      return (acceptedOf(raw, offer, acceptable, undefined, options)._tag === "Rejected") === besideRejects(parsed.text, offer, acceptable);
+    }),
+    { numRuns: 300 },
+  );
 });

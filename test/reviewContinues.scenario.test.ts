@@ -421,3 +421,106 @@ test("(12) a review of the same subject continued in one phase continues its rou
   for (const f of files(4)) assert.ok(fs.existsSync(f), f);
   assert.deepEqual(bytes(), before);
 });
+
+test("(19) W4-R2-1: with the web Ui, /terms at the limit's question is rejected and asked again; p then ends the review at the next boundary", async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const review3 = signal();
+  const { layer, probe } = testLayer(tempRepo(), {
+    ...fourRounds,
+    ui,
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("C")], gate: () => review3.promise }, { issues: [] }, { issues: [] }],
+  });
+  const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
+  await until(() => askedWith(events, "beside").length > 0);
+  const limit = askedWith(events, "beside")[0]!;
+  assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/terms")), "taken");
+  await until(() => askedWith(events, "beside").length > 1);
+  const again = askedWith(events, "beside")[1]!;
+  assert.equal(again.beside, limit.beside);
+  assert.equal(await Effect.runPromise(ui.answer(again.prompt, "p")), "taken");
+  review3.resolve();
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.equal(exit._tag, "Success", String(exit));
+  assert.match(conversation(probe.dir), /without convergence after round 3 of Planning phase 1/);
+  assert.ok(!fs.existsSync(path.join(probe.dir, "planning-1", "review-4.json")), "no cycle after the boundary");
+});
+
+/** A valid analysis of the plan review's limit question: one column per option, recommending Proceed. */
+const limitAnalysis = {
+  decision: "How to continue?",
+  columns: [prompts.LIMIT_PROCEED, prompts.LIMIT_STOP, prompts.LIMIT_MORE].map((option) => ({ kind: "argued" as const, option, advantages: [], disadvantages: [] })),
+  recommendation: { option: prompts.LIMIT_PROCEED, reason: "r" },
+};
+
+test("(14) W4-R2-4: Help me decide at the limit; the analysis finishes while the review goes on; p then ends it with proceed and the choice recorded", async () => {
+  let answersTaken = (): number => 0;
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "accepted"]]), plan: "v2" },
+      { output: respond([["B", "accepted"]]), plan: "v3" },
+      { output: limitAnalysis },
+      // Cycle 3's response waits until both answers are taken: the decision's review then ran beside the plan review.
+      { output: respond([["C", "accepted"]]), plan: "v4", gate: () => until(() => answersTaken() >= 2) },
+    ],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("C")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxRounds: 2 },
+    answers: [{ beside: "/decide" }, { beside: "p" }],
+  });
+  answersTaken = () => probe.ui.asked.length;
+  await runTask(layer);
+  const text = conversation(probe.dir);
+  assert.match(text, /without convergence after round 3 of Planning phase 1/);
+  assert.ok(!fs.existsSync(path.join(probe.dir, "planning-1", "review-4.json")), "no cycle after the boundary");
+  const chosen = JSON.parse(fs.readFileSync(path.join(probe.dir, "decision-1", "chosen.json"), "utf8"));
+  assert.equal(chosen.answer, "p");
+  assert.equal(chosen.option, prompts.LIMIT_PROCEED);
+  assert.ok(text.includes(`**User choice** after decision 1: p (${prompts.LIMIT_PROCEED})`), text.slice(-2000));
+  assert.equal(probe.ui.notified.filter((e) => e._tag === "DecisionAnalyzed").length, 1);
+  assert.ok(prompts.offersOf(probe.ui.asked[0]!).decide, "first asked with the offer");
+  assert.ok(!prompts.offersOf(probe.ui.asked[1]!).decide, "asked again beside the review without the offer");
+});
+
+test("(20) W4-R2-4: a dispute opened inside the limit's decision is withdrawn and cancelled on the page when the plan review ends while the analysis runs", async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const disputeOpen = () => askedWith(events, "beside").some((e) => e.beside !== askedWith(events, "beside")[0]!.beside);
+  const decisionResponse = (a: typeof limitAnalysis) => ({ ...respond([["D1-R1-1", "rejected"]]), analysis: a });
+  const response2 = signal();
+  const { layer, probe } = testLayer(tempRepo(), {
+    ui,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "accepted"]]), plan: "v2" },
+      // Cycle 2's response waits until the decision's dispute is open beside the run.
+      { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(disputeOpen)) },
+      { output: limitAnalysis },
+      { output: decisionResponse(limitAnalysis) },
+      // The decision's next response is held: its analysis is still running when the plan review ends.
+      { output: decisionResponse(limitAnalysis), gate: () => new Promise(() => {}) },
+    ],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxRounds: 1, maxIdleRounds: 5 },
+  });
+  const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
+  // Help me decide only once cycle 2's response holds its step, so the decision's calls take the steps after it.
+  await response2.promise;
+  await until(() => askedWith(events, "beside").length > 0);
+  const limit = askedWith(events, "beside")[0]!;
+  assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/decide")), "taken");
+  await until(disputeOpen);
+  const dispute = askedWith(events, "beside").find((e) => e.beside !== limit.beside)!;
+  const analysisPrompt = askedWith(events, "deciding")[0]!.prompt;
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.equal(exit._tag, "Success", String(exit));
+  const text = conversation(probe.dir);
+  assert.ok(text.includes(prompts.disputeWithdrawnByDecisionLine(1, "Decision 1")), text.slice(-2000));
+  const cancelled = events.flatMap((e) => (e._tag === "PromptCancelled" ? [e.prompt] : []));
+  assert.ok(cancelled.includes(dispute.prompt), "the dispute's prompt is cancelled");
+  assert.ok(cancelled.includes(analysisPrompt) || cancelled.includes(limit.prompt), "the limit question's prompt is cancelled");
+  assert.equal(await Effect.runPromise(ui.pending), null);
+  assert.ok(!fs.existsSync(path.join(probe.dir, "planning-2")), "no revision for the withdrawn dispute");
+});
