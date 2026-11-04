@@ -1,7 +1,7 @@
 // The program: arguments, configuration, the live services, the run, and what is printed at the
 // end. The run manager runs it for the page (src/runManager.ts); the tests run it with scripted services.
 
-import { openQuestionsLayer } from "./openQuestions.ts";
+import { makeOpenQuestions, openQuestionsLayer } from "./openQuestions.ts";
 import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,7 @@ import { abandonAfterSendBackLine, abandonedRecord, blankItemText, defectRecord,
 import { type ImplementationEnd, implementationRun, type RefinementEnd, type RefinementSource, refinementRun, run, type UsedPreparation } from "./run.ts";
 import { preparationOf } from "./preparedComments.ts";
 import type { AgentSdk } from "./sdk.ts";
-import { OpenQuestions, Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
+import { OpenQuestions, type OpenQuestionsShape, Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
 import { type Config, finalCommandsOf, NO_STEP_CHECKS, type StepChecks, stepChecksOf, type TermsMode } from "./schema.ts";
 import { type CompletedWork, type ConcludedEnding, exitCodeOfEnding, type ItemReturn, type ReturnCheck } from "./ending.ts";
 import { fileOf, loadSourcedConfig } from "./config.ts";
@@ -49,6 +49,8 @@ export type Wiring = Readonly<{
   suite: SuiteRunnerShape;
   /** A test's wrapper of every store the run opens (issue #186, W1-R1-3: a parking held while Stop task arrives); none live. */
   store?: (store: StoreShape) => StoreShape;
+  /** Issue #243, W9-R1-1: a test's wrapper of the run's OpenQuestions service; none live. */
+  openQuestions?: (openQuestions: OpenQuestionsShape) => OpenQuestionsShape;
   /** Issue #44: a test's observation of the run's conclusion, called once it is concluded; none live. */
   observeConclusion?: (conclusion: Conclusion) => Effect.Effect<void>;
 }>;
@@ -501,7 +503,7 @@ const programWith = (
         return haltedEnding(describe(error.value), null);
       }
       const records = yield* store(allocated.value, config.ignorePaths);
-      const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk), Layer.succeed(SuiteRunner, wiring.suite), openQuestionsLayer);
+      const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk), Layer.succeed(SuiteRunner, wiring.suite), wiring.openQuestions === undefined ? openQuestionsLayer : Layer.effect(OpenQuestions, Effect.map(makeOpenQuestions, wiring.openQuestions)));
       // Built once, so that the planner whose session id is printed is the one the run used.
       // Decision support (D3): the Decider runs its loops over the same services as the run.
       const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task, decisionFormat), Layer.provideMerge(wiring.agents, base)));

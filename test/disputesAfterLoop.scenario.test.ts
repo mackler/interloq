@@ -192,6 +192,50 @@ test("a dispute unanswered at the run's end is withdrawn and recorded as settled
   assert.equal(item?.state, "implemented");
 });
 
+test("W9-R1-1: a dispute withdrawn unanswered at the run's end is recorded even when an answer in the same withdrawal causes a revision", async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const beside = () => events.flatMap((e) => (e._tag === "Asked" && e.beside !== null ? [e.prompt] : []));
+  let answered: string | null = null;
+  const { wiring, probe } = testWiring(tempRepo(), {
+    ui,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["B", "rejected"]]) },
+      { output: respond([["B", "rejected"], ["A", "rejected"]]) },
+      { output: respond([["A", "rejected"]]) },
+      { output: noQuestions, plan: "v2" },
+    ],
+    // B is raised again in cycle 2 and A in cycle 3, so B's dispute is opened first and A's frame stands over it.
+    reviews: [{ issues: [issue("B")] }, { issues: [issue("B"), issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 9 },
+    execs: [finished, finished],
+    // A answered for Codex's position after the last take and before the withdrawal, so it arrives in withdrawAll's answers.
+    openQuestions: (oq) => ({
+      ...oq,
+      withdrawAll: Effect.suspend(() => {
+        if (answered !== null) return oq.withdrawAll;
+        const a = beside()[1]!;
+        return ui.answer(a, "1").pipe(
+          Effect.tap((result) => Effect.sync(() => (answered = result))),
+          Effect.andThen(oq.withdrawAll),
+        );
+      }),
+    }),
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.equal(answered, "taken");
+  assert.equal(probe.planner.execPrompts.length, 2, "the revision iteration ran a second execution");
+  const conversation = read(probe.dir, "conversation.md");
+  assert.ok(conversation.includes(prompts.disputesRevisionLine("Code review 1")), conversation);
+  assert.match(read(probe.dir, "user-decisions.md"), /issue A, raised again/);
+  const settledLines = conversation.match(/was not answered before the run ended; it is settled without you/g) ?? [];
+  assert.equal(settledLines.length, 1, conversation);
+  assert.match(conversation, /was not answered before the run ended[^\n]*Claude Code's position: rationale B/, "the line names B's positions");
+  const item = (await Effect.runPromise(probe.tracker!.items)).find((i) => i.id === scriptedItem.id);
+  assert.equal(item?.state, "implemented");
+});
+
 // ---- the refinement run (S12): answers applied to requirements.md before the write-back ----
 
 const q1 = questionEntry("Q1", "question Q1?", [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });

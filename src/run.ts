@@ -288,6 +288,12 @@ const settled = <R extends S.PlannerResponse, D>(subject: Subject<R, D>, ended: 
 const withdrawn = (w: Withdrawn): Effect.Effect<void, StoreError, Ui | Store> =>
   Effect.forEach(w.withdrawn, (d) => sayAndWrite(disputeSettledWithoutYouLine(d.heading, d.reviewer, d.planner)), { discard: true });
 /**
+ * A withdrawal at the run's end: the disagreements withdrawn unanswered recorded first, so none is lost to a revision
+ * that follows, then the answers it returned recorded; whether any applies (W9-R1-1).
+ */
+const concludeWithdrawal = (w: Withdrawn): Effect.Effect<boolean, StoreError, Ui | Store> =>
+  withdrawn(w).pipe(Effect.andThen(recordTaken(w.answered)));
+/**
  * The run's end for the subject whose answers it can still apply: every disagreement withdrawn; an answer the Ui took
  * before is recorded and, where it applies, the subject is applied and reviewed once more, then the end is tried again.
  */
@@ -296,9 +302,7 @@ const withdrawnAtEnd = <R extends S.PlannerResponse, D>(subject: Subject<R, D>, 
     const openQuestions = yield* OpenQuestions;
     let loop = yield* settled(subject, ended);
     for (;;) {
-      const w = yield* openQuestions.withdrawAll;
-      yield* withdrawn(w);
-      if (!(yield* recordTaken(w.answered))) return;
+      if (!(yield* concludeWithdrawal(yield* openQuestions.withdrawAll))) return;
       yield* applyDecisions(subject);
       loop = yield* settled(subject, yield* reviewLoop(subject, loop));
     }
@@ -814,15 +818,13 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         if (committed._tag === "Committed") {
           // Issue #243 (Q1): the run never finishes with an answer for Codex's position unapplied.
           const taken = yield* recordTaken(yield* openQuestions.takeAfterLoop);
-          const w = taken ? null : yield* openQuestions.withdrawAll;
-          const late = w === null ? false : yield* recordTaken(w.answered);
+          const late = taken ? false : yield* concludeWithdrawal(yield* openQuestions.withdrawAll);
           if (taken || late) {
             yield* foresee(k + 1);
             yield* sayAndWrite(disputesRevisionLine(label("work", k)));
             previous = { _tag: "DisputesAnswered" };
             continue;
           }
-          if (w !== null) yield* withdrawn(w);
           return { _tag: "Finished", phases: k } as const;
         }
         // The next iteration is known first, so that the line names this work review as the run now numbers it.
