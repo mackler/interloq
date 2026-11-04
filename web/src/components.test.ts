@@ -1300,6 +1300,45 @@ describe("App and the draft", () => {
         }
       });
 
+      // W1-R1-4: a message the socket's flush produces after the reducer handled the hello.
+      test("(b2) a stop discarded by the reconnection's flush is a message shown until dismissed", async () => {
+        vi.useFakeTimers();
+        try {
+          const { root, ws } = await begin();
+          ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+          ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+          ws.close();
+          flushSync();
+          (one(root, "button[name=stop]") as HTMLButtonElement).click();
+          flushSync();
+          one(root, "dialog button[name=confirm-end]").click();
+          flushSync();
+          vi.advanceTimersByTime(30_000);
+          flushSync();
+          const next = FakeWebSocket.last!;
+          expect(next).not.toBe(ws);
+          next.onopen?.({});
+          next.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
+          flushSync();
+          expect(messageTexts(root)).toEqual([prompts.notSentNotice("stop", "ended")]);
+          expect(connectionShown(root)).toBe(0);
+          expect(one(root, "header").textContent).toMatch(/connected/);
+          expect(one(root, "header").textContent).not.toMatch(/reconnecting/);
+          expect(next.sent.map((m) => JSON.parse(m).type)).not.toContain("stop");
+          next.receive({ type: "event", run: 1, seq: 2, time: TIME, event: endedEvent(COMPLETED) });
+          flushSync();
+          one(root, "button[name=new]").click();
+          flushSync();
+          expect(root.querySelector("section.items")).not.toBe(null);
+          expect(messageTexts(root)).toEqual([prompts.notSentNotice("stop", "ended")]);
+          one(root, '[data-notice="messages"] button[name="dismiss-notice"]').click();
+          flushSync();
+          expect(messageTexts(root)).toEqual([]);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
       test("(c) two messages are both shown; dismissing one leaves the other; starting a run removes neither", async () => {
         const { root, ws } = await begin();
         ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
