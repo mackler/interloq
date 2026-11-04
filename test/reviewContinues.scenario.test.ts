@@ -277,6 +277,43 @@ test("(16) review P1-R6-1: the plan review ending while the limit's analysis is 
   await Effect.runPromise(Fiber.await(d.fiber));
 });
 
+// W2-R2-2, raised again in work review 3: the limit's analysis finishes (its deciding prompt withdrawn) and the plan
+// review ends before the question is asked again beside the run; the plan's cycle-2 review is held until then and the Ui's notify of DecisionAnalyzed is held so the
+// loop's scope closes first. The beside prompt is cancelled and the page keeps nothing of the question.
+test("(16a) W2-R2-2: the plan review ending after the limit's analysis finished, before it is asked again, cancels the beside prompt; the page keeps no analysis", async () => {
+  const events: RunEvent[] = [];
+  const webUi = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const ui = { ...webUi, notify: (e: Parameters<typeof webUi.notify>[0]) => (e._tag === "DecisionAnalyzed" ? webUi.notify(e).pipe(Effect.andThen(Effect.never)) : webUi.notify(e)) };
+  const review2 = signal();
+  const { layer } = testLayer(tempRepo(), {
+    ui,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "accepted"]]), plan: "v2" },
+      { output: { decision: "d", columns: [prompts.LIMIT_PROCEED, prompts.LIMIT_STOP, prompts.LIMIT_MORE].map((option) => ({ kind: "unclear", option, unclear: "u" })), recommendation: { option: "", reason: "" } } },
+    ],
+    // The plan's cycle-2 review is held when it is saved, not at the reviewer, whose gate would hold the analysis's review too.
+    reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    store: (s) => ({ ...s, saveReview: (subject, round, review) => (round === 2 && !(typeof subject === "object" && "decision" in subject) ? Effect.promise(() => review2.promise).pipe(Effect.andThen(s.saveReview(subject, round, review))) : s.saveReview(subject, round, review)) }),
+    execs: [finished],
+    config: { maxRounds: 1 },
+  });
+  const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
+  await until(() => askedWith(events, "beside").length > 0);
+  const limit = askedWith(events, "beside")[0]!;
+  assert.equal(await Effect.runPromise(webUi.answer(limit.prompt, "/decide")), "taken");
+  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "DecisionAnalyzed"));
+  assert.ok(events.some((e) => e._tag === "PromptWithdrawn"), "the deciding prompt was withdrawn");
+  review2.resolve();
+  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "PhaseBegan" && e.event.phase.kind === "execution"));
+  assert.ok(events.some((e) => e._tag === "PromptCancelled" && e.prompt === limit.prompt), "the beside prompt is cancelled");
+  const view = events.reduce((r, event) => foldEvent(r, { time: "2026-11-04T00:00:00.000Z", event }), emptyRun(1));
+  assert.equal(view.analysis, null);
+  assert.equal(view.pending, null);
+  assert.deepEqual(view.deciding, []);
+  await Effect.runPromise(Fiber.await(fiber));
+});
+
 test("(17) W2-R2-1: an answer to the limit's question after the final boundary read is refused, never silently taken", async () => {
   const events: RunEvent[] = [];
   const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));

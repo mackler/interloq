@@ -63,8 +63,11 @@ type FrameState =
    * `previous` is restored where onTaken refuses it.
    */
   | Readonly<{ _tag: "claimed"; previous: Readonly<{ _tag: "preparing" | "beside"; asked: Asked; answer: Deferred.Deferred<string>; onTaken: (text: string) => Effect.Effect<Taken> }> }>;
-/** Issue #243: `beside`, set the first time askBeside is called on the frame and never cleared. */
-type Frame = Readonly<{ id: number; question: number; state: FrameState; beside: boolean }>;
+/**
+ * Issue #243: `besidePrompt`, the prompt of the frame's last askBeside, set when askBeside opens it and never cleared
+ * (a later askDuring changes the state's prompt, not this); null for a frame never used beside the run.
+ */
+type Frame = Readonly<{ id: number; question: number; state: FrameState; besidePrompt: number | null }>;
 type Prompts = Readonly<{
   next: number;
   waiting: Waiting | null;
@@ -198,7 +201,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
       Effect.gen(function* () {
         const id = yield* Effect.uninterruptible(
           Effect.gen(function* () {
-            const [id] = yield* transition((p): readonly [number, Prompts] => [p.nextFrame, { ...p, nextFrame: p.nextFrame + 1, frames: [...p.frames, { id: p.nextFrame, question, state: { _tag: "asking" }, beside: false }] }]);
+            const [id] = yield* transition((p): readonly [number, Prompts] => [p.nextFrame, { ...p, nextFrame: p.nextFrame + 1, frames: [...p.frames, { id: p.nextFrame, question, state: { _tag: "asking" }, besidePrompt: null }] }]);
             // Issue #217: a frame removed answered was answered and its answer accepted (a rejected one reopens the frame),
             // so the page is told its prompt is closed before the prompt shown is published again, and the question's
             // carried hold is cleared here, the one place an accepted answer is known (W2-R1-1).
@@ -209,8 +212,11 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
                 const f = p.frames.find((g) => g.id === id);
                 const frames = p.frames.filter((g) => g.id !== id);
                 if (f !== undefined && f.state._tag === "answered") return [{ _tag: "closed", prompt: f.state.asked.prompt }, { ...p, frames, carryHold: withoutNumber(p.carryHold, question) }];
-                if (f !== undefined && f.beside && (f.state._tag === "beside" || f.state._tag === "preparing")) return [{ _tag: "cancelled", prompt: f.state.asked.prompt }, { ...p, frames }];
-                if (f !== undefined && f.beside && f.state._tag === "claimed") return [{ _tag: "cancelled", prompt: f.state.previous.asked.prompt }, { ...p, frames }];
+                if (f !== undefined && f.besidePrompt !== null && (f.state._tag === "beside" || f.state._tag === "preparing")) return [{ _tag: "cancelled", prompt: f.state.asked.prompt }, { ...p, frames }];
+                if (f !== undefined && f.besidePrompt !== null && f.state._tag === "claimed") return [{ _tag: "cancelled", prompt: f.state.previous.asked.prompt }, { ...p, frames }];
+                // W2-R2-2: a beside question whose analysis finished (its deciding prompt already withdrawn), removed before it
+                // is asked again, cancels its own beside prompt, so the page drops the analysis of a question gone.
+                if (f !== undefined && f.besidePrompt !== null && f.state._tag === "analyzed") return [{ _tag: "cancelled", prompt: f.besidePrompt }, { ...p, frames }];
                 return [null, { ...p, frames }];
               }).pipe(
                 Effect.flatMap(([closed, shown]) =>
@@ -254,7 +260,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
             const answer = yield* Deferred.make<string>();
             const [, shown] = yield* transition((p): readonly [Asked, Prompts] => {
               const opened: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown: null, deciding: null, beside: question };
-              return [opened, { ...withFrame(p, id, (f) => ({ ...f, beside: true, state: { _tag: "beside", asked: opened, answer, onTaken } })), next: p.next + 1 }];
+              return [opened, { ...withFrame(p, id, (f) => ({ ...f, besidePrompt: opened.prompt, state: { _tag: "beside", asked: opened, answer, onTaken } })), next: p.next + 1 }];
             });
             yield* republish(shown);
             return yield* parsedAs(yield* Deferred.await(answer), kind, text);

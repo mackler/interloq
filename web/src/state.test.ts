@@ -3793,4 +3793,14 @@ describe("a question open beside the run (issue #243)", () => {
     const unbound = decidedBeside.slice(0, -1);
     expect(runOf(fold(live([...unbound, { _tag: "PromptCancelled", prompt: 1 } as RunEvent])), "implementation")?.analysis).toBeNull();
   });
+
+  // W2-R2-2, raised again in work review 3: the analysis finished, its deciding prompt withdrawn, and the beside question
+  // cancelled before it is asked again: nothing of it is left on the page.
+  test("W2-R2-2: PromptCancelled of the beside prompt after its analysis finished leaves no analysis and no pending prompt", () => {
+    const events = [started, presentedAs(1, "Beside?"), offeredBeside(1, 1), { _tag: "Answered", prompt: 1, text: "/decide" } as RunEvent, deciding(2, 1), { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent, analyzedBeside, { _tag: "PromptCancelled", prompt: 1 } as RunEvent];
+    const r = runOf(fold(live(events)), "implementation");
+    expect(r?.analysis).toBeNull();
+    expect(r?.pending).toBeNull();
+    expect(r?.deciding).toEqual([]);
+  });
 });

@@ -665,6 +665,26 @@ test("a beside question answered /decide, then askDuring on its frame: deciding,
   assert.equal(await run(ui.pending), null);
 });
 
+// W2-R2-2 of issue #243, raised again in work review 3: a beside question whose analysis finished (its deciding prompt
+// withdrawn) and whose scope then closes before it is asked again is cancelled by its own beside prompt.
+test("W2-R2-2: a beside frame closed after its analysis finished cancels the beside prompt after the PromptWithdrawn", async () => {
+  const { ui, events } = await withUi();
+  const r = recorder();
+  const fiber = Effect.runFork(Effect.scoped(Effect.gen(function* () {
+    const h = yield* ui.enterQuestion(6);
+    yield* h.askBeside(prompts.withOffer(prompts.limitPrompt), "line", r.onTaken);
+    return yield* h.askDuring(prompts.limitPrompt, "line", Effect.succeed("analysis"));
+  })));
+  const prompt = await besidePrompt(events, 6);
+  await run(ui.answer(prompt, "/decide"));
+  await run(Fiber.join(fiber));
+  const withdrawn = events.findIndex((e) => e._tag === "PromptWithdrawn");
+  const cancelled = events.findIndex((e) => e._tag === "PromptCancelled" && e.prompt === prompt);
+  assert.ok(withdrawn >= 0, "the deciding prompt is withdrawn");
+  assert.ok(cancelled > withdrawn, "the beside prompt is cancelled after the withdrawal");
+  assert.equal(await run(ui.pending), null);
+});
+
 test("askDuring with onTaken calls it inside the take, before the asker resumes; without one nothing is cancelled", async () => {
   const { ui, events } = await withUi();
   const r = recorder();
