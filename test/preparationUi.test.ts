@@ -2,7 +2,7 @@
 // that ends the preparation, never one that extends a review's limit, naming the question last presented.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Fiber } from "effect";
 import { NoAnswer } from "../src/errors.ts";
 import { unattendedUi } from "../src/preparationUi.ts";
 import type { PresentedQuestion } from "../src/question.ts";
@@ -39,4 +39,14 @@ test("askMessage fails alike; nextQuestion counts from 1; askDuring runs the wor
   assert.deepEqual([await run(ui.nextQuestion), await run(ui.nextQuestion)], [1, 2]);
   const done = await run(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (frame) => frame.askDuring("p", "line", Effect.succeed(7)))));
   assert.deepEqual(done, { _tag: "Done", value: 7 });
+});
+
+// Issue #243: a question beside the run is never answered unattended, so the run goes on and is never set aside for it.
+test("askBeside never completes and is interruptible", async () => {
+  const { ui } = await run(unattendedUi);
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (frame) => frame.askBeside("limit", "line", () => Effect.void))));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(fiber.pollUnsafe(), undefined);
+  const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+  assert.ok(Exit.isFailure(exit));
 });

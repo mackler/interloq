@@ -35,7 +35,7 @@ const question = (figures: readonly (Figure | null)[]): PresentedQuestion => ({
   decision: null,
 });
 const widgetOf = (q: PresentedQuestion): Widget => {
-  const asked = { _tag: "Asked" as const, prompt: 1, ...promptOf(prompts.decisionPrompt), countdown: null, deciding: null };
+  const asked = { _tag: "Asked" as const, prompt: 1, ...promptOf(prompts.decisionPrompt), countdown: null, deciding: null, beside: null };
   return { asked, options: [], choices: asked.choices, question: q, presentedAt: null, hint: prompts.pagePromptText(asked.kind, prompts.decisionPrompt), countdown: null, held: true, decision: "none" };
 };
 const pane = (q: PresentedQuestion, onAnswer: (prompt: number, text: string) => void = () => undefined, decision: Widget["decision"] = "none") => {

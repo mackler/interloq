@@ -48,6 +48,12 @@ export type Asked = Readonly<{
    * issue #217, while its terms are written), null for every other prompt (and in a record written before it).
    */
   deciding: number | null;
+  /**
+   * Issue #243: the number of the presented question this prompt asks while the run goes on beside it (a question open
+   * beside the run), null for every other prompt (and in a record written before it). `deciding` and `beside` are never
+   * both non-null.
+   */
+  beside: number | null;
 }>;
 /** What happened in a run, in order: the run's Ui calls and its start and end. */
 export type RunEvent =
@@ -80,6 +86,11 @@ export type RunEvent =
    * keeps the question until this event.
    */
   | Readonly<{ _tag: "PromptClosed"; prompt: number }>
+  /**
+   * Issue #243: the prompt of a question open beside the run, or of the analysis prepared beside it, withdrawn unanswered
+   * because what it concerned ended. Unlike PromptWithdrawn, the question is not asked again.
+   */
+  | Readonly<{ _tag: "PromptCancelled"; prompt: number }>
   | Readonly<{ _tag: "Notified"; event: UiEvent }>
   /** Issue #44: the run's ending as the program concluded it, its exit code derived from it. */
   | Readonly<{ _tag: "Ended"; code: number; ending: Ending }>;
@@ -321,12 +332,14 @@ export const RunEventSchema = Schema.Union([
     free: Schema.Literals(["none", "line", "message"]),
     countdown: Schema.NullOr(Schema.Struct({ fromMs: Schema.Finite, untilMs: Schema.Finite, then: OnExpirySchema })).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
     deciding: Schema.NullOr(Int).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+    beside: Schema.NullOr(Int).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   }),
   tagged("Answered", { prompt: Int, text: Str }),
   tagged("CountdownStopped", { prompt: Int, reason: Schema.Literals(["held", "chainOff"]) }),
   tagged("AnswerExpired", { prompt: Int, seconds: Int, then: OnExpirySchema }),
   tagged("PromptWithdrawn", { prompt: Int }),
   tagged("PromptClosed", { prompt: Int }),
+  tagged("PromptCancelled", { prompt: Int }),
   tagged("Notified", { event: UiEventSchema }),
   // Issue #44: an Ended recorded before the ending was kept decodes as not established (G-R1-1).
   tagged("Ended", { code: Int, ending: EndingSchema.pipe(Schema.withDecodingDefaultKey(Effect.succeed(UNESTABLISHED))) }),

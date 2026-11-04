@@ -503,7 +503,7 @@ export const makeRunManager = (
         );
         if (Result.isFailure(kept)) return yield* record(store, { _tag: "NotReturned", cause: describe(kept.failure) });
         if (kept.success) return;
-        const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0), output: () => Effect.void, enterQuestion: () => Effect.succeed({ askDuring: (_p, _k, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })) }), openWait: unendableWait };
+        const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0), output: () => Effect.void, enterQuestion: () => Effect.succeed({ askDuring: (_p, _k, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })), askBeside: () => Effect.never }), openWait: unendableWait };
         const env: TrackerRetryEnv = { ui: silent, settings: config.success, record: (markdown) => store.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" };
         const written = yield* withTracker((t) =>
           t.read(item).pipe(

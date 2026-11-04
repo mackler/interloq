@@ -12,7 +12,7 @@ import { renderDecisionOpened, renderLabelCorrected, renderReferenceDropped } fr
 import { analysisProgress, planningCall, reviewLoop, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import type { DecisionAnalysis } from "./schema.ts";
-import { Decider, type DecisionQuestion, type DeciderShape, Planner, type Reviewer, type RunConfig, type RunKind, type Services, Store, Ui } from "./services.ts";
+import { Decider, type DecisionQuestion, type DeciderShape, type OpenQuestions, Planner, type Reviewer, type RunConfig, type RunKind, type Services, Store, Ui } from "./services.ts";
 import { decisionSubject } from "./subjects.ts";
 import { type LoopResult, phaseName } from "./uiEvents.ts";
 
@@ -69,7 +69,7 @@ export const decisionLoop = (
 // ---- the Decider (D3) --------------------------------------------------------------------------------
 
 /** The services a decision loop runs over, captured when the Decider is built. */
-export type DeciderDeps = Ui | Planner | Reviewer | Store | RunConfig | RunKind;
+export type DeciderDeps = Ui | Planner | Reviewer | Store | RunConfig | RunKind | OpenQuestions;
 
 /**
  * The Decider of a run: its loops run over the services captured here, so that `decide` requires nothing and an SDK

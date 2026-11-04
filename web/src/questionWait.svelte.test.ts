@@ -66,8 +66,8 @@ const question = {
   decision: null,
 };
 const presented = { _tag: "Notified", event: { _tag: "QuestionPresented", question } };
-const offered = (hint: string) => ({ _tag: "Asked", prompt: 1, ...promptOf(prompts.withOffer(hint)), countdown: null, deciding: null });
-const frame = (hint: string) => ({ _tag: "Asked", prompt: 2, ...promptOf(hint), countdown: null, deciding: 1 });
+const offered = (hint: string) => ({ _tag: "Asked", prompt: 1, ...promptOf(prompts.withOffer(hint)), countdown: null, deciding: null, beside: null });
+const frame = (hint: string) => ({ _tag: "Asked", prompt: 2, ...promptOf(hint), countdown: null, deciding: 1, beside: null });
 const begin = (ws: FakeWebSocket, hint: string) => ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: [started, presented, offered(hint)].map((event) => ({ time: TIME, event })) }] });
 let seq = 3;
 const event = (ws: FakeWebSocket, e: unknown) => ws.receive({ type: "event", run: 1, seq: seq++, time: TIME, event: e });
@@ -154,7 +154,7 @@ describe("the question while its analysis is prepared", () => {
     event(ws, { _tag: "PromptWithdrawn", prompt: 2 });
     event(ws, { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which database?", presented: question, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } });
     event(ws, presented);
-    event(ws, { _tag: "Asked", prompt: 3, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null });
+    event(ws, { _tag: "Asked", prompt: 3, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null, beside: null });
     expect(root.querySelector("section.decision")).not.toBe(null);
   });
 
@@ -174,7 +174,7 @@ describe("the question while its analysis is prepared", () => {
       expect(document.title).toBe(tabTitle("/p", { _tag: "Running" }));
       event(ws, { _tag: "PromptWithdrawn", prompt: 2 });
       event(ws, presented);
-      event(ws, { _tag: "Asked", prompt: 3, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null });
+      event(ws, { _tag: "Asked", prompt: 3, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null, beside: null });
       expect(NotificationStub.calls).toHaveLength(2);
       expect(document.title).toBe(tabTitle("/p", { _tag: "Waiting" }));
     } finally {

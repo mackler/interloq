@@ -185,9 +185,9 @@ const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
   // Issue #185: a prompt may count down, with its expiry.
   fc
     .tuple(nat, fc.constantFrom(...promptTexts), fc.option(fc.record({ fromMs: nat, untilMs: nat, then: fc.constantFrom(...ON_EXPIRIES) }), { nil: null }))
-    .map(([prompt, t, countdown]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown, deciding: null })),
+    .map(([prompt, t, countdown]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown, deciding: null, beside: null })),
   // Issue #153: a prompt open beside a decision being prepared names its question; a withdrawn one its prompt.
-  fc.tuple(nat, fc.constantFrom(...promptTexts), nat).map(([prompt, t, deciding]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown: null, deciding })),
+  fc.tuple(nat, fc.constantFrom(...promptTexts), nat).map(([prompt, t, deciding]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown: null, deciding, beside: null })),
   fc.record({ _tag: fc.constant("PromptWithdrawn" as const), prompt: nat }),
   fc.record({ _tag: fc.constant("PromptClosed" as const), prompt: nat }),
   fc.record({ _tag: fc.constant("CountdownStopped" as const), prompt: nat, reason: fc.constantFrom("held" as const, "chainOff" as const) }),

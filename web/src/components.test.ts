@@ -85,7 +85,7 @@ const type = (el: HTMLInputElement | HTMLTextAreaElement, text: string) => {
   flushSync();
 };
 const widget = (text: string, options: Widget["options"] = []): Widget => {
-  const asked = { _tag: "Asked" as const, prompt: 7, ...promptOf(text), countdown: null, deciding: null };
+  const asked = { _tag: "Asked" as const, prompt: 7, ...promptOf(text), countdown: null, deciding: null, beside: null };
   return { asked, options, choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, text), countdown: null, held: true, decision: "none" };
 };
 
@@ -3827,7 +3827,7 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
   const sentOf = (ws: FakeWebSocket) => ws.sent.map((m) => JSON.parse(m) as ClientMessage);
   const startedOf = (id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id, title: `title ${id}` } });
   const question = (text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null } } });
-  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt), countdown: null, deciding: null });
+  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt), countdown: null, deciding: null, beside: null });
   const secondRow = (root: HTMLElement) => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.IMPLEMENTATION_RUN_TABS_LABEL}"]`);
   /** Issue #44: each tab's visible text, without the words a tab says to assistive technology alone. */
   const runTabNames = (root: HTMLElement) =>

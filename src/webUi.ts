@@ -51,8 +51,15 @@ type Waiting = Readonly<{ asked: Asked; answer: Deferred.Deferred<string, NoAnsw
  * `preparing`: its prompt shown (where nothing stands over it) and answerable while the decision is prepared;
  * `answered` and `analyzed`: its prompt taken or withdrawn, still blocking, until its Scope closes.
  */
-type FrameState = Readonly<{ _tag: "asking" }> | Readonly<{ _tag: "preparing" | "answered" | "analyzed"; asked: Asked; answer: Deferred.Deferred<string> }>;
-type Frame = Readonly<{ id: number; question: number; state: FrameState }>;
+type FrameState =
+  | Readonly<{ _tag: "asking" }>
+  | Readonly<{ _tag: "answered" | "analyzed"; asked: Asked; answer: Deferred.Deferred<string> }>
+  /** Issue #243: `onTaken`, called inside the take (a no-op where askDuring was given none). */
+  | Readonly<{ _tag: "preparing"; asked: Asked; answer: Deferred.Deferred<string>; onTaken: (text: string) => Effect.Effect<void> }>
+  /** Issue #243: a question open beside the run: shown where nothing stands over it, answerable, nothing waiting on it. */
+  | Readonly<{ _tag: "beside"; asked: Asked; answer: Deferred.Deferred<string>; onTaken: (text: string) => Effect.Effect<void> }>;
+/** Issue #243: `beside`, set the first time askBeside is called on the frame and never cleared. */
+type Frame = Readonly<{ id: number; question: number; state: FrameState; beside: boolean }>;
 type Prompts = Readonly<{
   next: number;
   waiting: Waiting | null;
@@ -78,7 +85,7 @@ const withoutNumber = (set: ReadonlySet<number>, n: number): ReadonlySet<number>
 const shownOf = (p: Prompts): Asked | null => {
   if (p.waiting !== null) return p.waiting.asked;
   const top = p.frames[p.frames.length - 1];
-  return top !== undefined && top.state._tag === "preparing" ? top.state.asked : null;
+  return top !== undefined && (top.state._tag === "preparing" || top.state._tag === "beside") ? top.state.asked : null;
 };
 /**
  * Issue #153, the one publication rule: after a transition, a frame's prompt that is now shown and was not before is
@@ -153,7 +160,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
           // carry; a question asked in between counts down and keeps the others (kept per question: work review 3 of issue #185, W3-R1-1).
           const carried = p.lastPresented !== null && p.carryHold.has(p.lastPresented.number);
           const countdown = limit !== null && !carried ? { fromMs: now, untilMs: now + limit, then: onExpiry } : null;
-          const shown: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown, deciding: null };
+          const shown: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown, deciding: null, beside: null };
           return [shown, { ...p, next: p.next + 1, carryHold: carried && p.lastPresented !== null ? withoutNumber(p.carryHold, p.lastPresented.number) : p.carryHold, waiting: { asked: shown, answer, held: countdown === null, where: text, question: p.lastPresented } }];
         });
         yield* sink(asked);
@@ -186,29 +193,34 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
       Effect.gen(function* () {
         const id = yield* Effect.uninterruptible(
           Effect.gen(function* () {
-            const [id] = yield* transition((p): readonly [number, Prompts] => [p.nextFrame, { ...p, nextFrame: p.nextFrame + 1, frames: [...p.frames, { id: p.nextFrame, question, state: { _tag: "asking" } }] }]);
+            const [id] = yield* transition((p): readonly [number, Prompts] => [p.nextFrame, { ...p, nextFrame: p.nextFrame + 1, frames: [...p.frames, { id: p.nextFrame, question, state: { _tag: "asking" }, beside: false }] }]);
             // Issue #217: a frame removed answered was answered and its answer accepted (a rejected one reopens the frame),
             // so the page is told its prompt is closed before the prompt shown is published again, and the question's
             // carried hold is cleared here, the one place an accepted answer is known (W2-R1-1).
+            // Issue #243: a frame used beside the run, removed unanswered while its prompt is open, cancels that prompt.
+            type Closed = Readonly<{ _tag: "closed" | "cancelled"; prompt: number }> | null;
             yield* Effect.addFinalizer(() =>
-              transition((p): readonly [number | null, Prompts] => {
+              transition((p): readonly [Closed, Prompts] => {
                 const f = p.frames.find((g) => g.id === id);
-                const accepted = f !== undefined && f.state._tag === "answered";
                 const frames = p.frames.filter((g) => g.id !== id);
-                return accepted
-                  ? [f.state.asked.prompt, { ...p, frames, carryHold: withoutNumber(p.carryHold, question) }]
-                  : [null, { ...p, frames }];
-              }).pipe(Effect.flatMap(([closed, shown]) => (closed === null ? Effect.void : sink({ _tag: "PromptClosed", prompt: closed })).pipe(Effect.andThen(republish(shown))))),
+                if (f !== undefined && f.state._tag === "answered") return [{ _tag: "closed", prompt: f.state.asked.prompt }, { ...p, frames, carryHold: withoutNumber(p.carryHold, question) }];
+                if (f !== undefined && f.beside && (f.state._tag === "beside" || f.state._tag === "preparing")) return [{ _tag: "cancelled", prompt: f.state.asked.prompt }, { ...p, frames }];
+                return [null, { ...p, frames }];
+              }).pipe(
+                Effect.flatMap(([closed, shown]) =>
+                  (closed === null ? Effect.void : sink(closed._tag === "closed" ? { _tag: "PromptClosed", prompt: closed.prompt } : { _tag: "PromptCancelled", prompt: closed.prompt })).pipe(Effect.andThen(republish(shown))),
+                ),
+              ),
             );
             return id;
           }),
         );
-        const askDuring = <A, E, R>(text: string, kind: AskKind, work: Effect.Effect<A, E, R>): Effect.Effect<DuringAnswer<A>, E | UserStopped, R> =>
+        const askDuring = <A, E, R>(text: string, kind: AskKind, work: Effect.Effect<A, E, R>, onTaken: (text: string) => Effect.Effect<void> = () => Effect.void): Effect.Effect<DuringAnswer<A>, E | UserStopped, R> =>
           Effect.gen(function* () {
             const answer = yield* Deferred.make<string>();
             const [asked, shown] = yield* transition((p): readonly [Asked, Prompts] => {
-              const opened: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown: null, deciding: question };
-              return [opened, { ...withFrame(p, id, (f) => ({ ...f, state: { _tag: "preparing", asked: opened, answer } })), next: p.next + 1 }];
+              const opened: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown: null, deciding: question, beside: null };
+              return [opened, { ...withFrame(p, id, (f) => ({ ...f, state: { _tag: "preparing", asked: opened, answer, onTaken } })), next: p.next + 1 }];
             });
             yield* republish(shown);
             // The work's end and an answer race; whichever changes the frame first decides (the requirements' default).
@@ -230,7 +242,18 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
             const ended = yield* Effect.raceFirst(finished, answered);
             return ended._tag === "Done" ? ended : { _tag: "Answered" as const, text: yield* parsedAs(ended.text, kind, text) };
           });
-        return { askDuring };
+        /** Issue #243: the question open beside the run, its prompt never counting down; nothing waits on it but its asker. */
+        const askBeside = (text: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<void>): Effect.Effect<string, UserStopped> =>
+          Effect.gen(function* () {
+            const answer = yield* Deferred.make<string>();
+            const [, shown] = yield* transition((p): readonly [Asked, Prompts] => {
+              const opened: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown: null, deciding: null, beside: question };
+              return [opened, { ...withFrame(p, id, (f) => ({ ...f, beside: true, state: { _tag: "beside", asked: opened, answer, onTaken } })), next: p.next + 1 }];
+            });
+            yield* republish(shown);
+            return yield* parsedAs(yield* Deferred.await(answer), kind, text);
+          });
+        return { askDuring, askBeside };
       });
 
     return {
@@ -254,7 +277,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
             const limit = yield* timing.limitMs;
             type Taken =
               | Readonly<{ _tag: "take" | "expire"; w: Waiting }>
-              | Readonly<{ _tag: "frame"; answer: Deferred.Deferred<string> }>
+              | Readonly<{ _tag: "frame"; answer: Deferred.Deferred<string>; onTaken: (text: string) => Effect.Effect<void> }>
               | Readonly<{ _tag: "was"; then: OnExpiry }>
               | Readonly<{ _tag: "none" }>;
             const [taken, shown] = yield* transition((p): readonly [Taken, Prompts] => {
@@ -272,9 +295,10 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
               // Issue #217: the frame keeps the question's carried hold for any answer, since only the asking knows whether it
               // accepts it; the frame's finalizer clears the carry when it removes the frame answered (W2-R1-1).
               const top = p.frames[p.frames.length - 1];
-              if (w === null && top !== undefined && top.state._tag === "preparing" && top.state.asked.prompt === prompt) {
-                const state = { ...top.state, _tag: "answered" as const };
-                return [{ _tag: "frame", answer: top.state.answer }, withFrame(p, top.id, (f) => ({ ...f, state }))];
+              // Issue #243: a frame open beside the run is taken the same way.
+              if (w === null && top !== undefined && (top.state._tag === "preparing" || top.state._tag === "beside") && top.state.asked.prompt === prompt) {
+                const state: FrameState = { _tag: "answered", asked: top.state.asked, answer: top.state.answer };
+                return [{ _tag: "frame", answer: top.state.answer, onTaken: top.state.onTaken }, withFrame(p, top.id, (f) => ({ ...f, state }))];
               }
               const then = p.expired.get(prompt);
               return then === undefined ? [{ _tag: "none" }, p] : [{ _tag: "was", then }, p];
@@ -295,6 +319,8 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
                 return "taken";
               case "frame":
                 yield* sink({ _tag: "Answered", prompt, text });
+                // Issue #243: the asker records the answer here, before its fiber is resumed.
+                yield* taken.onTaken(text);
                 yield* Deferred.succeed(taken.answer, text);
                 return "taken";
             }

@@ -70,7 +70,7 @@ describe("the control that ends a wait, through the page", () => {
     flushSync();
     const ws = FakeWebSocket.last!;
     ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1, 2], implementation: null }, incarnation: "a" });
-    const asked = { _tag: "Asked", prompt: 1, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null };
+    const asked = { _tag: "Asked", prompt: 1, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null, beside: null };
     const run1 = [startedOf("11"), { _tag: "Notified", event: { _tag: "QuestionPresented", question } }, asked, waiting(5)];
     const run2 = [startedOf("12")];
     const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));

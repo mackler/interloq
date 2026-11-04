@@ -552,3 +552,131 @@ test("issue #215: a wait opened through openWait is ended through endWait, and e
   assert.equal(end, "endedEarly");
   assert.equal(again, "alreadyEnded");
 });
+
+// ---- Issue #243: a question open beside the running run ----
+
+/** Waits until the events hold an Asked with `beside` for the question, and returns its prompt. */
+const besidePrompt = async (events: readonly RunEvent[], question: number, count = 1): Promise<number> => {
+  for (let i = 0; i < 200; i++) {
+    const found = events.filter((e) => e._tag === "Asked" && e.beside === question);
+    if (found.length >= count) {
+      const last = found[found.length - 1];
+      if (last._tag === "Asked") return last.prompt;
+    }
+    await sleep(2);
+  }
+  throw new Error(`no beside prompt was opened for question ${question}`);
+};
+const recorder = () => {
+  const taken: string[] = [];
+  return { taken, onTaken: (t: string) => Effect.sync(() => void taken.push(t)) };
+};
+
+test("a beside question is published with beside, no deciding and no countdown even where the run counts down; pending returns it", async () => {
+  const { ui, events } = await withTiming(Effect.succeed(60_000));
+  const r = recorder();
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(3), (h) => h.askBeside(prompts.limitPrompt, "line", r.onTaken))));
+  const prompt = await besidePrompt(events, 3);
+  const asked = askedFor(events, prompt)[0];
+  assert.ok(asked._tag === "Asked" && asked.beside === 3 && asked.deciding === null && asked.countdown === null);
+  assert.equal((await run(ui.pending))?.prompt, prompt);
+  await run(Fiber.interrupt(fiber));
+});
+
+test("an answer to a beside question calls onTaken before answer returns, askBeside returns it, and the scope's close publishes PromptClosed", async () => {
+  const { ui, events } = await withUi();
+  const r = recorder();
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askBeside(prompts.limitPrompt, "line", r.onTaken))));
+  const prompt = await besidePrompt(events, 1);
+  assert.equal(await run(ui.answer(prompt, "p")), "taken");
+  assert.deepEqual(r.taken, ["p"], "onTaken ran inside the take");
+  assert.equal(await run(Fiber.join(fiber)), "p");
+  assert.deepEqual(events[events.length - 1], { _tag: "PromptClosed", prompt });
+});
+
+test("q at a beside question fails askBeside with UserStopped", async () => {
+  const { ui, events } = await withUi();
+  const r = recorder();
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askBeside(prompts.limitPrompt, "line", r.onTaken))));
+  const prompt = await besidePrompt(events, 1);
+  await run(ui.answer(prompt, "q"));
+  const exit = await run(Fiber.await(fiber));
+  assert.ok(Exit.isFailure(exit) && JSON.stringify(exit.cause).includes("UserStopped"));
+});
+
+test("interrupting a beside question publishes PromptCancelled and leaves nothing pending", async () => {
+  const { ui, events } = await withUi();
+  const r = recorder();
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askBeside(prompts.limitPrompt, "line", r.onTaken))));
+  const prompt = await besidePrompt(events, 1);
+  await run(Fiber.interrupt(fiber));
+  assert.deepEqual(events[events.length - 1], { _tag: "PromptCancelled", prompt });
+  assert.equal(await run(ui.pending), null);
+  assert.deepEqual(r.taken, []);
+});
+
+test("a foreground ask stands over a beside question, which is published again under its own number after the answer", async () => {
+  const { ui, events } = await withUi();
+  const r = recorder();
+  const beside = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askBeside(prompts.limitPrompt, "line", r.onTaken))));
+  const prompt = await besidePrompt(events, 1);
+  const fore = Effect.runFork(ui.ask(prompts.decisionPrompt));
+  const forePrompt = await pendingOther(ui, prompt);
+  assert.equal(await run(ui.answer(prompt, "p")), "notWaiting");
+  assert.equal(await run(ui.answer(forePrompt, "1")), "taken");
+  assert.equal(await run(Fiber.join(fore)), "1");
+  assert.equal(askedFor(events, prompt).length, 2, "the beside Asked is published again");
+  assert.equal((await run(ui.pending))?.prompt, prompt);
+  await run(Fiber.interrupt(beside));
+});
+
+test("of two beside frames only the top one is shown; when it closes answered the lower one is published again", async () => {
+  const { ui, events } = await withUi();
+  const r = recorder();
+  const lower = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askBeside(prompts.limitPrompt, "line", r.onTaken))));
+  const lowerPrompt = await besidePrompt(events, 1);
+  const upper = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(2), (h) => h.askBeside(prompts.unchangedPrompt, "line", r.onTaken))));
+  const upperPrompt = await besidePrompt(events, 2);
+  assert.equal((await run(ui.pending))?.prompt, upperPrompt);
+  assert.equal(await run(ui.answer(lowerPrompt, "p")), "notWaiting");
+  assert.equal(await run(ui.answer(upperPrompt, "proceed")), "taken");
+  await run(Fiber.join(upper));
+  assert.equal(askedFor(events, lowerPrompt).length, 2);
+  assert.equal((await run(ui.pending))?.prompt, lowerPrompt);
+  await run(Fiber.interrupt(lower));
+});
+
+test("a beside question answered /decide, then askDuring on its frame: deciding, and closing the scope cancels that prompt", async () => {
+  const { ui, events } = await withUi();
+  const r = recorder();
+  const reached = await run(Deferred.make<void>());
+  const fiber = Effect.runFork(Effect.scoped(Effect.gen(function* () {
+    const h = yield* ui.enterQuestion(5);
+    yield* h.askBeside(prompts.withOffer(prompts.limitPrompt), "line", r.onTaken);
+    return yield* h.askDuring(prompts.limitPrompt, "line", Deferred.succeed(reached, undefined).pipe(Effect.andThen(Effect.never)));
+  })));
+  const prompt = await besidePrompt(events, 5);
+  await run(ui.answer(prompt, "/decide"));
+  const during = await framePrompt(events, 5);
+  const asked = askedFor(events, during)[0];
+  assert.ok(asked._tag === "Asked" && asked.deciding === 5 && asked.beside === null);
+  await run(Deferred.await(reached));
+  await run(Fiber.interrupt(fiber));
+  assert.deepEqual(events[events.length - 1], { _tag: "PromptCancelled", prompt: during });
+  assert.equal(await run(ui.pending), null);
+});
+
+test("askDuring with onTaken calls it inside the take, before the asker resumes; without one nothing is cancelled", async () => {
+  const { ui, events } = await withUi();
+  const r = recorder();
+  const work = await run(Deferred.make<string>());
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work), r.onTaken))));
+  const prompt = await framePrompt(events, 1);
+  assert.equal(await run(ui.answer(prompt, "2")), "taken");
+  assert.deepEqual(r.taken, ["2"]);
+  await run(Fiber.join(fiber));
+  const plain = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(2), (h) => h.askDuring(prompts.decisionPrompt, "line", Effect.never))));
+  await framePrompt(events, 2);
+  await run(Fiber.interrupt(plain));
+  assert.ok(!events.some((e) => e._tag === "PromptCancelled"), "a frame never used beside the run is not cancelled");
+});

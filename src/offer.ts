@@ -2,9 +2,10 @@
 // carries it, whatever interface asks. Separate from src/decision.ts, which runs the loop, so that the places that ask
 // (src/review.ts, src/conversation.ts, src/claude.ts) do not import the loop (no import cycle).
 
-import { Effect, Fiber, Ref } from "effect";
-import type { RunError } from "./errors.ts";
-import { answerOf, chooseOption, isDecide, isTermsRequest, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
+import { Deferred, Effect, Fiber, Option, Ref, type Scope } from "effect";
+import { type RunError, UserStopped } from "./errors.ts";
+
+import { answerOf, chooseOption, isDecide, isTermsRequest, parseAskLine, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces, type ShownBlock } from "./pieces.ts";
 import { type Attached, attachedOf, type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, optionFigures, presentFigures, shownExplanations } from "./question.ts";
@@ -12,7 +13,8 @@ import { Result } from "effect";
 import { QuestionInvalid } from "./errors.ts";
 import type { Figure } from "./figure.ts";
 import { attachedMarkdown, renderChoice, renderDecisionAbandoned, renderQuestionRecord, termItem } from "./render.ts";
-import { type AskKind, Decider, Store, Ui, type UiShape } from "./services.ts";
+import { type AskKind, Decider, OpenQuestions, Store, Ui, type UiShape } from "./services.ts";
+
 
 // ---- the offer (D2) ------------------------------------------------------------------------------------
 
@@ -236,6 +238,16 @@ const explain = (draft: QuestionDraft, facts: string) =>
     return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.attached?.blocks ?? []), explanations: draft.explanations, facts, fallback: requestDetails(draft.context.blocks), history: requestDetails(draft.history) });
   });
 
+/** Numbers, presents and records a question with no context call and no offer (askUnoffered, openBesideUnoffered). */
+const presentUnoffered = <E2>(ui: UiShape, record: (text: string) => Effect.Effect<void, E2>, draft: QuestionDraft) =>
+  Effect.gen(function* () {
+    const question = yield* Effect.fromResult(presentedQuestion(draft, yield* ui.nextQuestion));
+    const present = ui.notify({ _tag: "QuestionPresented", question });
+    yield* present;
+    yield* record(renderQuestionRecord(question));
+    return { question, present };
+  });
+
 /**
  * Asks a question with no offer of decision support (issue #171, the developer's decision of 15 Oct 2026): the run's
  * first read of its item, before its records directory, Store and Decider exist. Like `askOffering` it numbers the
@@ -253,10 +265,7 @@ export const askUnoffered = <E>(
   acceptable: (answer: string) => boolean,
 ): Effect.Effect<string, E | QuestionInvalid> =>
   Effect.gen(function* () {
-    const question = yield* Effect.fromResult(presentedQuestion(draft, yield* ui.nextQuestion));
-    const present = ui.notify({ _tag: "QuestionPresented", question });
-    yield* present;
-    yield* record(renderQuestionRecord(question));
+    const { present } = yield* presentUnoffered(ui, record, draft);
     const asked: Effect.Effect<string, E> = Effect.flatMap(ask(hint), (answer) =>
       acceptable(answer) ? Effect.succeed(answer) : ui.notify({ _tag: "AnswerRejected" }).pipe(Effect.andThen(present), Effect.andThen(Effect.suspend(() => asked))),
     );
@@ -298,6 +307,26 @@ export const byMessage = <E>(ask: (prompt: string) => Effect.Effect<string, E>):
  * question beneath it for its whole asking (S2), so each nested decision has recorded its choice before the outer
  * question can be answered.
  */
+/**
+ * Issue #243: where a question is asked: in the foreground, the asker waiting for its answer (as before), or beside the
+ * running run (`openBeside`). Beside: `presented` is succeeded with the question's number once it is presented and
+ * recorded; every ask goes through the frame's `askBeside`, and every answer the Ui takes, at the question or while a
+ * decision is prepared beside it, is handed to `onTaken` with the options as shown, inside the Ui's take; `offer` says
+ * whether the hint carries Help me decide (without it "/decide" is rejected); `stored` is the raw answer `onTaken`
+ * accepted, from which the asking's finalizer writes the records of a decision abandoned by an answer the producer did not
+ * resume to record.
+ */
+export type Place =
+  | Readonly<{ _tag: "Foreground" }>
+  | Readonly<{
+      _tag: "Beside";
+      offer: boolean;
+      presented: Deferred.Deferred<number>;
+      onTaken: (raw: string, options: readonly OfferedOption[]) => Effect.Effect<void>;
+      stored: Effect.Effect<Option.Option<string>>;
+    }>;
+const FOREGROUND: Place = { _tag: "Foreground" };
+
 /** Issue #217: what an answer did about the question's terms: nothing, the terms written, or an answer given while they were. */
 type TermsAsked = Readonly<{ _tag: "NotAsked" }> | Readonly<{ _tag: "Explained" }> | Readonly<{ _tag: "Answered"; text: string }>;
 
@@ -308,6 +337,7 @@ export const askOffering = <E, R = never>(
   acceptable: (answer: string) => boolean = () => true,
   terms: ((question: number) => Effect.Effect<QuestionDraft, E | RunError, R>) | null = null,
   resolve: ((answer: string, options: readonly OfferedOption[]) => string) | null = null,
+  place: Place = FOREGROUND,
 ): Effect.Effect<string, E | RunError, Decider | Store | Ui | R> =>
   Effect.scoped(Effect.gen(function* () {
     const ui = yield* Ui;
@@ -319,13 +349,55 @@ export const askOffering = <E, R = never>(
     // Issue #153: this asking's frame, entered before the question is presented, so that a question being prepared
     // beneath it (this question asked inside its decision) is neither shown nor answerable until this asking returns.
     const frame = yield* ui.enterQuestion(question.number);
+    const beside = place._tag === "Beside" ? place : null;
+    // Issue #243: a decision being prepared beside a question open beside the run; where an answer the Ui took abandons it
+    // and the producer is interrupted before it resumes to record that, this finalizer writes the abandoned records.
+    // Likewise an answer given after a decision was made, its choice not yet recorded (`recorded`).
+    const inFlight = yield* Ref.make<Option.Option<Ref.Ref<number | null>>>(Option.none());
+    const recorded = yield* Ref.make(false);
+    const decisions: number[] = [];
+    if (beside !== null)
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          const raw = yield* beside.stored;
+          if ((yield* Ref.get(recorded)) || Option.isNone(raw)) return;
+          const flight = yield* Ref.get(inFlight);
+          if (Option.isSome(flight)) {
+            const k = yield* Ref.get(flight.value);
+            if (k !== null) yield* recordAbandoned(k, raw.value);
+          } else yield* recordChoices(raw.value);
+        }).pipe(Effect.ignore),
+      );
     const present = Effect.suspend(() => ui.notify({ _tag: "QuestionPresented", question }));
     yield* present;
     yield* store.saveFigures(presentFigures(question.options.map((o) => o.figure)));
     yield* store.converse(renderQuestionRecord(question));
+    if (beside !== null) yield* Deferred.succeed(beside.presented, question.number);
+    const takenBy = (raw: string) => (beside === null ? Effect.void : beside.onTaken(raw, explained.options));
+    /** Issue #153: the records of decision k abandoned by `answer`. */
+    const recordAbandoned = (k: number, answer: string) =>
+      Effect.gen(function* () {
+        const option = explained.options.find((o) => o.matches(answer))?.label ?? null;
+        yield* store.saveChoice(k, { answer, option });
+        yield* store.converse(renderDecisionAbandoned(k));
+        yield* store.converse(renderChoice(k, answer, option));
+        yield* ui.say(prompts.decisionAbandonedLine(k));
+      });
+    /** The answer recorded as the choice of every decision made for this question (decision Q4). */
+    const recordChoices = (answer: string) =>
+      Effect.gen(function* () {
+        const option = explained.options.find((o) => o.matches(answer))?.label ?? null;
+        for (const k of decisions) {
+          yield* store.saveChoice(k, { answer, option });
+          yield* store.converse(renderChoice(k, answer, option));
+        }
+      });
     // The page keeps a decision's analysis for the question asked again (W3-R1-1).
     const rejected = ui.notify({ _tag: "AnswerRejected" }).pipe(Effect.andThen(present));
-    const askOffered = (prompt: string) => asking.ask(request === null ? prompt : prompts.withTermsOffer(prompt));
+    const askOffered = (prompt: string): Effect.Effect<string, E | UserStopped> => {
+      const shown = request === null ? prompt : prompts.withTermsOffer(prompt);
+      return beside === null ? asking.ask(shown) : frame.askBeside(shown, asking.kind, takenBy);
+    };
     /**
      * Issue #153: asks the question beside `fiber`'s work, its prompt the bare hint (no offer, no terms line); a
      * "/decide", a "/terms" or an answer `acceptable` rejects is rejected and asked again, so what it returns is the
@@ -333,10 +405,11 @@ export const askOffering = <E, R = never>(
      */
     const besideWork = <A, E2>(fiber: Fiber.Fiber<A, E2>) =>
       Effect.gen(function* () {
-        let during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber));
+        const onTaken = beside === null ? undefined : takenBy;
+        let during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber), onTaken);
         while (during._tag === "Answered" && (isDecide(during.text) || isTermsRequest(during.text) || !acceptable(during.text))) {
           yield* rejected;
-          during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber));
+          during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber), onTaken);
         }
         return during;
       });
@@ -378,15 +451,19 @@ export const askOffering = <E, R = never>(
     // S10: the analysis is of the question as the user was shown it, its options' words as displayed, paired by position.
     // Issue #98: an option's picture reaches the analysis as what it shows; the columns show no picture.
     const optionsShown = () => explained.options.map((o) => ({ label: piecesText(o.shown.label), description: o.shown.figure === null ? piecesText(o.shown.description) : `${piecesText(o.shown.description)} ${prompts.pictureText(o.shown.figure.alt)}` }));
-    const decisions: number[] = [];
     for (;;) {
       // Issue #133 (S6): the offer stands until a decision is made; the question asked beside its own analysis carries
       // none, and "/decide" there is an answer like any other.
-      const offered = decisions.length === 0;
+      // Issue #243: beside the run, without the offer "/decide" is rejected, as an answer the question does not accept.
+      const offered = decisions.length === 0 && (beside === null || beside.offer);
       const asked = yield* askOffered(offered ? prompts.withOffer(hint) : hint);
       const terms = yield* requested(asked);
       if (terms._tag === "Explained") continue;
       const answer = terms._tag === "Answered" ? terms.text : asked;
+      if (beside !== null && !offered && isDecide(answer)) {
+        yield* rejected;
+        continue;
+      }
       if (terms._tag === "NotAsked" && offered && isDecide(answer)) {
         const options = optionsShown();
         const asked = decisionQuestionOf(explained);
@@ -395,21 +472,17 @@ export const askOffering = <E, R = never>(
         // Issue #153 (Q1): the decision runs beside the question, which stays open, without the offer or the terms line.
         const opened = yield* Ref.make<number | null>(null);
         const fiber = yield* Effect.forkScoped(decider.decide({ question: asked, options, number: question.number, shown, opened: (k) => Ref.set(opened, k) }));
+        yield* Ref.set(inFlight, Option.some(opened));
         const during = yield* besideWork(fiber);
         if (during._tag === "Answered") {
           const answer = during.text;
           // The loop is interrupted first, so it writes nothing after the record.
           yield* Fiber.interrupt(fiber);
           const k = yield* Ref.get(opened);
-          if (k !== null) {
-            const option = explained.options.find((o) => o.matches(answer))?.label ?? null;
-            yield* store.saveChoice(k, { answer, option });
-            yield* store.converse(renderDecisionAbandoned(k));
-            yield* store.converse(renderChoice(k, answer, option));
-            yield* ui.say(prompts.decisionAbandonedLine(k));
-          }
+          yield* Effect.uninterruptible(Effect.andThen(Ref.set(recorded, true), k === null ? Effect.void : recordAbandoned(k, answer)));
           return resolve === null ? answer : resolve(answer, explained.options);
         }
+        yield* Ref.set(inFlight, Option.none());
         const outcome = during.value;
         decisions.push(outcome.decision);
         yield* ui.notify({ _tag: "DecisionAnalyzed", decision: outcome.decision, question: asked, presented: question, options, analysis: outcome.analysis });
@@ -420,11 +493,108 @@ export const askOffering = <E, R = never>(
         yield* rejected;
         continue;
       }
-      const option = explained.options.find((o) => o.matches(answer))?.label ?? null;
-      for (const k of decisions) {
-        yield* store.saveChoice(k, { answer, option });
-        yield* store.converse(renderChoice(k, answer, option));
-      }
+      yield* Effect.uninterruptible(Effect.andThen(Ref.set(recorded, true), recordChoices(answer)));
       return resolve === null ? answer : resolve(answer, explained.options);
     }
   }));
+
+// ---- issue #243: a question open beside the running run ----
+
+/** Issue #243: a question open beside the run: its number, its accepted answer (set in the Ui's take), and its producer. */
+export type BesideQuestion = Readonly<{
+  number: number;
+  answer: Effect.Effect<Option.Option<string>>;
+  fiber: Fiber.Fiber<string, UserStopped | RunError>;
+}>;
+export type BesideOptions = Readonly<{ offer: boolean; resolve?: (answer: string, options: readonly OfferedOption[]) => string; onAccepted?: (text: string) => Effect.Effect<void> }>;
+/** Issue #243: what an answer taken beside the run is: an answer the question accepts, an end of the run, Help me decide, or rejected. */
+type Accepted = Readonly<{ _tag: "Answer"; raw: string; text: string }> | Readonly<{ _tag: "Quit" }> | Readonly<{ _tag: "Decide" }> | Readonly<{ _tag: "Rejected" }>;
+const acceptedOf = (raw: string, offer: boolean, acceptable: (answer: string) => boolean, resolve: BesideOptions["resolve"], options: readonly OfferedOption[]): Accepted => {
+  const parsed = parseAskLine(raw);
+  if (parsed.kind === "quit") return { _tag: "Quit" };
+  const text = parsed.text;
+  if (isDecide(text)) return offer ? { _tag: "Decide" } : { _tag: "Rejected" };
+  if (isTermsRequest(text) || !acceptable(text)) return { _tag: "Rejected" };
+  return { _tag: "Answer", raw: text, text: resolve === undefined ? text : resolve(text, options) };
+};
+
+/**
+ * Issue #243: presents a question beside the running run and returns once it is presented and recorded, so its context
+ * call never overlaps the run's next agent call. Its producer (`askOffering` in beside mode, forked in `scope`, so the
+ * question may outlive the effect that presented it) keeps it open: an answer the question accepts is stored in the Ui's
+ * own take (`answer`, and `onAccepted`, the registry of disputes), whether given at the question or while a decision is
+ * prepared beside it; "q" ends the run through `OpenQuestions.quit`; a producer that fails otherwise ends it through
+ * `OpenQuestions.fail`. A handle is answered at most once; interrupting its fiber cancels the question on the page.
+ * Help me decide (`offer`) is carried only by a review loop's limit, idle and unchanged questions, which live only while
+ * their loop runs, when no agent writes to the project: a dispute's question can outlive its loop into an execution
+ * phase, where a decision's planning call would find the project changing and halt the run; the transport question's
+ * decision would need the agent that cannot be reached; the tracker's and the suite's run while the project changes.
+ */
+export const openBeside = (
+  scope: Scope.Scope,
+  hint: string,
+  draft: QuestionDraft,
+  acceptable: (answer: string) => boolean,
+  options: BesideOptions,
+): Effect.Effect<BesideQuestion, RunError, Ui | Store | Decider | OpenQuestions> =>
+  Effect.gen(function* () {
+    const open = yield* OpenQuestions;
+    const presented = yield* Deferred.make<number>();
+    const stored = yield* Ref.make(Option.none<Readonly<{ raw: string; text: string }>>());
+    const onTaken = (raw: string, shown: readonly OfferedOption[]): Effect.Effect<void> => {
+      const accepted = acceptedOf(raw, options.offer, acceptable, options.resolve, shown);
+      switch (accepted._tag) {
+        case "Answer":
+          return Ref.set(stored, Option.some({ raw: accepted.raw, text: accepted.text })).pipe(Effect.andThen(options.onAccepted === undefined ? Effect.void : options.onAccepted(accepted.text)));
+        case "Quit":
+          return open.quit(new UserStopped({ where: hint }));
+        case "Decide":
+        case "Rejected":
+          return Effect.void;
+      }
+    };
+    const place: Place = { _tag: "Beside", offer: options.offer, presented, onTaken, stored: Effect.map(Ref.get(stored), Option.map((s) => s.raw)) };
+    const producer = askOffering(byLine((): Effect.Effect<string> => Effect.never), hint, draft, acceptable, null, options.resolve ?? null, place).pipe(
+      Effect.tapError((e) => (e._tag === "UserStopped" ? Effect.void : open.fail(e))),
+    );
+    const fiber = yield* Effect.forkIn(producer, scope);
+    const number = yield* Effect.raceFirst(Deferred.await(presented), Effect.andThen(Fiber.join(fiber), Effect.never));
+    return { number, answer: Effect.map(Ref.get(stored), Option.map((s) => s.text)), fiber };
+  });
+
+/** Issue #243: where a question presented without the run's services is recorded (the tracker's first read, held). */
+export type BesideRecord = Readonly<{ ui: UiShape; record: (markdown: string) => Effect.Effect<void, RunError> }>;
+
+/**
+ * Issue #243: `openBeside` without the context call, the Decider, the offer or OpenQuestions (the tracker's first read,
+ * before the run's services exist): presented and recorded through `env` before it returns; "q" fails its fiber with
+ * UserStopped, which the caller watches.
+ */
+export const openBesideUnoffered = (
+  scope: Scope.Scope,
+  env: BesideRecord,
+  hint: string,
+  draft: QuestionDraft,
+  acceptable: (answer: string) => boolean,
+): Effect.Effect<BesideQuestion, RunError> =>
+  Effect.gen(function* () {
+    const { question, present } = yield* presentUnoffered(env.ui, env.record, draft);
+    const stored = yield* Ref.make(Option.none<string>());
+    const onTaken = (raw: string): Effect.Effect<void> => {
+      const parsed = parseAskLine(raw);
+      return parsed.kind === "answer" && acceptable(parsed.text) ? Ref.set(stored, Option.some(parsed.text)) : Effect.void;
+    };
+    const producer = Effect.scoped(
+      Effect.gen(function* () {
+        const frame = yield* env.ui.enterQuestion(question.number);
+        for (;;) {
+          const answer = yield* frame.askBeside(hint, "line", onTaken);
+          if (acceptable(answer)) return answer;
+          yield* env.ui.notify({ _tag: "AnswerRejected" });
+          yield* present;
+        }
+      }),
+    );
+    const fiber = yield* Effect.forkIn(producer, scope);
+    return { number: question.number, answer: Ref.get(stored), fiber };
+  });

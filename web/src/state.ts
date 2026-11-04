@@ -1186,8 +1186,11 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
           pending: r.pending?.asked.prompt !== event.prompt ? r.pending : entry !== undefined && r.termsRequested.includes(entry.question) ? { ...r.pending, decision: "starting" } : null,
         };
       }
-      // Issue #217: an answer given at a frame was accepted: the question is no longer open.
-      case "PromptClosed": {
+      // Issue #217: an answer given at a frame was accepted: the question is no longer open. Issue #243: a prompt
+      // cancelled (a question open beside the run, or the analysis beside it, whose concern ended) leaves the page the
+      // same way, and is not asked again: nothing is added to `followed`.
+      case "PromptClosed":
+      case "PromptCancelled": {
         const entry = r.deciding.find((d) => d.prompt === event.prompt);
         const deciding = r.deciding.filter((d) => d.prompt !== event.prompt);
         return {

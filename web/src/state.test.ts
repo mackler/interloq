@@ -37,7 +37,7 @@ const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", p
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "the task", mode: "implementation", item: { id: "1", title: "the task" } };
 const said = (text: string): RunEvent => ({ _tag: "Said", text });
 const notified = (event: UiEvent): RunEvent => ({ _tag: "Notified", event });
-const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(text), countdown: null, deciding: null });
+const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(text), countdown: null, deciding: null, beside: null });
 /** A question presented to the user (S5), with its options numbered as the run numbers them. */
 const presentedEvent = (question: string, options: readonly { label: string; description: string }[], origin: PresentedQuestion["origin"] = { kind: "relayed" }): UiEvent => ({
   _tag: "QuestionPresented",
@@ -2947,7 +2947,7 @@ describe("the presented runs", () => {
 
 // Issue #185: the countdown of a question, its hold and its expiry by kind, the abandoned items' mark.
 describe("the countdown of a question (issue #185)", () => {
-  const counting = (prompt: number, then: "abandon" | "extend"): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: { fromMs: 1000, untilMs: 121_000, then }, deciding: null });
+  const counting = (prompt: number, then: "abandon" | "extend"): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: { fromMs: 1000, untilMs: 121_000, then }, deciding: null, beside: null });
   test("an Asked with a countdown sets it on the pending prompt; CountdownStopped clears it and marks it held", () => {
     const s = fold(live([started, counting(1, "abandon")]));
     expect(runOf(s, "implementation")?.pending?.countdown).toEqual({ fromMs: 1000, untilMs: 121_000, then: "abandon" });
@@ -3004,7 +3004,7 @@ describe("a question kept while its analysis is prepared", () => {
   };
   const q1 = questionNumbered(1, "Which database?");
   const q2 = questionNumbered(2, "More cycles?");
-  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question });
+  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question, beside: null });
   const answered = (prompt: number, text: string): RunEvent => ({ _tag: "Answered", prompt, text });
   const analyzedOf = (number: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision: 1, question: "Which database?", presented: { ...presentedOf(q1), number }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } });
   const runAfter = (events: readonly RunEvent[]) => runOf(fold(live([started, ...events])), "implementation");
@@ -3120,7 +3120,7 @@ describe("issue #217: a question kept while its terms are written", () => {
   };
   const q1 = numbered(1, false);
   const q1Explained = numbered(1, true);
-  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question });
+  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question, beside: null });
   const answered = (prompt: number, text: string): RunEvent => ({ _tag: "Answered", prompt, text });
   const explainedOf = (e: UiEvent): UiEvent => (e._tag === "QuestionPresented" ? { _tag: "QuestionExplained", question: e.question } : e);
   const runAfter = (events: readonly RunEvent[]) => runOf(fold(live([started, ...events])), "implementation");
@@ -3539,7 +3539,7 @@ describe("the document under review on the dashboard (issue #86)", () => {
     const e = presentedEvent(`question ${number}?`, [{ label: "A", description: "a" }, { label: "B", description: "b" }]);
     return e._tag === "QuestionPresented" ? { ...e, question: { ...e.question, number } } : e;
   };
-  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question });
+  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question, beside: null });
   const answered = (prompt: number, text: string): RunEvent => ({ _tag: "Answered", prompt, text });
   const progress = (decision: number, question: number): RunEvent => notified({ _tag: "AnalysisProgress", decision, question, check: 0 });
   /** Question 1 answered Help me decide, decision 1's preparation begun, its frame asked. */

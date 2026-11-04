@@ -1,3 +1,4 @@
+import { openQuestionsLayer } from "../src/openQuestions.ts";
 import type { WorkExecution } from "../src/prompts.ts";
 import assert from "node:assert/strict";
 import { marked } from "marked";
@@ -39,7 +40,7 @@ import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
 import type { OnExpiry, StartRequest } from "../src/protocol.ts";
 import type { SuiteResult } from "../src/suite.ts";
 import { type EndWaitResult, makeWaits, waitCounter, type WaitHandle, type WaitId, type Waits } from "../src/waits.ts";
-import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, type QuestionFrame, type AskKind, type DuringAnswer, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
+import { type Decider, type DeciderShape, type OpenQuestions, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, type QuestionFrame, type AskKind, type DuringAnswer, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
 import { type DeciderDeps, deciderLayer } from "../src/decision.ts";
@@ -111,7 +112,12 @@ export type ScriptedAnswer = string | { readonly wait: true } | { readonly noAns
    * Issue #153: an answer given while a decision is being prepared, to the question still open beside it (`askDuring`),
    * once `when` resolves, or at once. Only `askDuring` takes it; an ordinary ask that reaches it dies, naming the script.
    */
-  | { readonly during: string; readonly when?: () => Promise<void> };
+  | { readonly during: string; readonly when?: () => Promise<void> }
+  /**
+   * Issue #243: an answer to a question open beside the run (`askBeside`), once `when` resolves, or at once. Only
+   * `askBeside` takes it, and only from the head of the script; an ordinary ask that reaches it dies, naming the script.
+   */
+  | { readonly beside: string; readonly when?: () => Promise<void> };
 
 /** A promise that resolves when `signal` is next called; for tests that wait for a double to be reached. */
 const readiness = (): { wait: () => Promise<void>; signal: () => void } => {
@@ -181,7 +187,17 @@ export class ScriptedUi implements UiShape {
    * other script runs the work to its end, so an answer after "/decide" answers the question asked again beside the analysis.
    */
   enterQuestion(_question: number): Effect.Effect<QuestionFrame, never, Scope.Scope> {
-    const askDuring = <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>): Effect.Effect<DuringAnswer<A>, E | UserStopped, R> =>
+    /** The raw answer handed to `onTaken` and read as `kind` reads it, as one uninterruptible step (as the web Ui takes it). */
+    const taking = (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<void>, text: string): Effect.Effect<string, UserStopped> =>
+      Effect.uninterruptible(
+        Effect.andThen(onTaken(text), () => {
+          const parsed = kind === "line" ? parseAskLine(text) : parseMessage(text);
+          return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where: prompt })) : Effect.succeed(parsed.text);
+        }),
+      );
+    const givenAt = (text: string, when: (() => Promise<void>) | undefined): Effect.Effect<string> =>
+      when === undefined ? Effect.succeed(text) : Effect.callback<string>((resume) => void when().then(() => resume(Effect.succeed(text))));
+    const askDuring = <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>, onTaken: (text: string) => Effect.Effect<void> = () => Effect.void): Effect.Effect<DuringAnswer<A>, E | UserStopped, R> =>
       Effect.suspend(() => {
         const next = this.answers[0];
         if (next === undefined || typeof next === "string" || !("during" in next)) return Effect.map(work, (value): DuringAnswer<A> => ({ _tag: "Done", value }));
@@ -189,15 +205,24 @@ export class ScriptedUi implements UiShape {
         this.asked.push(prompt);
         this.order.push("during");
         this.asks.signal();
-        const when = next.when;
-        const given: Effect.Effect<string> = when === undefined ? Effect.succeed(next.during) : Effect.callback<string>((resume) => void when().then(() => resume(Effect.succeed(next.during))));
-        const answered = Effect.flatMap(given, (text): Effect.Effect<DuringAnswer<A>, UserStopped> => {
-          const parsed = kind === "line" ? parseAskLine(text) : parseMessage(text);
-          return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where: prompt })) : Effect.succeed({ _tag: "Answered", text: parsed.text });
-        });
+        const answered = Effect.flatMap(givenAt(next.during, next.when), (text) => Effect.map(taking(prompt, kind, onTaken, text), (t): DuringAnswer<A> => ({ _tag: "Answered", text: t })));
         return Effect.raceFirst(Effect.map(work, (value): DuringAnswer<A> => ({ _tag: "Done", value })), answered);
       });
-    return Effect.succeed({ askDuring });
+    /**
+     * Issue #243: a question open beside the run takes the head of the script only where it is a `beside` answer; any
+     * other head leaves it unanswered (interruptible), so it never consumes an answer scripted for a foreground question.
+     */
+    const askBeside = (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<void>): Effect.Effect<string, UserStopped> =>
+      Effect.suspend(() => {
+        const next = this.answers[0];
+        if (next === undefined || typeof next === "string" || !("beside" in next)) return Effect.never;
+        this.answers.shift();
+        this.asked.push(prompt);
+        this.order.push("beside");
+        this.asks.signal();
+        return Effect.flatMap(givenAt(next.beside, next.when), (text) => taking(prompt, kind, onTaken, text));
+      });
+    return Effect.succeed({ askDuring, askBeside });
   }
   /** The commands of src/input.ts, which the page sends: "q" ends the run at a one-line prompt. */
   ask(prompt: string, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, UserStopped | NoAnswer> {
@@ -236,6 +261,7 @@ export class ScriptedUi implements UiShape {
       if (answer === undefined) return Effect.die(new Error(`no scripted answer for: ${prompt}`));
       if (typeof answer === "string") return Effect.succeed(answer);
       if ("during" in answer) return Effect.die(new Error(`the scripted answer during a decision (${answer.during}) was reached by an ordinary ask: ${prompt}`));
+      if ("beside" in answer) return Effect.die(new Error(`the scripted answer beside the run (${answer.beside}) was reached by an ordinary ask: ${prompt}`));
       if ("wait" in answer) return Effect.never;
       if ("noAnswer" in answer) return Effect.fail(new NoAnswer({ where: prompt, seconds: 120, question: this.lastPresented, then: onExpiry }));
       if ("when" in answer) {
@@ -882,7 +908,8 @@ export const noReporter: StepReporter = (id) => Effect.die(new Error(`no report 
 /** A Decider for tests that expect no decision: a call is a defect; a question's context is the program's own (S10). */
 export const noDecider: DeciderShape = { at: () => noDecider, withTask: () => noDecider, decide: () => Effect.die(new Error("no decision was expected")), explain: (request) => Effect.succeed(programWritten(request)) };
 /** The services with the Decider built over them (decision support, D3), as src/program.ts builds it. */
-export const withDecider = (layer: Layer.Layer<DeciderDeps>, task = "task"): Layer.Layer<Services> => Layer.provideMerge(deciderLayer(task, DECISION_FORMAT_TEXT), layer);
+export const withDecider = (layer: Layer.Layer<Exclude<DeciderDeps, OpenQuestions>>, task = "task"): Layer.Layer<Services> =>
+  Layer.provideMerge(deciderLayer(task, DECISION_FORMAT_TEXT), Layer.merge(layer, openQuestionsLayer));
 
 /** The layer of the six services with scripted agents and Ui over a temporary repository. */
 export function testLayer(repo: string, options: TestOptions = {}): { layer: Layer.Layer<Services | Tracker | SuiteRunner>; probe: Probe } {

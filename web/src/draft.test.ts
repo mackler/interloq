@@ -15,7 +15,7 @@ import { helloChain } from "./testChain.ts";
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id: "1", title: "t" } };
 const TIME = "2026-09-27T14:00:00.000Z";
 const stamp = (events: readonly RunEvent[]): Stamped[] => events.map((event) => ({ time: TIME, event }));
-const asked = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: null, deciding: null });
+const asked = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: null, deciding: null, beside: null });
 const answered = (prompt: number): RunEvent => ({ _tag: "Answered", prompt, text: "" });
 const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation });
 const fold = (messages: readonly ServerMessage[], from: ViewState = initialState): ViewState => messages.reduce(reduce, from);
@@ -160,9 +160,9 @@ describe("a draft through Help me decide", () => {
     _tag: "Notified",
     event: { _tag: "QuestionPresented", question: { number, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: ["A", "B"].map((l, i) => ({ label: plainPieces(l), description: plainPieces(""), figure: null, answer: { token: String(i + 1) } })), attached: null, decision: null } },
   });
-  const offered = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.withOffer(prompts.optionOrTextPrompt)), countdown: null, deciding: null });
-  const frame = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: 1 });
-  const plain = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null });
+  const offered = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.withOffer(prompts.optionOrTextPrompt)), countdown: null, deciding: null, beside: null });
+  const frame = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: 1, beside: null });
+  const plain = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null, beside: null });
   const decide: RunEvent = { _tag: "Answered", prompt: 1, text: "/decide" };
   const typed = (prompt: number, text = "my text"): Draft => ({ _tag: "Held", key: { incarnation: "a", run: 1, prompt }, text });
   const base = [started, question(1), offered(1), decide];
@@ -185,7 +185,7 @@ describe("a draft through Help me decide", () => {
 
   // Issue #217: the text carried by Explain the terms follows the question through its frame to the explained question.
   test("a carried draft through the terms wait ends held for the explained question's prompt, with no notice", () => {
-    const termsOffered: RunEvent = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.optionOrTextPrompt))), countdown: null, deciding: null };
+    const termsOffered: RunEvent = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.optionOrTextPrompt))), countdown: null, deciding: null, beside: null };
     const start = [started, question(1), termsOffered, { _tag: "Answered", prompt: 1, text: "/terms" } as RunEvent];
     const views = [start, [...start, frame(2)], [...start, frame(2), { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent], [...start, frame(2), { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent, question(1), offered(3)]].map(live);
     const r = through(carried(typed(1, "my note"), 1), views);

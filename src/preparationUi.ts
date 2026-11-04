@@ -9,9 +9,9 @@ import { unendableWait } from "./waits.ts";
 export type UnattendedUi = Readonly<{ ui: UiShape; lastQuestion: Effect.Effect<AskedQuestion | null> }>;
 
 /**
- * Every question fails at once with NoAnswer whose `then` is "abandon", whatever expiry it was asked with: the review
- * loop turns only a NoAnswer with "extend" into an extension of a round or idle limit (behavior 7, issue #185), so a
- * limit's question ends the preparation instead of extending it unattended. The question named is the one last
+ * Every foreground question fails at once with NoAnswer whose `then` is "abandon". Issue #243: a question open beside
+ * the run (a review's limit, an unchanged file, a disputed stop) is never answered (`askBeside` never completes), so the
+ * preparation goes on and is not set aside for it. The question named is the one last
  * presented (QuestionPresented), its text as pieces give it; `say` and the other events reach no page, since a
  * preparation has no run view. A question's frame runs its work and returns Done: it is reached only through Help me
  * decide, which no one can choose here.
@@ -28,7 +28,7 @@ export const unattendedUi: Effect.Effect<UnattendedUi> = Effect.gen(function* ()
     askMessage: (prompt) => unanswered(prompt),
     notify: (event) => (event._tag === "QuestionPresented" ? Ref.set(last, { number: event.question.number, text: piecesText(event.question.question) }) : Effect.void),
     nextQuestion: Ref.updateAndGet(numbers, (n) => n + 1),
-    enterQuestion: () => Effect.succeed({ askDuring: (_prompt, _kind, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })) }),
+    enterQuestion: () => Effect.succeed({ askDuring: (_prompt, _kind, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })), askBeside: () => Effect.never }),
     openWait: unendableWait,
   };
   return { ui, lastQuestion: Ref.get(last) };

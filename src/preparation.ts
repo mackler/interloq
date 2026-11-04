@@ -4,6 +4,7 @@
 // comments (src/preparedComments.ts). Since issue #216 (requirements Q3) it first runs Bring Up to Date, and where that
 // loop ends in agreement on a correction it writes the item's title and text; it never changes the item's state or
 // labels, and asks no one anything.
+import { openQuestionsLayer } from "./openQuestions.ts";
 import * as path from "node:path";
 import { Cause, Clock, Data, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import { runRootOf } from "./artifacts.ts";
@@ -118,7 +119,7 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
     const body = Effect.gen(function* () {
       yield* store.init(task.success);
       yield* record(preparationStartedLine(item.id, item.title));
-      const base = Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, settings), Layer.succeed(RunKind, { mode: "refinement" }), Layer.succeed(Sdk, wiring.sdk), Layer.succeed(SuiteRunner, wiring.suite));
+      const base = Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, settings), Layer.succeed(RunKind, { mode: "refinement" }), Layer.succeed(Sdk, wiring.sdk), Layer.succeed(SuiteRunner, wiring.suite), openQuestionsLayer);
       const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task.success, format.success), Layer.provideMerge(wiring.agents, base)));
       /** The item as the preparation leaves it: as read, or with the title and text Bring Up to Date wrote (issue #216). */
       const written = yield* Ref.make<TrackerItem>(item);

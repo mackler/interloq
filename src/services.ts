@@ -65,7 +65,20 @@ export type DuringAnswer<A> = Readonly<{ _tag: "Done"; value: A }> | Readonly<{ 
  * request for the question's terms (issue #217).
  */
 export type QuestionFrame = Readonly<{
-  askDuring: <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>) => Effect.Effect<DuringAnswer<A>, E | UserStopped, R>;
+  /**
+   * Issue #243: `onTaken`, where given, is called with the raw answer inside the Ui's own uninterruptible step that takes
+   * an answer given while work runs, before the asking fiber is resumed, so the asker records it atomically with the
+   * Ui's acceptance. It must not block (it updates Refs). Without it askDuring behaves as before.
+   */
+  askDuring: <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>, onTaken?: (text: string) => Effect.Effect<void>) => Effect.Effect<DuringAnswer<A>, E | UserStopped, R>;
+  /**
+   * Issue #243: shows `prompt` in the handle's frame while the run goes on beside it (a question open beside the run),
+   * announced as any question is, and returns the developer's answer; nothing waits on it, so it never counts down. An
+   * answer that ends the run ("q" for `line`, "/quit" for `message`) fails with UserStopped. `onTaken` is called with the
+   * raw answer inside the Ui's own uninterruptible step that takes it, before the asking fiber is resumed; it must not
+   * block. Interrupted while still open, the prompt is cancelled on the page (`PromptCancelled`).
+   */
+  askBeside: (prompt: string, kind: AskKind, onTaken: (text: string) => Effect.Effect<void>) => Effect.Effect<string, UserStopped>;
 }>;
 export interface UiShape {
   readonly say: (text: string) => Effect.Effect<void>;
@@ -447,5 +460,23 @@ export class Sdk extends Context.Service<Sdk, AgentSdk>()("plan-review/Sdk") {}
  */
 export class RunKind extends Context.Service<RunKind, Readonly<{ mode: RunMode }>>()("plan-review/RunKind") {}
 
+/**
+ * Issue #243: the questions open beside the run, as one service of the run: the run's Scope, in which a question that
+ * outlives the effect that presented it is forked, and the end of the run by a question answered "q" ("/quit") or by a
+ * producer of such a question that failed (a decision beside a limit question that halted), which src/program.ts races
+ * with the run's body (`quitted`).
+ */
+export type OpenQuestionsShape = Readonly<{
+  /** The run's scope: a question forked here outlives its review loop, and is cancelled when the run's layer closes. */
+  scope: Scope.Scope;
+  /** A question beside the run answered "q" or "/quit". */
+  quit: (e: UserStopped) => Effect.Effect<void>;
+  /** A beside question's producer that failed. */
+  fail: (e: RunError) => Effect.Effect<void>;
+  /** Fails once `quit` or `fail` was called. */
+  quitted: Effect.Effect<never, UserStopped | RunError>;
+}>;
+export class OpenQuestions extends Context.Service<OpenQuestions, OpenQuestionsShape>()("plan-review/OpenQuestions") {}
+
 /** Everything the procedure needs. */
-export type Services = Ui | Planner | Reviewer | Store | RunConfig | RunKind | Decider;
+export type Services = Ui | Planner | Reviewer | Store | RunConfig | RunKind | Decider | OpenQuestions;
