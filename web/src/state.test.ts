@@ -3818,6 +3818,26 @@ describe("a question open beside the run (issue #243)", () => {
     expect(r.cancelled).toContain(2);
   });
 
+  // W5-R1-1: "/terms" at a beside question, which offers no terms, is rejected by the server (S32); the analysis is
+  // dismissed, not set aside, so AnswerRejected gives it back to the question asked again.
+  test("W5-R1-1: /terms rejected at a beside question keeps its analysis beside the question asked again", () => {
+    const events = [...decidedBeside, { _tag: "Answered", prompt: 1, text: "/terms" } as RunEvent, notified({ _tag: "AnswerRejected" }), presentedAs(1, "Beside?"), offeredBeside(1, 1)];
+    const r = runOf(fold(live(events)), "implementation")!;
+    expect(r.explaining).toBeNull();
+    expect(shownAnalysis(r)?.event.presented.number).toBe(1);
+  });
+
+  test("W5-R1-1: /terms rejected at a foreground prompt without the terms line keeps its analysis for the prompt asked again", () => {
+    const foreground = (prompt: number): RunEvent => asked(prompt, prompts.optionOrTextPrompt);
+    const analyzed: RunEvent = notified({ _tag: "DecisionAnalyzed", decision: 1, question: "Front?", presented: pq(3, "Front?"), options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } });
+    const events = [started, presentedAs(3, "Front?"), asked(1, prompts.withOffer(prompts.optionOrTextPrompt)), { _tag: "Answered", prompt: 1, text: "/decide" } as RunEvent, analyzed, presentedAs(3, "Front?"), foreground(2), { _tag: "Answered", prompt: 2, text: "/terms" } as RunEvent, notified({ _tag: "AnswerRejected" }), presentedAs(3, "Front?"), foreground(3)];
+    const before = runOf(fold(live(events.slice(0, 7))), "implementation")!;
+    expect(shownAnalysis(before)?.event.presented.number).toBe(3);
+    const r = runOf(fold(live(events)), "implementation")!;
+    expect(r.explaining).toBeNull();
+    expect(shownAnalysis(r)?.event.presented.number).toBe(3);
+  });
+
   // W2-R2-2, raised again in work review 3: the analysis finished, its deciding prompt withdrawn, and the beside question
   // cancelled before it is asked again: nothing of it is left on the page.
   test("W2-R2-2: PromptCancelled of the beside prompt after its analysis finished leaves no analysis and no pending prompt", () => {

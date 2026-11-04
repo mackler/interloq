@@ -1122,11 +1122,13 @@ export const shownAnalysis = (run: RunView): RunView["analysis"] => {
 /**
  * Where an answer puts the analysis of its prompt: an answer to another prompt leaves it; the request for terms sets it
  * aside until its question is explained (W2-R1-1); any other answer dismisses it until the next prompt (W3-R1-1).
+ * `termsRequested` is whether the answer is a request for terms at a prompt that offers them (`offersTerms`); a
+ * "/terms" anywhere else is rejected by the server and dismisses the analysis as any other answer does (W5-R1-1).
  */
-const answeredAnalysis = (r: RunView, prompt: number, text: string): Pick<RunView, "analysis" | "dismissed" | "explaining"> =>
+const answeredAnalysis = (r: RunView, prompt: number, termsRequested: boolean): Pick<RunView, "analysis" | "dismissed" | "explaining"> =>
   r.analysis === null || r.analysis.prompt !== prompt
     ? { analysis: r.analysis, dismissed: r.dismissed, explaining: r.explaining }
-    : isTermsRequest(text)
+    : termsRequested
       ? { analysis: null, dismissed: r.dismissed, explaining: r.analysis }
       : { analysis: null, dismissed: r.analysis, explaining: r.explaining };
 
@@ -1226,7 +1228,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       // Issue #185: the wait ran out: the prompt is withdrawn, and its expiry kept for the page to say.
       // Work review 1 of issue #185 (W1-R1-5): an analysis prepared for that prompt goes with it, as for an answer.
       case "AnswerExpired": {
-        const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, "");
+        const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, false);
         return { ...r, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, expired: { prompt: event.prompt, seconds: event.seconds }, analysis, dismissed, explaining };
       }
       // Issue #153: the prompt open beside a decision, withdrawn because the analysis is ready (S6 handles it).
@@ -1268,14 +1270,15 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       }
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
-        const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);
         // S26; issue #22 (F1): every answer, of every kind, with what the page showed of its prompt, in the order given.
         const own = r.pending !== null && r.pending.asked.prompt === event.prompt ? r.pending : null;
+        // Issue #217, W5-R1-1: one predicate decides a request for terms, for the analysis and for termsRequested.
+        const terms = own !== null && isTermsRequest(event.text) && offersTerms(own);
+        const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, terms);
         const shownAsked: AskedShown = own === null ? { _tag: "NotShown" } : own.question !== null ? { _tag: "Question", question: own.question } : { _tag: "Hint", hint: own.hint };
         const entry: AnsweredEntry = { key: `${r.id}-${r.nextSeq}`, asked: shownAsked, answer: chosen?.label ?? event.text };
         // Issue #153: Help me decide keeps the question on the page, starting, until the server opens it beside its analysis.
         // Issue #217: Explain the terms keeps it the same way, until its frame opens or its explanations arrive.
-        const terms = own !== null && isTermsRequest(event.text) && offersTerms(own);
         if (own !== null && own.decision === "none" && own.question !== null && ((isDecide(event.text) && offersDecision(own)) || terms)) {
           const question = own.question.number;
           return {

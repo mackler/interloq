@@ -12,7 +12,7 @@ import * as prompts from "../src/prompts.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import { run } from "../src/run.ts";
 import { makeWebUi } from "../src/webUi.ts";
-import { emptyRun, foldEvent } from "../web/src/state.ts";
+import { emptyRun, foldEvent, shownAnalysis } from "../web/src/state.ts";
 import { reviewLoop } from "../src/review.ts";
 import { type Services, Store } from "../src/services.ts";
 import { planSubject } from "../src/subjects.ts";
@@ -481,6 +481,47 @@ test("(14) W4-R2-4: Help me decide at the limit; the analysis finishes while the
   assert.equal(probe.ui.notified.filter((e) => e._tag === "DecisionAnalyzed").length, 1);
   assert.ok(prompts.offersOf(probe.ui.asked[0]!).decide, "first asked with the offer");
   assert.ok(!prompts.offersOf(probe.ui.asked[1]!).decide, "asked again beside the review without the offer");
+});
+
+// W5-R1-1: the server rejects "/terms" at a beside question (S32) and asks it again; the page's reducer, folding the same
+// events, keeps the decision's analysis beside the question asked again rather than setting it aside for terms.
+test("(21) W5-R1-1: with the web Ui, /terms at the limit's question after its analysis is rejected; the page keeps the analysis beside the question asked again", async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const done = signal();
+  const { layer } = testLayer(tempRepo(), {
+    ui,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "accepted"]]), plan: "v2" },
+      { output: respond([["B", "accepted"]]), plan: "v3" },
+      { output: limitAnalysis },
+      { output: respond([["C", "accepted"]]), plan: "v4", gate: () => done.promise },
+    ],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("C")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxRounds: 2 },
+  });
+  const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
+  await until(() => askedWith(events, "beside").length > 0);
+  const limit = askedWith(events, "beside")[0]!;
+  assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/decide")), "taken");
+  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "DecisionAnalyzed") && askedWith(events, "beside").length > 1);
+  const again = askedWith(events, "beside")[1]!;
+  assert.equal(again.beside, limit.beside);
+  assert.equal(await Effect.runPromise(ui.answer(again.prompt, "/terms")), "taken");
+  await until(() => askedWith(events, "beside").length > 2);
+  assert.ok(events.some((e) => e._tag === "Notified" && e.event._tag === "AnswerRejected"), "the server rejected /terms");
+  const third = askedWith(events, "beside")[2]!;
+  assert.equal(third.beside, limit.beside);
+  const view = events.reduce((r, event) => foldEvent(r, { time: "2026-11-04T00:00:00.000Z", event }), emptyRun(1));
+  assert.equal(view.pending?.asked.prompt, third.prompt);
+  assert.equal(view.explaining, null);
+  assert.equal(shownAnalysis(view)?.event.presented.number, limit.beside);
+  assert.equal(await Effect.runPromise(ui.answer(third.prompt, "p")), "taken");
+  done.resolve();
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.equal(exit._tag, "Success", String(exit));
 });
 
 test("(20) W4-R2-4: a dispute opened inside the limit's decision is withdrawn and cancelled on the page when the plan review ends while the analysis runs", async () => {
