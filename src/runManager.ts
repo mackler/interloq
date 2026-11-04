@@ -15,7 +15,7 @@ import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { defectText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainReselectText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
+import { defectText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, chainEndedText, chainParkingText, chainReselectText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
 import { noTrackerQuestion, type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
@@ -867,7 +867,7 @@ export const makeRunManager = (
             if (found === null) return Effect.succeed(ended);
             return found.run.ui.answer(prompt, text).pipe(
               Effect.map((taken): Refusal | null =>
-                taken === "taken" ? null : { refused: taken === "notWaiting" ? ALREADY_ANSWERED_TEXT : taken.then === "abandon" ? answerExpiredText : limitAnswerExpiredText, mode: found.mode },
+                taken === "taken" ? null : { refused: taken === "notWaiting" ? ALREADY_ANSWERED_TEXT : answerExpiredText, mode: found.mode },
               ),
             );
           }),

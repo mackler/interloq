@@ -10,7 +10,7 @@ import fc from "fast-check";
 import { Schema } from "effect";
 import { excerptOf, RUN_MODES } from "../src/runMode.ts";
 import { itemIdOf, itemUrlOf } from "../src/tracker.ts";
-import { ON_EXPIRIES, chainSettingsOf, type ClientMessage, currentIds, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
+import { chainSettingsOf, type ClientMessage, currentIds, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
 import type { ProcessKey } from "../src/liveOutput.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
@@ -183,14 +183,14 @@ const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("Said" as const), text }),
   // Issue #185: a prompt may count down, with its expiry.
   fc
-    .tuple(nat, fc.constantFrom(...promptTexts), fc.option(fc.record({ fromMs: nat, untilMs: nat, then: fc.constantFrom(...ON_EXPIRIES) }), { nil: null }))
+    .tuple(nat, fc.constantFrom(...promptTexts), fc.option(fc.record({ fromMs: nat, untilMs: nat }), { nil: null }))
     .map(([prompt, t, countdown]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown, deciding: null, beside: null })),
   // Issue #153: a prompt open beside a decision being prepared names its question; a withdrawn one its prompt.
   fc.tuple(nat, fc.constantFrom(...promptTexts), nat).map(([prompt, t, deciding]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown: null, deciding, beside: null })),
   fc.record({ _tag: fc.constant("PromptWithdrawn" as const), prompt: nat }),
   fc.record({ _tag: fc.constant("PromptClosed" as const), prompt: nat }),
   fc.record({ _tag: fc.constant("CountdownStopped" as const), prompt: nat, reason: fc.constantFrom("held" as const, "chainOff" as const) }),
-  fc.record({ _tag: fc.constant("AnswerExpired" as const), prompt: nat, seconds: nat, then: fc.constantFrom(...ON_EXPIRIES) }),
+  fc.record({ _tag: fc.constant("AnswerExpired" as const), prompt: nat, seconds: nat }),
   fc.record({ _tag: fc.constant("Answered" as const), prompt: nat, text }),
   uiEvent.map((event) => ({ _tag: "Notified" as const, event })),
   fc.constantFrom(...ENDINGS.flatMap((e) => (e._tag === "Unestablished" ? [] : [endedEvent(e)]))),

@@ -37,7 +37,7 @@ import { itemTextOf } from "../src/refinement.ts";
 import * as S from "../src/schema.ts";
 import type { MarkedDisposition, Plan as SPlan, RecordedPlan, StepStatus, TermsMode } from "../src/schema.ts";
 import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
-import type { OnExpiry, StartRequest } from "../src/protocol.ts";
+import type { StartRequest } from "../src/protocol.ts";
 import type { SuiteResult } from "../src/suite.ts";
 import { type EndWaitResult, makeWaits, waitCounter, type WaitHandle, type WaitId, type Waits } from "../src/waits.ts";
 import { type Decider, type DeciderShape, type OpenQuestions, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, type QuestionFrame, type AskKind, type DuringAnswer, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
@@ -139,7 +139,6 @@ export class ScriptedUi implements UiShape {
   /** The presentations and asks in the order they happened (S7): "presented <n>" and "ask". */
   readonly order: string[] = [];
   /** Issue #185: what each prompt's expiry would do, in the order asked. */
-  readonly expiries: OnExpiry[] = [];
   /** Issue #49: the live output events, in the order emitted. */
   readonly outputs: OutputEvent[] = [];
   private lastPresented: AskedQuestion | null = null;
@@ -235,34 +234,33 @@ export class ScriptedUi implements UiShape {
     return Effect.succeed({ askDuring, askBeside });
   }
   /** The commands of src/input.ts, which the page sends: "q" ends the run at a one-line prompt. */
-  ask(prompt: string, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, UserStopped | NoAnswer> {
-    return this.take(prompt, "ask", onExpiry, (text) => {
+  ask(prompt: string): Effect.Effect<string, UserStopped | NoAnswer> {
+    return this.take(prompt, "ask", (text) => {
       const parsed = parseAskLine(text);
       return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where: prompt })) : Effect.succeed(parsed.text);
     });
   }
   /** "/quit" ends the run in a message; "q" is a message like any other. */
-  askMessage(prompt: string, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, UserStopped | NoAnswer> {
-    return this.take(prompt, "message", onExpiry, (text) => {
+  askMessage(prompt: string): Effect.Effect<string, UserStopped | NoAnswer> {
+    return this.take(prompt, "message", (text) => {
       const parsed = parseMessage(text);
       return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where: prompt })) : Effect.succeed(parsed.text);
     });
   }
-  private take(prompt: string, mode: "ask" | "message", onExpiry: OnExpiry, interpret: (text: string) => Effect.Effect<string, UserStopped>): Effect.Effect<string, UserStopped | NoAnswer> {
-    this.expiries.push(onExpiry);
-    return (this.confirmEnds ? this.confirming(prompt, mode, onExpiry) : this.raw(prompt, onExpiry)).pipe(Effect.flatMap(interpret));
+  private take(prompt: string, mode: "ask" | "message", interpret: (text: string) => Effect.Effect<string, UserStopped>): Effect.Effect<string, UserStopped | NoAnswer> {
+    return (this.confirmEnds ? this.confirming(prompt, mode) : this.raw(prompt)).pipe(Effect.flatMap(interpret));
   }
   /** An answer that ends the run (endingOf) is returned only after a confirming reply (y); any other reply asks the question again. */
-  private confirming(prompt: string, mode: "ask" | "message", onExpiry: OnExpiry): Effect.Effect<string, NoAnswer> {
-    return this.raw(prompt, onExpiry).pipe(
+  private confirming(prompt: string, mode: "ask" | "message"): Effect.Effect<string, NoAnswer> {
+    return this.raw(prompt).pipe(
       Effect.flatMap((text) => {
         const ending = endingOf(promptOf(prompt).kind, mode, text);
         if (ending === null) return Effect.succeed(text);
-        return this.raw(confirmEndText(ending), onExpiry).pipe(Effect.flatMap((reply) => (parseConfirmEnd(reply) ? Effect.succeed(text) : this.confirming(prompt, mode, onExpiry))));
+        return this.raw(confirmEndText(ending)).pipe(Effect.flatMap((reply) => (parseConfirmEnd(reply) ? Effect.succeed(text) : this.confirming(prompt, mode))));
       }),
     );
   }
-  private raw(prompt: string, onExpiry: OnExpiry): Effect.Effect<string, NoAnswer> {
+  private raw(prompt: string): Effect.Effect<string, NoAnswer> {
     return Effect.suspend((): Effect.Effect<string, NoAnswer> => {
       this.asked.push(prompt);
       this.order.push("ask");
@@ -273,7 +271,7 @@ export class ScriptedUi implements UiShape {
       if ("during" in answer) return Effect.die(new Error(`the scripted answer during a decision (${answer.during}) was reached by an ordinary ask: ${prompt}`));
       if ("beside" in answer) return Effect.die(new Error(`the scripted answer beside the run (${answer.beside}) was reached by an ordinary ask: ${prompt}`));
       if ("wait" in answer) return Effect.never;
-      if ("noAnswer" in answer) return Effect.fail(new NoAnswer({ where: prompt, seconds: 120, question: this.lastPresented, then: onExpiry }));
+      if ("noAnswer" in answer) return Effect.fail(new NoAnswer({ where: prompt, seconds: 120, question: this.lastPresented }));
       if ("when" in answer) {
         const when = answer.when;
         return Effect.callback<string>((resume) => void when().then(() => resume(Effect.succeed(answer.text))));

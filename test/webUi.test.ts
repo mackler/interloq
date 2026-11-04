@@ -148,19 +148,18 @@ test("a counting prompt carries the wait the server times, and expires with NoAn
   const limit = 60;
   const { ui, events } = await withTiming(Effect.succeed(limit));
   await run(ui.notify(question(4, "Which format?")));
-  const exit = Effect.runPromiseExit(ui.ask(prompts.decisionPrompt, "extend"));
+  const exit = Effect.runPromiseExit(ui.ask(prompts.decisionPrompt));
   const prompt = await pendingPrompt(ui);
   const countdown = askedOf(events)[0].countdown;
   assert.ok(countdown !== null);
   // The seam: the length the page counts down is the one the server times, from one value.
   assert.equal(countdown.untilMs - countdown.fromMs, limit);
-  assert.equal(countdown.then, "extend");
   const result = await exit;
   assert.ok(Exit.isFailure(result));
   const error = result.cause.reasons.find((r) => r._tag === "Fail");
-  assert.deepEqual(error?._tag === "Fail" && { ...error.error }, { _tag: "NoAnswer", where: prompts.decisionPrompt, seconds: 0, question: { number: 4, text: "Which format?" }, then: "extend" });
-  assert.deepEqual(events.at(-1), { _tag: "AnswerExpired", prompt, seconds: 0, then: "extend" });
-  assert.deepEqual(await run(ui.answer(prompt, "late")), { _tag: "expired", then: "extend" });
+  assert.deepEqual(error?._tag === "Fail" && { ...error.error }, { _tag: "NoAnswer", where: prompts.decisionPrompt, seconds: 0, question: { number: 4, text: "Which format?" } });
+  assert.deepEqual(events.at(-1), { _tag: "AnswerExpired", prompt, seconds: 0 });
+  assert.equal(await run(ui.answer(prompt, "late")), "expired");
   assert.equal(await run(ui.pending), null);
 });
 
@@ -186,7 +185,7 @@ test("a late timer: an answer after the deadline is refused as expired and fails
   assert.equal(await run(ui.hold(prompt)), false);
   // The answer's own read of the limit is the third; it is released so the answer can see that the chain still holds.
   await run(Deferred.succeed(release, undefined));
-  assert.deepEqual(await run(ui.answer(prompt, "too late")), { _tag: "expired", then: "abandon" });
+  assert.equal(await run(ui.answer(prompt, "too late")), "expired");
   const result = await exit;
   assert.ok(Exit.isFailure(result));
   assert.ok(!events.some((e) => e._tag === "Answered"));

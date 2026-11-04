@@ -136,7 +136,7 @@ describe("QuestionPane's confirmation of End the run", () => {
 describe("QuestionPane's hold across runs", () => {
   const counting = (prompt: number): Widget => {
     const asked = { _tag: "Asked" as const, prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null, beside: null };
-    const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000, then: "abandon" as const };
+    const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000 };
     return { asked: { ...asked, countdown }, options: [], choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, prompts.optionOrTextPrompt), countdown, held: false, decision: "none" };
   };
   const pane = () => {

@@ -16,7 +16,7 @@ import type { Scope } from "effect";
 import { type AskedQuestion, NoAnswer, UserStopped } from "./errors.ts";
 import { isDecide, isTermsRequest, parseAskLine, parseMessage } from "./input.ts";
 import { piecesText } from "./pieces.ts";
-import type { Asked, OnExpiry, RunEvent } from "./protocol.ts";
+import type { Asked, RunEvent } from "./protocol.ts";
 import type { AskKind, DuringAnswer, QuestionFrame, UiShape } from "./services.ts";
 import { type EndWaitResult, makeWaits, waitCounter, type WaitId } from "./waits.ts";
 import { promptOf } from "./userPrompts.ts";
@@ -30,7 +30,7 @@ export type AnswerTiming = Readonly<{ limitMs: Effect.Effect<number | null> }>;
 export const NO_TIMING: AnswerTiming = { limitMs: Effect.succeed(null) };
 
 /** What became of an answer sent to a prompt (issue #185): taken, no such prompt waits, or that prompt's wait ran out. */
-export type AnswerResult = "taken" | "notWaiting" | Readonly<{ _tag: "expired"; then: OnExpiry }>;
+export type AnswerResult = "taken" | "notWaiting" | "expired";
 
 /** The web Ui of one run: the Ui, and the entry points of the answers from the page. */
 export type WebUi = UiShape &
@@ -67,7 +67,7 @@ type Prompts = Readonly<{
   frames: readonly Frame[];
   nextFrame: number;
   /** Issue #185: the prompts whose wait ran out, with what their expiry did, so a late answer is told so. */
-  expired: ReadonlyMap<number, OnExpiry>;
+  expired: ReadonlySet<number>;
   /** Issue #185: the numbers of the questions answered /decide or /terms and not yet presented again, each of which starts held when
    * it is (W1-R1-3); kept per question, so a decision inside a decision keeps both (work review 3 of issue #185, W3-R1-1). */
   carryHold: ReadonlySet<number>;
@@ -109,7 +109,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
     const waits = yield* makeWaits(allocateWait ?? (yield* waitCounter));
     // The dialogue is serialized: a second concurrent prompt waits for the first answer, and is timed only when shown.
     const dialogue = yield* Semaphore.make(1);
-    const prompts = yield* Ref.make<Prompts>({ next: 1, waiting: null, frames: [], nextFrame: 1, expired: new Map(), carryHold: new Set<number>(), lastPresented: null });
+    const prompts = yield* Ref.make<Prompts>({ next: 1, waiting: null, frames: [], nextFrame: 1, expired: new Set<number>(), carryHold: new Set<number>(), lastPresented: null });
     const questions = yield* Ref.make(0);
     /** Issue #153: a frame's prompt shown again by a transition, published after it. */
     const republish = (asked: Asked | null): Effect.Effect<void> => (asked === null ? Effect.void : sink(asked));
@@ -121,14 +121,14 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
       });
 
     /** The prompt's wait has run out (decided in a Ref.modify): recorded as expired and withdrawn. */
-    const expiring = (p: Prompts, w: Waiting): Prompts => ({ ...p, waiting: null, expired: new Map(p.expired).set(w.asked.prompt, w.asked.countdown!.then) });
+    const expiring = (p: Prompts, w: Waiting): Prompts => ({ ...p, waiting: null, expired: new Set([...p.expired, w.asked.prompt]) });
     /** Publishes the expiry of a prompt already withdrawn and fails its ask. */
     const expire = (w: Waiting): Effect.Effect<void> =>
       Effect.gen(function* () {
         const countdown = w.asked.countdown!;
         const seconds = secondsOf(countdown);
-        yield* sink({ _tag: "AnswerExpired", prompt: w.asked.prompt, seconds, then: countdown.then });
-        yield* Deferred.fail(w.answer, new NoAnswer({ where: w.where, seconds, question: w.question, then: countdown.then }));
+        yield* sink({ _tag: "AnswerExpired", prompt: w.asked.prompt, seconds });
+        yield* Deferred.fail(w.answer, new NoAnswer({ where: w.where, seconds, question: w.question }));
       });
     /** Whether the prompt counts down, unheld, and its deadline has passed at `now`. */
     const due = (w: Waiting, now: number): boolean => w.asked.countdown !== null && !w.held && now >= w.asked.countdown.untilMs;
@@ -150,7 +150,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
       );
 
     /** Shows the prompt and waits for its first answer, or its expiry; an interruption withdraws the prompt. */
-    const waitFor = (text: string, onExpiry: OnExpiry): Effect.Effect<string, NoAnswer> =>
+    const waitFor = (text: string): Effect.Effect<string, NoAnswer> =>
       Effect.gen(function* () {
         const answer = yield* Deferred.make<string, NoAnswer>();
         const limit = yield* timing.limitMs;
@@ -159,7 +159,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
           // W1-R1-3: only a prompt presenting a question answered /decide or /terms again starts held, and clears that question's
           // carry; a question asked in between counts down and keeps the others (kept per question: work review 3 of issue #185, W3-R1-1).
           const carried = p.lastPresented !== null && p.carryHold.has(p.lastPresented.number);
-          const countdown = limit !== null && !carried ? { fromMs: now, untilMs: now + limit, then: onExpiry } : null;
+          const countdown = limit !== null && !carried ? { fromMs: now, untilMs: now + limit } : null;
           const shown: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown, deciding: null, beside: null };
           return [shown, { ...p, next: p.next + 1, carryHold: carried && p.lastPresented !== null ? withoutNumber(p.carryHold, p.lastPresented.number) : p.carryHold, waiting: { asked: shown, answer, held: countdown === null, where: text, question: p.lastPresented } }];
         });
@@ -180,10 +180,10 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
       const parsed = kind === "line" ? parseAskLine(answer) : parseMessage(answer);
       return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where })) : Effect.succeed(parsed.text);
     };
-    const ask = (text: string, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, UserStopped | NoAnswer> =>
-      waitFor(text, onExpiry).pipe(Effect.flatMap((line) => parsedAs(line, "line", text)));
-    const askMessage = (text: string, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, UserStopped | NoAnswer> =>
-      waitFor(text, onExpiry).pipe(Effect.flatMap((message) => parsedAs(message, "message", text)));
+    const ask = (text: string): Effect.Effect<string, UserStopped | NoAnswer> =>
+      waitFor(text).pipe(Effect.flatMap((line) => parsedAs(line, "line", text)));
+    const askMessage = (text: string): Effect.Effect<string, UserStopped | NoAnswer> =>
+      waitFor(text).pipe(Effect.flatMap((message) => parsedAs(message, "message", text)));
 
     /**
      * Issue #153: the frame of one asking of one question, pushed blocking and removed when the Scope closes. The handle
@@ -278,7 +278,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
             type Taken =
               | Readonly<{ _tag: "take" | "expire"; w: Waiting }>
               | Readonly<{ _tag: "frame"; answer: Deferred.Deferred<string>; onTaken: (text: string) => Effect.Effect<void> }>
-              | Readonly<{ _tag: "was"; then: OnExpiry }>
+              | Readonly<{ _tag: "was" }>
               | Readonly<{ _tag: "none" }>;
             const [taken, shown] = yield* transition((p): readonly [Taken, Prompts] => {
               const w = p.waiting;
@@ -300,18 +300,17 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
                 const state: FrameState = { _tag: "answered", asked: top.state.asked, answer: top.state.answer };
                 return [{ _tag: "frame", answer: top.state.answer, onTaken: top.state.onTaken }, withFrame(p, top.id, (f) => ({ ...f, state }))];
               }
-              const then = p.expired.get(prompt);
-              return then === undefined ? [{ _tag: "none" }, p] : [{ _tag: "was", then }, p];
+              return p.expired.has(prompt) ? [{ _tag: "was" }, p] : [{ _tag: "none" }, p];
             });
             switch (taken._tag) {
               case "none":
                 return "notWaiting";
               case "was":
-                return { _tag: "expired", then: taken.then };
+                return "expired";
               case "expire":
                 yield* expire(taken.w);
                 yield* republish(shown);
-                return { _tag: "expired", then: taken.w.asked.countdown!.then };
+                return "expired";
               case "take":
                 yield* sink({ _tag: "Answered", prompt, text });
                 yield* Deferred.succeed(taken.w.answer, text);

@@ -107,8 +107,8 @@ const samples: { readonly [K in RunError["_tag"]]: Extract<RunError, { _tag: K }
   SendBackNotParked: new SendBackNotParked({ item: "186", message: "git branch failed: exists", park: { _tag: "ParkFailed", message: "git branch failed: exists" } }),
   SendBackIncomplete: new SendBackIncomplete({ item: "186", ending: "sentBack", park: { _tag: "NothingParked" }, cause: "the label could not be set" }),
   Interrupted: new Interrupted({ where: "planning" }),
-  NoAnswer: new NoAnswer({ where: "Your answer:", seconds: 120, question: { number: 3, text: "Which file format?" }, then: "abandon" }),
-  SendBackUnanswered: new SendBackUnanswered({ item: "185", step: "label", park: { _tag: "Parked", branch: "interloq/halted/185/r", commit: "abc" }, where: "Your answer:", seconds: 120, question: null, then: "abandon" }),
+  NoAnswer: new NoAnswer({ where: "Your answer:", seconds: 120, question: { number: 3, text: "Which file format?" } }),
+  SendBackUnanswered: new SendBackUnanswered({ item: "185", step: "label", park: { _tag: "Parked", branch: "interloq/halted/185/r", commit: "abc" }, where: "Your answer:", seconds: 120, question: null }),
 };
 
 test("over the whole union, the page's halt text and the record are derived from the one describe", () => {

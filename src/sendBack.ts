@@ -62,7 +62,7 @@ export const sendBack = (item: ItemId, n: number, missing: string): Effect.Effec
           e._tag === "TrackerWriteFailed"
             ? new TrackerStepFailed({ item, step, cause: trackerFailureText(e.error), done: null, check: e.check })
             : e._tag === "NoAnswer"
-              ? new SendBackUnanswered({ item, step: write.kind === "comment" ? "comment" : "label", park, where: e.where, seconds: e.seconds, question: e.question, then: e.then })
+              ? new SendBackUnanswered({ item, step: write.kind === "comment" ? "comment" : "label", park, where: e.where, seconds: e.seconds, question: e.question })
               : e,
         ),
       );

@@ -18,7 +18,6 @@ import { agentContext, askOffering, type BesideQuestion as BesideHandle, byLine,
 import type { OpenDispute } from "./openDisputes.ts";
 import { parseUnchangedAnswer } from "./input.ts";
 import { advance, type Asks, type Beside, type BesideKey, subjectOf, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
-import type { OnExpiry } from "./protocol.ts";
 import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
 import { type Decider, OpenQuestions, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, type ReviewSchema, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
@@ -127,11 +126,11 @@ export const plannerDraft = (question: UserQuestion, heading: string, decision: 
 };
 
 /** Asks one decision (S7): the question presented, the offer where it has options; an answer that is an option's number stands for that option. */
-export const askDecisionQuestion = (draft: QuestionDraft, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, RunError, Ui | Store | Decider> =>
+export const askDecisionQuestion = (draft: QuestionDraft): Effect.Effect<string, RunError, Ui | Store | Decider> =>
   Effect.gen(function* () {
     const ui = yield* Ui;
     // Issue #159: resolved on the options as shown, after the context call, so a label it wrote stands for its position.
-    return yield* askOffering(byLine((p) => ui.ask(p, onExpiry)), prompts.decisionPrompt, draft, undefined, null, decisionAnswerOf);
+    return yield* askOffering(byLine((p) => ui.ask(p)), prompts.decisionPrompt, draft, undefined, null, decisionAnswerOf);
   });
 
 

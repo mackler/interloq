@@ -7,7 +7,7 @@
 import { type Ending, endsAtItsEnd } from "../../src/ending.ts";
 import { type PreparationMark, type PreparationView, preparingItemOf } from "../../src/preparationSwitch.ts";
 import type { SubjectId } from "../../src/artifacts.ts";
-import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
+import type { Asked, Countdown as AnswerCountdown, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import { added, afterHello as noticesAfterHello, type ConnectionCondition, dismissed, EMPTY_NOTICES, type NoticeId, type Notices } from "./notices.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
@@ -159,7 +159,7 @@ export type Deciding = Readonly<{ question: number; widget: Widget; prompt: numb
 /** Issue #153: a prompt after which the same question is asked again under another prompt. */
 export type Followed = Readonly<{ prompt: number; question: number }>;
 /** Issue #185: a prompt whose wait ran out: its number, the wait and what the expiry did. */
-export type Expired = Readonly<{ prompt: number; seconds: number; then: OnExpiry }>;
+export type Expired = Readonly<{ prompt: number; seconds: number }>;
 
 /**
  * The dashboard's one status line (issue #22): what is happening now, each change replacing the one before. `Activity` is
@@ -871,7 +871,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return reshow(relabel({ ...next, phase: bandOf(event.phase, time, countIn(next, event.phase)) }));
     }
     case "PhaseEnded":
-      return reshow({ ...withoutHelp(withActivity(run, "")), expired: run.expired?.then === "extend" ? null : run.expired, busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
+      return reshow({ ...withoutHelp(withActivity(run, "")), expired: run.expired, busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
     case "SuiteCounted":
       return event.phase.kind === "suite" ? { ...run, timeline: run.timeline.map((e) => (samePhase(e.phase, event.phase) ? { ...e, counts: event.commands } : e)) } : run;
     case "RoundBegan":
@@ -879,7 +879,6 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // S17: the terms review's first round opens its own step of Gather Requirements, before the clarification.
       if (isDecision(event.subject)) return run;
       // Issue #185: a review that went on after its limit's expiry has moved on.
-      if (run.expired?.then === "extend") return notifiedEvent({ ...run, expired: null }, event, time);
       // Issue #22: the round of a review after the interview ends it, and its help with it.
       return { ...withoutHelp(run), timeline: roundBegan(event.subject === "terms" ? inQuestionPhase(run.timeline, termsStep) : run.timeline, event.subject, event.round) };
     case "QuestionExplained": {
@@ -1164,7 +1163,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         const analysis = r.analysis !== null && r.analysis.prompt === null ? { ...r.analysis, prompt: event.prompt } : r.analysis;
         const hint = pagePromptText(event.kind, event.text);
         const pending: Widget = { asked: event, options: extra, choices: event.choices, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time, hint, countdown: event.countdown, held: event.countdown === null, decision: "none" };
-        return { ...r, pending, expired: r.expired?.then === "extend" ? null : r.expired, questionOptions: [], presented: null, analysis, dismissed: null };
+        return { ...r, pending, expired: r.expired, questionOptions: [], presented: null, analysis, dismissed: null };
       }
       // Issue #185: the countdown stopped for good; the prompt waits as long as it takes.
       case "CountdownStopped":
@@ -1173,7 +1172,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       // Work review 1 of issue #185 (W1-R1-5): an analysis prepared for that prompt goes with it, as for an answer.
       case "AnswerExpired": {
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, "");
-        return { ...r, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, expired: { prompt: event.prompt, seconds: event.seconds, then: event.then }, analysis, dismissed, explaining };
+        return { ...r, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, expired: { prompt: event.prompt, seconds: event.seconds }, analysis, dismissed, explaining };
       }
       // Issue #153: the prompt open beside a decision, withdrawn because the analysis is ready (S6 handles it).
       case "PromptWithdrawn": {

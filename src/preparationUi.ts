@@ -20,7 +20,7 @@ export const unattendedUi: Effect.Effect<UnattendedUi> = Effect.gen(function* ()
   const last = yield* Ref.make<AskedQuestion | null>(null);
   const numbers = yield* Ref.make(0);
   const unanswered = (prompt: string) =>
-    Effect.flatMap(Ref.get(last), (question) => Effect.fail(new NoAnswer({ where: prompt.split(/\r\n|\r|\n/u)[0] ?? "", seconds: 0, question, then: "abandon" })));
+    Effect.flatMap(Ref.get(last), (question) => Effect.fail(new NoAnswer({ where: prompt.split(/\r\n|\r|\n/u)[0] ?? "", seconds: 0, question })));
   const ui: UiShape = {
     say: () => Effect.void,
     output: () => Effect.void,

@@ -22,9 +22,6 @@ import type { OutputEvent } from "./liveOutput.ts";
  * Issue #185: what happens when a question's wait for an answer runs out: the run is abandoned, or (a review's round or
  * idle limit) the review goes on with more cycles.
  */
-export const ON_EXPIRIES = ["abandon", "extend"] as const;
-export type OnExpiry = (typeof ON_EXPIRIES)[number];
-const OnExpirySchema = Schema.Literals(ON_EXPIRIES);
 
 
 /** A prompt the run waits on, with its widget (src/userPrompts.ts). `prompt` numbers the prompts of a run. */
@@ -32,7 +29,7 @@ const OnExpirySchema = Schema.Literals(ON_EXPIRIES);
  * Issue #185: the wait of a question that counts down, on the server's clock: from when, until when, and what its
  * expiry does. The page counts down exactly this, the length the server times.
  */
-export type Countdown = Readonly<{ fromMs: number; untilMs: number; then: OnExpiry }>;
+export type Countdown = Readonly<{ fromMs: number; untilMs: number }>;
 /** Issue #185: `countdown`, null where the question waits as long as it takes (and in a record written before it). */
 export type Asked = Readonly<{
   _tag: "Asked";
@@ -77,7 +74,7 @@ export type RunEvent =
    */
   | Readonly<{ _tag: "CountdownStopped"; prompt: number; reason: "held" | "chainOff" }>
   /** Issue #185: the wait ran out; the prompt is withdrawn. */
-  | Readonly<{ _tag: "AnswerExpired"; prompt: number; seconds: number; then: OnExpiry }>
+  | Readonly<{ _tag: "AnswerExpired"; prompt: number; seconds: number }>
   /** Issue #153: the prompt open beside a decision is withdrawn unanswered, because the analysis is ready. */
   | Readonly<{ _tag: "PromptWithdrawn"; prompt: number }>
   /**
@@ -329,13 +326,13 @@ export const RunEventSchema = Schema.Union([
     mode: Schema.Literals(["ask", "message"]),
     choices: Schema.Array(ChoiceSchema),
     free: Schema.Literals(["none", "line", "message"]),
-    countdown: Schema.NullOr(Schema.Struct({ fromMs: Schema.Finite, untilMs: Schema.Finite, then: OnExpirySchema })).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+    countdown: Schema.NullOr(Schema.Struct({ fromMs: Schema.Finite, untilMs: Schema.Finite })).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
     deciding: Schema.NullOr(Int).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
     beside: Schema.NullOr(Int).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   }),
   tagged("Answered", { prompt: Int, text: Str }),
   tagged("CountdownStopped", { prompt: Int, reason: Schema.Literals(["held", "chainOff"]) }),
-  tagged("AnswerExpired", { prompt: Int, seconds: Int, then: OnExpirySchema }),
+  tagged("AnswerExpired", { prompt: Int, seconds: Int }),
   tagged("PromptWithdrawn", { prompt: Int }),
   tagged("PromptClosed", { prompt: Int }),
   tagged("PromptCancelled", { prompt: Int }),

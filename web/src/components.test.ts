@@ -700,20 +700,21 @@ describe("App and the draft", () => {
   });
 
   // Work review 1 of issue #185 (W1-R1-5): a question that expires beside its decision analysis shows its notice.
-  for (const then of ["abandon", "extend"] as const) {
+  // Issue #243: a question that counts down always ends the run when it expires; a review's limit never counts down.
+  for (const then of ["abandon"] as const) {
     test(`a question beside its analysis that expires (${then}) shows the notice of its kind and no answer field`, async () => {
       const { root, ws } = await openPage();
       const presented = { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("A or B?"), options: [{ label: plainPieces("A"), description: [], figure: null, answer: { token: "1" } }, { label: plainPieces("B"), description: [], figure: null, answer: { token: "2" } }], attached: null, decision: null };
       const analysis = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
-      const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000, then };
+      const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000 };
       ws.receive({
         type: "replay",
         ui: [],
         runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented, options: [], analysis } }, { _tag: "Notified", event: { _tag: "QuestionPresented", question: presented } }, { _tag: "Asked", prompt: 1, ...promptOf(prompts.decisionPrompt), countdown }]) }],
       });
       expect(root.querySelector("[name=answer]")).not.toBe(null);
-      ws.receive({ type: "event", run: 1, seq: 4, time: TIME, event: { _tag: "AnswerExpired", prompt: 1, seconds: 120, then } });
-      expect(one(root, "[data-expired]").textContent?.trim()).toBe(then === "abandon" ? prompts.questionExpiredText(120) : prompts.limitQuestionExpiredText(120));
+      ws.receive({ type: "event", run: 1, seq: 4, time: TIME, event: { _tag: "AnswerExpired", prompt: 1, seconds: 120 } });
+      expect(one(root, "[data-expired]").textContent?.trim()).toBe(prompts.questionExpiredText(120));
       expect(root.querySelector("[name=answer]")).toBe(null);
     });
   }
@@ -3729,19 +3730,19 @@ describe("TimelineRail: the Full test suite (issue #162)", () => {
 
 // Issue #185: the countdown of a question, the button that holds it, typing that holds it, and the expired notices.
 describe("QuestionPane: the countdown (issue #185)", () => {
-  const counting = (then: "abandon" | "extend"): Widget => {
+  const counting = (_then: "abandon"): Widget => {
     const w = widget(prompts.optionOrTextPrompt);
-    const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000, then };
+    const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000 };
     return { ...w, asked: { ...w.asked, countdown }, countdown, held: false, decision: "none" };
   };
   test("a counting prompt shows the indicator, the label of its kind and the button, which sends one hold", () => {
-    for (const then of ["abandon", "extend"] as const) {
+    for (const then of ["abandon"] as const) {
       const holds: number[] = [];
       const root = show(QuestionPane, { widget: counting(then), onAnswer: () => undefined, onHold: (p: number) => void holds.push(p) });
       expect(root.querySelector("[data-answer-countdown]")).not.toBe(null);
       // The time remaining ticks, so the label is compared after it: what the wait's end does, by its kind.
       const tail = (label: string) => label.slice(label.indexOf("; then"));
-      expect(root.textContent).toContain(tail(then === "abandon" ? prompts.answerCountdownLabel("x") : prompts.limitCountdownLabel("x")));
+      expect(root.textContent).toContain(tail(prompts.answerCountdownLabel("x")));
       const button = root.querySelector<HTMLButtonElement>("button[name=hold]")!;
       expect(button.textContent?.trim()).toBe(prompts.WORKING_ON_IT);
       button.click();
@@ -3757,10 +3758,11 @@ describe("QuestionPane: the countdown (issue #185)", () => {
     expect(held.querySelector("[data-answer-countdown]")).toBe(null);
     expect(held.querySelector("button[name=hold]")).toBe(null);
   });
-  test("an expired question shows its notice by kind and no answer field", () => {
-    for (const then of ["abandon", "extend"] as const) {
-      const root = show(QuestionPane, { widget: null, expired: { prompt: 7, seconds: 120, then }, onAnswer: () => undefined });
-      expect(root.textContent).toContain(then === "abandon" ? prompts.questionExpiredText(120) : prompts.limitQuestionExpiredText(120));
+  test("an expired question shows that it ended the run, and no answer field (issue #243: no expiry extends a review)", () => {
+    for (const then of ["abandon"] as const) {
+      const root = show(QuestionPane, { widget: null, expired: { prompt: 7, seconds: 120 }, onAnswer: () => undefined });
+      void then;
+      expect(root.textContent).toContain(prompts.questionExpiredText(120));
       expect(root.querySelector("[name=answer]")).toBe(null);
     }
   });

@@ -15,7 +15,7 @@
   // filled, because the agent's first option is not a recommended default [consistency and standards]; the fixed
   // choices keep the program's primary action filled. More cycles, answered with a typed number, is no button.
   import { Button, Card, TextFieldOutlined, TextFieldOutlinedMultiline } from "m3-svelte";
-  import { limitQuestionExpiredText, questionExpiredText, answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, EXPLAIN_TERMS, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, QUESTION_HISTORY_HEADING, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
+  import { questionExpiredText, answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, EXPLAIN_TERMS, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, QUESTION_HISTORY_HEADING, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import { type Expired, offersDecision, type Widget } from "../state.ts";
   import AnswerCountdown from "./AnswerCountdown.svelte";
   import type { DraftKey } from "../draft.ts";
@@ -254,7 +254,7 @@
   </section>
   <ConfirmEndDialog ending={confirming?.ending ?? null} onConfirm={confirm} onCancel={cancel} />
 {:else if expired !== null}
-  <p class="expired m3-font-body-medium" role="status" data-expired>{expired.then === "abandon" ? questionExpiredText(expired.seconds) : limitQuestionExpiredText(expired.seconds)}</p>
+  <p class="expired m3-font-body-medium" role="status" data-expired>{questionExpiredText(expired.seconds)}</p>
 {/if}
 
 <style>

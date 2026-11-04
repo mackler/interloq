@@ -48,7 +48,7 @@ export const reconcile = (draft: Draft | null, view: Shown): Reconciled => {
   const sameRun = view.incarnation === draft.key.incarnation && view.run !== null && view.run.id === draft.key.run;
   // Issue #185: its prompt's wait ran out: withdrawn with the notice of what the expiry did, the text kept in it.
   const expired = sameRun ? view.run!.expired : null;
-  if (expired !== null && expired.prompt === draft.key.prompt) return { draft: null, notice: draft.text.trim() === "" ? null : draftExpiredNotice(expired.then, draft.text) };
+  if (expired !== null && expired.prompt === draft.key.prompt) return { draft: null, notice: draft.text.trim() === "" ? null : draftExpiredNotice(draft.text) };
   // Issue #153: a prompt after which its question is asked again under another prompt (Help me decide, a frame withdrawn
   // because the analysis was ready): the draft waits while nothing is pending, follows its question, and is withdrawn
   // for another one.

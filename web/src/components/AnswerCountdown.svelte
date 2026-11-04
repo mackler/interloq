@@ -4,7 +4,7 @@
   // status line shows for a usage-limit wait, a wait whose end the server knows, so it asserts nothing more.
   import { Button } from "m3-svelte";
   import type { Countdown as AnswerWait } from "../../../src/protocol.ts";
-  import { answerCountdownLabel, limitCountdownLabel, remainingTime, WORKING_ON_IT } from "../../../src/prompts.ts";
+  import { answerCountdownLabel, remainingTime, WORKING_ON_IT } from "../../../src/prompts.ts";
   import Countdown from "./Countdown.svelte";
   type Props = { wait: AnswerWait; onHold: () => void };
   let { wait, onHold }: Props = $props();
@@ -14,7 +14,7 @@
     return () => clearInterval(tick);
   });
   const remaining = $derived(remainingTime(Math.max(wait.untilMs - now, 0)));
-  const label = $derived(wait.then === "abandon" ? answerCountdownLabel(remaining) : limitCountdownLabel(remaining));
+  const label = $derived(answerCountdownLabel(remaining));
 </script>
 
 <div class="answer-countdown" data-answer-countdown>

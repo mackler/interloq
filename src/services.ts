@@ -6,7 +6,6 @@ import type { Brand, Fiber, Option, Schema, Scope } from "effect";
 import type { Answered, DisputeOwner, OpenDispute, Withdrawn } from "./openDisputes.ts";
 import type { BesideKey } from "./reviewState.ts";
 import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
-import type { OnExpiry } from "./protocol.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { Figure } from "./figure.ts";
 import type { RunMode } from "./runMode.ts";
@@ -89,9 +88,9 @@ export interface UiShape {
    * implementation run in a chain), a wait that runs out fails with NoAnswer carrying `onExpiry` (default "abandon"),
    * what the question's expiry does: end the run, or (a review's limit) extend the review.
    */
-  readonly ask: (prompt: string, onExpiry?: OnExpiry) => Effect.Effect<string, UserStopped | NoAnswer>;
+  readonly ask: (prompt: string) => Effect.Effect<string, UserStopped | NoAnswer>;
   /** Reads one message of the interview (the page's reply field). The message "/quit" fails with UserStopped; NoAnswer as for ask. */
-  readonly askMessage: (prompt: string, onExpiry?: OnExpiry) => Effect.Effect<string, UserStopped | NoAnswer>;
+  readonly askMessage: (prompt: string) => Effect.Effect<string, UserStopped | NoAnswer>;
   /** A structured event of the run (decision Q5). The page shows it; the records do not depend on it. */
   readonly notify: (event: UiEvent) => Effect.Effect<void>;
   /** The number of the next question the user is asked (S6): one sequence for the run, from 1, whatever produced the question. */

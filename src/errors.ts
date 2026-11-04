@@ -9,7 +9,6 @@ import { type ParkNote, ParkNoteSchema } from "./chain.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
 import { FINDING_PROBLEM_KINDS, type FindingProblem } from "./requirementsFindings.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
-import type { OnExpiry } from "./protocol.ts";
 import type { TrackerError } from "./services.ts";
 import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, investigationInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText, findingsInvalidText, KEPT_CORRECTION_PROBLEM_KINDS, type KeptCorrectionProblem, correctionDroppedText } from "./prompts.ts";
 
@@ -198,7 +197,7 @@ export type AskedQuestion = { readonly number: number; readonly text: string };
  * the developer's stop (130) nor a failure (1), but a third ending. `where` is the prompt's hint, `question` the question
  * presented for it (null where none was), and `then` the expiry the prompt was asked with.
  */
-export class NoAnswer extends Data.TaggedError("NoAnswer")<{ readonly where: string; readonly seconds: number; readonly question: AskedQuestion | null; readonly then: OnExpiry }> {}
+export class NoAnswer extends Data.TaggedError("NoAnswer")<{ readonly where: string; readonly seconds: number; readonly question: AskedQuestion | null }> {}
 /**
  * Issue #185: a send-back (issue #186) had parked its work, or found nothing to park, and the question of its tracker
  * step, the comment or the label, went unanswered; the fields after `park` are the `NoAnswer`'s.
@@ -210,7 +209,6 @@ export class SendBackUnanswered extends Data.TaggedError("SendBackUnanswered")<{
   readonly where: string;
   readonly seconds: number;
   readonly question: AskedQuestion | null;
-  readonly then: OnExpiry;
 }> {}
 /** Issue #186: Claude Code's verdict that the item is not refined was refused after its validation repair turn. */
 export class VerdictInvalid extends Data.TaggedError("VerdictInvalid")<{ readonly problem: VerdictProblem }> {}
@@ -418,8 +416,6 @@ const ChangeData = Schema.Struct({
   to: Schema.optionalKey(Schema.String),
 });
 const AskedQuestionData = Schema.Struct({ number: Schema.Number, text: Schema.String });
-// The literals of `ON_EXPIRIES` of src/protocol.ts, written here so that errors.ts imports protocol.ts for its type alone.
-const OnExpiryData: Schema.Codec<OnExpiry> = Schema.Literals(["abandon", "extend"]);
 const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("UserStopped"), where: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("ProjectChanged"), during: Schema.Literals(["planning", "review"]), fileLabel: Schema.NullOr(Schema.String), changes: Schema.Array(ChangeData) }),
@@ -480,7 +476,7 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("SendBackNotParked"), item: Schema.String, message: Schema.String, park: ParkNoteSchema }),
   Schema.Struct({ _tag: Schema.Literal("SendBackIncomplete"), item: Schema.String, ending: Schema.Literals(["sentBack", "stoppedUnrefined"]), park: ParkNoteSchema, cause: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("VerdictInvalid"), problem: Schema.Literals(["blankMissing", "questionsAsked"]) }),
-  Schema.Struct({ _tag: Schema.Literal("NoAnswer"), where: Schema.String, seconds: Schema.Number, question: Schema.NullOr(AskedQuestionData), then: OnExpiryData }),
+  Schema.Struct({ _tag: Schema.Literal("NoAnswer"), where: Schema.String, seconds: Schema.Number, question: Schema.NullOr(AskedQuestionData) }),
   Schema.Struct({
     _tag: Schema.Literal("SendBackUnanswered"),
     item: Schema.String,
@@ -489,7 +485,6 @@ const RunErrorData = Schema.Union([
     where: Schema.String,
     seconds: Schema.Number,
     question: Schema.NullOr(AskedQuestionData),
-    then: OnExpiryData,
   }),
   Schema.Struct({ _tag: Schema.Literal("Interrupted"), where: Schema.String }),
 ]);

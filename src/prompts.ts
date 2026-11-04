@@ -2397,18 +2397,15 @@ export const PROPOSED_ANSWERS_LABEL = "Proposed answers";
 /** Issue #185: the label of a question's countdown, with the time remaining, by what its expiry does. */
 export const answerCountdownLabel = (remaining: string): string =>
   `This question waits ${remaining} for an answer; then the run stops waiting, moves its work to the item's branch, sets the item's label to \`refined\`, and the chain starts the next item.`;
-export const limitCountdownLabel = (remaining: string): string => `This question waits ${remaining} for an answer; then the review goes on with more cycles and the run continues.`;
 /** Issue #185: the button that stops the countdown for good. */
 export const WORKING_ON_IT = "I'm working on this question";
 /** Issue #185: the notice in place of a question whose wait ran out. */
 export const questionExpiredText = (seconds: number): string => `This question expired after ${durationText(seconds * 1000)} with no answer, and its run has ended.`;
-export const limitQuestionExpiredText = (seconds: number): string => `This question expired after ${durationText(seconds * 1000)} with no answer; the review goes on with more cycles.`;
 /** Issue #185: the mark of an item whose run in the current chain stopped waiting for an answer. */
 export const ABANDONED_IN_CHAIN = "Its run in this chain stopped waiting for an answer";
 /** Issue #185: a draft whose question expired before it was sent, by what the expiry did; its text quoted. */
-export function draftExpiredNotice(then: "abandon" | "extend", text: string): string {
-  const after = then === "abandon" ? "its run has ended" : "the review went on with more cycles and the run continues";
-  return `The question expired before your answer was sent; ${after}. Your text is kept here: «${text}»`;
+export function draftExpiredNotice(text: string): string {
+  return `The question expired before your answer was sent; its run has ended. Your text is kept here: «${text}»`;
 }
 export function draftWithdrawnNotice(text: string): string {
   return `This question was answered in another tab; your unsent text was discarded: «${text}»`;
@@ -4746,7 +4743,6 @@ export const ALREADY_ANSWERED_TEXT = "that question has already been answered";
 /** Issue #185: the refusal of an answer that arrived after its question's wait ran out and ended the run. */
 export const answerExpiredText = "that question expired: no answer came within the wait, and its run has ended";
 /** Issue #185: the same, where the question was a review's limit, after which the review went on. */
-export const limitAnswerExpiredText = "that question expired: no answer came within the wait, so the review went on with more cycles; the run continues";
 /** Issue #185: why a run ended without an answer: the wait and the question it waited on. */
 export const noAnswerText = (question: { readonly number: number; readonly text: string } | null, seconds: number): string =>
   question === null

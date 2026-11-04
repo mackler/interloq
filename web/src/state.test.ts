@@ -2947,43 +2947,41 @@ describe("the presented runs", () => {
 
 // Issue #185: the countdown of a question, its hold and its expiry by kind, the abandoned items' mark.
 describe("the countdown of a question (issue #185)", () => {
-  const counting = (prompt: number, then: "abandon" | "extend"): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: { fromMs: 1000, untilMs: 121_000, then }, deciding: null, beside: null });
+  const counting = (prompt: number, _then: "abandon"): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: { fromMs: 1000, untilMs: 121_000 }, deciding: null, beside: null });
   test("an Asked with a countdown sets it on the pending prompt; CountdownStopped clears it and marks it held", () => {
     const s = fold(live([started, counting(1, "abandon")]));
-    expect(runOf(s, "implementation")?.pending?.countdown).toEqual({ fromMs: 1000, untilMs: 121_000, then: "abandon" });
+    expect(runOf(s, "implementation")?.pending?.countdown).toEqual({ fromMs: 1000, untilMs: 121_000 });
     expect(runOf(s, "implementation")?.pending?.held).toBe(false);
     const held = fold(live([started, counting(1, "abandon"), { _tag: "CountdownStopped", prompt: 1, reason: "held" }]));
     expect(runOf(held, "implementation")?.pending?.countdown).toBe(null);
     expect(runOf(held, "implementation")?.pending?.held).toBe(true);
   });
   test("an expiry that abandons clears the prompt and keeps the expiry; Ended marks the run over with its word", () => {
-    const events = [started, counting(1, "abandon"), { _tag: "AnswerExpired", prompt: 1, seconds: 120, then: "abandon" } as RunEvent, endedEvent(ABANDONED) as RunEvent];
+    const events = [started, counting(1, "abandon"), { _tag: "AnswerExpired", prompt: 1, seconds: 120 } as RunEvent, endedEvent(ABANDONED) as RunEvent];
     const run = runOf(fold(live(events)), "implementation");
     expect(run?.pending).toBe(null);
-    expect(run?.expired).toEqual({ prompt: 1, seconds: 120, then: "abandon" });
+    expect(run?.expired).toEqual({ prompt: 1, seconds: 120 });
     expect(run?.ended).toEqual(ABANDONED);
     expect(prompts.endingWord(ABANDONED)).toBe("abandoned");
     // A replay of the same events folds alike.
     expect(runOf(replayed(events), "implementation")?.expired).toEqual(run?.expired);
   });
-  test("an expiry that extends a review leaves the run going, and the next round clears it", () => {
-    const expired = [started, counting(1, "extend"), { _tag: "AnswerExpired", prompt: 1, seconds: 120, then: "extend" } as RunEvent];
-    const run = runOf(fold(live(expired)), "implementation");
-    expect(run?.expired?.then).toBe("extend");
-    expect(run?.ended).toBe(null);
+  test("issue #243: an expiry always ends the run; a later round of the review does not clear it", () => {
+    const expired = [started, counting(1, "abandon"), { _tag: "AnswerExpired", prompt: 1, seconds: 120 } as RunEvent];
     const next = runOf(fold(live([...expired, notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 2, limit: 2 })])), "implementation");
-    expect(next?.expired).toBe(null);
+    expect(next?.expired).toEqual({ prompt: 1, seconds: 120 });
   });
+;
   // Work review 1 of issue #185 (W1-R1-5): the analysis belongs to the prompt that expired, so it goes with it.
-  for (const then of ["abandon", "extend"] as const) {
+  for (const then of ["abandon"] as const) {
     test(`an expiry that ${then}s drops the analysis prepared for its prompt`, () => {
       const analyzed = notified({ _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } });
-      const events = [started, analyzed, counting(1, then), { _tag: "AnswerExpired", prompt: 1, seconds: 120, then } as RunEvent];
+      const events = [started, analyzed, counting(1, then), { _tag: "AnswerExpired", prompt: 1, seconds: 120 } as RunEvent];
       const before = runOf(fold(live(events.slice(0, 3))), "implementation");
       expect(before?.analysis?.prompt).toBe(1);
       const run = runOf(fold(live(events)), "implementation");
       expect(run?.analysis).toBe(null);
-      expect(run?.expired).toEqual({ prompt: 1, seconds: 120, then });
+      expect(run?.expired).toEqual({ prompt: 1, seconds: 120 });
       expect(runOf(replayed(events), "implementation")?.analysis).toBe(null);
     });
   }
