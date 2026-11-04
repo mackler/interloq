@@ -18,7 +18,7 @@ import { commentKeyOf, commentText } from "../src/itemComments.ts";
 import { heldTrackerEnv, unattendedTrackerEnv, readCommentsWithRetry, readWithRetry, runTrackerEnv, type TrackerWrite, TrackerWriteFailed, writeWithRetry } from "../src/trackerRetry.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { makeFakeTracker, type FakeItem } from "./fakeTracker.ts";
-import { type ScriptedAnswer, ScriptedUi, steppingClock, tempRepo, testLayer } from "./helpers.ts";
+import { resolvable, type ScriptedAnswer, ScriptedUi, steppingClock, tempRepo, testLayer } from "./helpers.ts";
 
 const ID = "155" as ItemId;
 const ITEM: FakeItem = { id: ID, title: "t", body: "the developer's text", state: "unrefined", open: true, url: Option.none() };
@@ -420,4 +420,74 @@ test("#243: Retry again then a second exhaustion: a second, new question is pres
   const numbers = t.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question.number] : []));
   assert.equal(numbers.length, 2);
   assert.notEqual(numbers[0], numbers[1]);
+});
+
+// ---- W6-R1-1: a question's Scope closed by the repeats' cleanup even while the question is being presented ----
+
+test("W6-R1-1, in a run: the repeats interrupted while the question's record is written: once released, no question is asked", async () => {
+  const repo = tempRepo();
+  const events: RunEvent[] = [];
+  const web = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const questionText = prompts.trackerExhaustedQuestion("GitHub", "reading item 155");
+  const reached = resolvable();
+  const release = resolvable();
+  let released = false;
+  const afterRelease: string[] = [];
+  const { layer } = testLayer(repo, {
+    ui: web,
+    config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 },
+    store: (store) => ({
+      ...store,
+      converse: (text: string) =>
+        Effect.suspend(() => {
+          if (released) afterRelease.push(text);
+          return text.includes(questionText) ? Effect.promise(() => (reached.resolve(), release.promise)).pipe(Effect.andThen(store.converse(text))) : store.converse(text);
+        }),
+    }),
+  });
+  const r = scriptedReads(["fail", "fail", "fail", "fail"]);
+  const { clock } = steppingClock(Date.UTC(2026, 10, 4));
+  const fiber = Effect.runFork(
+    Effect.gen(function* () {
+      yield* (yield* Store).init("task");
+      return yield* readWithRetry(r.tracker, ID, yield* runTrackerEnv);
+    }).pipe(Effect.provideService(Clock.Clock, clock), Effect.provide(layer)),
+  );
+  await reached.promise;
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  released = true;
+  release.resolve();
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal(events.filter((e) => e._tag === "Asked" && e.beside !== null).length, 0, "an Asked with beside was published");
+  assert.equal(await Effect.runPromise(web.pending), null);
+  assert.deepEqual(afterRelease, []);
+});
+
+test("W6-R1-1, the first read: the repeats interrupted after the question's producer was forked and before its handle was kept: the producer ends and nothing is left pending", async () => {
+  const events: RunEvent[] = [];
+  const web = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const heldRecords = Effect.runSync(Ref.make<readonly string[]>([]));
+  const held = heldTrackerEnv(web, { ...S.defaultConfig, maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 }, heldRecords);
+  const reached = resolvable();
+  let producer: Fiber.Fiber<string, unknown> | null = null;
+  const env = {
+    ...held,
+    openQuestion: (scope: Parameters<typeof held.openQuestion>[0], draft: Parameters<typeof held.openQuestion>[1], onAccepted: Parameters<typeof held.openQuestion>[2]) =>
+      held.openQuestion(scope, draft, onAccepted).pipe(
+        Effect.tap((handle) => Effect.sync(() => ((producer = handle.fiber), reached.resolve()))),
+        Effect.tap(() => Effect.never),
+      ),
+  };
+  const r = scriptedReads(["fail", "fail", "fail", "fail"]);
+  const { clock } = steppingClock(Date.UTC(2026, 10, 4));
+  const fiber = Effect.runFork(readWithRetry(r.tracker, ID, env).pipe(Effect.provideService(Clock.Clock, clock)));
+  await reached.promise;
+  await new Promise((res) => setTimeout(res, 20));
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  await new Promise((res) => setTimeout(res, 20));
+  assert.ok(producer !== null);
+  assert.ok((producer as Fiber.Fiber<string, unknown>).pollUnsafe() !== undefined, "the question's producer is still running");
+  assert.equal(await Effect.runPromise(web.pending), null);
+  const asked = events.find((e) => e._tag === "Asked" && e.beside !== null);
+  if (asked !== undefined && asked._tag === "Asked") assert.ok(events.some((e) => e._tag === "PromptCancelled" && e.prompt === asked.prompt), "no PromptCancelled followed the Asked");
 });

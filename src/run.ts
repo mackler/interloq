@@ -25,7 +25,7 @@ import type { Baseline } from "./records.ts";
 import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, type LoopEnd, planningCall, reviewLoop, type Subject, userQuestionsValidation } from "./review.ts";
 import type { Answered, Withdrawn } from "./openDisputes.ts";
-import { type BesideQuestion, openBeside, programContext, type QuestionDraft, saveOptionFigures, suiteStoppedOptions } from "./offer.ts";
+import { CLOSED_SLOT, closeSlot, openBeside, type OpenBeside, openInSlot, programContext, type QuestionDraft, saveOptionFigures, type SlotCell, slotQuestion, suiteStoppedOptions } from "./offer.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
@@ -568,22 +568,18 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
          * Issue #243: the question after a stop that used the repeat no longer waits. It is opened beside the suite,
          * which runs again at once, in a Scope of its own, with the Deferred its answer completes in the Ui's take.
          */
-        let question: Readonly<{ handle: BesideQuestion; scope: Scope.Closeable; answered: Deferred.Deferred<void> }> | null = null;
-        const closeQuestion = Effect.suspend(() => {
-          const open = question;
-          question = null;
-          return open === null ? Effect.void : Scope.close(open.scope, Exit.void);
-        });
+        const cell: SlotCell = { slot: CLOSED_SLOT };
+        const closeQuestion = closeSlot(cell);
         /**
          * W1-R1-2: the one place an answer to the question is acted on, after the race whichever side won: Stop the run
          * or Run the suite again recorded once and the question closed, or nothing where none was given.
          */
-        const decided = (open: NonNullable<typeof question>) =>
+        const decided = (open: OpenBeside) =>
           Effect.gen(function* () {
             const choice = suiteAnswerOf(yield* open.handle.answer);
             if (choice === "none") return choice;
             yield* store.converse(suiteAnswerLine(choice, command));
-            if (question === open) question = null;
+            if (slotQuestion(cell.slot) === open) cell.slot = CLOSED_SLOT;
             yield* Scope.close(open.scope, Exit.void);
             return choice;
           });
@@ -591,7 +587,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
          * Completes when Stop the run is answered, and does nothing else, so its interruption by the suite's end can leave
          * nothing half done; Run the suite again leaves the suite run in progress to finish.
          */
-        const stopAnswered = (open: NonNullable<typeof question>): Effect.Effect<"stop", UserStopped> =>
+        const stopAnswered = (open: OpenBeside): Effect.Effect<"stop", UserStopped> =>
           Effect.raceFirst(
             Deferred.await(open.answered).pipe(Effect.andThen(open.handle.answer), Effect.flatMap((a) => (suiteAnswerOf(a) === "stop" ? Effect.succeed("stop" as const) : Effect.never))),
             Fiber.join(open.handle.fiber).pipe(Effect.matchEffect({ onFailure: (e) => (e._tag === "UserStopped" ? Effect.fail(e) : Effect.never), onSuccess: () => Effect.never })),
@@ -603,7 +599,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         return Effect.gen(function* () {
           for (;;) {
             const n = suiteRuns.length + 1;
-            const open = question;
+            const open = slotQuestion(cell.slot);
             const running = Effect.map(suitePhase(command, n, key), (r) => ({ _tag: "Ran", r }) as const);
             const ran = yield* (open === null ? running : Effect.raceFirst(running, Effect.map(stopAnswered(open), () => ({ _tag: "Stopped" }) as const)));
             // Stop the run answered while the suite ran, or as it ended: the run halts (where the watcher won, the suite run
@@ -626,7 +622,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
               yield* sayAndWrite(suiteRepeatLine(name, command));
               continue;
             }
-            if (question === null) {
+            if (slotQuestion(cell.slot) === null) {
               const reason = suiteFailureText(verdict.reason);
               const origin: QuestionOrigin = { kind: "suiteStopped", command, suite: n, stops: stops.length, reason };
               const draft: QuestionDraft = {
@@ -640,10 +636,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
                 explain: suiteStoppedFacts(command, stops, repeated),
                 decision: null,
               };
-              const scope = yield* Scope.make();
-              const answered = yield* Deferred.make<void>();
-              const handle = yield* openBeside(scope, transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.as(Deferred.succeed(answered, undefined), "kept" as const) }).pipe(inPhase({ kind: "suite", n }));
-              question = { handle, scope, answered };
+              // W6-R1-1: the Scope is recorded before the question is presented, so the loop's cleanup closes it whenever it ends.
+              yield* openInSlot(cell, (scope, answered) => openBeside(scope, transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.as(Deferred.succeed(answered, undefined), "kept" as const) }).pipe(inPhase({ kind: "suite", n })));
             }
             yield* sayAndWrite(suiteRunningAgainLine(name, command));
           }

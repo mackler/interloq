@@ -1,10 +1,10 @@
 // The transport retry of issue #26: a call that produced no reply, because of a transport fault, is made again with
 // backoff; when the retries are exhausted the user decides.
 
-import { Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result, Scope } from "effect";
+import { Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result } from "effect";
 import { AgentUnreachable, type ProcessEnded, type RunError, type TransportFault, type UsageLimited, type UserStopped } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
-import { type BesideQuestion, openBeside, programContext, type QuestionDraft, transportOptions } from "./offer.ts";
+import { CLOSED_SLOT, closeSlot, openBeside, type OpenBeside, openInSlot, programContext, type QuestionDraft, type SlotCell, slotQuestion, transportOptions } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as prompts from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
@@ -119,21 +119,18 @@ const retrying = <A, E, R>(
      * Issue #243: the exhaustion question, open beside the call while Interloq keeps trying, in a Scope of its own: its
      * handle, and a Deferred its answer completes (set in the Ui's take, so the wait before the next try ends at once).
      */
-    let question: Readonly<{ handle: BesideQuestion; scope: Scope.Closeable; answered: Deferred.Deferred<void> }> | null = null;
-    const closeQuestion = Effect.suspend(() => {
-      const open = question;
-      question = null;
-      return open === null ? Effect.void : Scope.close(open.scope, Exit.void);
-    });
+    const cell: SlotCell = { slot: CLOSED_SLOT };
+    const closeQuestion = closeSlot(cell);
     held.close = closeQuestion;
     /** Fails at once when the question is answered "q" (its producer fails with UserStopped); otherwise never completes. */
-    const quitWatch = (open: NonNullable<typeof question>): Effect.Effect<never, UserStopped> =>
+    const quitWatch = (open: OpenBeside): Effect.Effect<never, UserStopped> =>
       Fiber.join(open.handle.fiber).pipe(
         Effect.matchEffect({ onFailure: (e) => (e._tag === "UserStopped" ? Effect.fail(e) : Effect.never), onSuccess: () => Effect.never }),
       );
     /** The answer the question holds now, read after every attempt and every wait: Stop fails, Retry again starts afresh. */
     const answeredNow = (n: number, lastFault: string) =>
       Effect.gen(function* () {
+        const question = slotQuestion(cell.slot);
         if (question === null) return "none" as const;
         const answer = yield* question.handle.answer;
         if (Option.isNone(answer)) return "none" as const;
@@ -148,7 +145,7 @@ const retrying = <A, E, R>(
       });
     let lastFault = "";
     for (let n = 1; ; n++) {
-      const open = question;
+      const open = slotQuestion(cell.slot);
       const result = yield* Effect.result(open === null ? attempt(n) : Effect.raceFirst(attempt(n), quitWatch(open)));
       // A Stop answered while the attempt ran is honored even where the attempt succeeded: the developer chose to stop.
       yield* answeredNow(n, lastFault);
@@ -250,20 +247,18 @@ const retrying = <A, E, R>(
         case "ask": {
           // Issue #243: the question no longer waits. It is opened beside the call (where none is open), and the call is
           // tried again every USAGE_LIMIT_RETRY_SECONDS with no limit; the answer is read after every attempt and wait.
-          if (question === null) {
+          let open = slotQuestion(cell.slot);
+          if (open === null) {
             const origin: QuestionOrigin = { kind: "transport", agent, what, attempts: n, fault: fault.message };
             // S10 (G-R1-1): the context of a pause for Claude Code is the program's own at once, since a context call would
             // need the agent that cannot be reached; a pause for Codex gets its context from Claude Code (S12).
             const facts = prompts.transportFacts(agent, what, n, fault.message);
             const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.transportExhaustedQuestion(agent, what)), options: transportOptions(), attached: attachedOf("fault", prompts.transportDetails(n, fault.message)), ...(agent === "codex" ? { explain: facts } : {}), decision: null };
-            const scope = yield* Scope.make();
-            const answered = yield* Deferred.make<void>();
-            const handle = yield* openBeside(scope, prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.as(Deferred.succeed(answered, undefined), "kept" as const) });
-            question = { handle, scope, answered };
+            // W6-R1-1: the Scope is recorded before the question is presented, so the call's cleanup closes it whenever it ends.
+            open = yield* openInSlot(cell, (scope, answered) => openBeside(scope, prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null, { offer: false, onAccepted: () => Effect.as(Deferred.succeed(answered, undefined), "kept" as const) }));
           }
           tries++;
           yield* say(prompts.transportBesideLine(agent, what, tries, USAGE_LIMIT_RETRY_SECONDS));
-          const open = question;
           yield* Effect.raceFirst(Effect.raceFirst(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)), Deferred.await(open.answered)), quitWatch(open));
           yield* answeredNow(n, fault.message);
           break;

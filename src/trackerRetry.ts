@@ -2,10 +2,10 @@
 // error, is repeated with backoff; when the repeats run out the developer is asked. This part is pure: the run's
 // writes as data, the waits, which failures are repeated, and whether the item already holds a write's outcome.
 
-import { Clock, Data, Deferred, Effect, Exit, Fiber, Option, Ref, Result, Scope } from "effect";
+import { Clock, Data, Deferred, Effect, Fiber, Option, Ref, Result, type Scope } from "effect";
 import type { HeldState, RunError, TrackerUnreachable, UserStopped, WriteCheck } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
-import { type BesideQuestion, openBeside, openBesideUnoffered, programContext, type QuestionDraft, trackerOptions } from "./offer.ts";
+import { type BesideQuestion, CLOSED_SLOT, closeSlot, openBeside, type OpenBeside, openBesideUnoffered, openInSlot, programContext, type QuestionDraft, type SlotCell, slotQuestion, trackerOptions } from "./offer.ts";
 import { USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
 import { plainPieces } from "./pieces.ts";
 import * as prompts from "./prompts.ts";
@@ -132,18 +132,15 @@ const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<
     const delays = trackerRetryDelays(env.settings);
     const say = (text: string) => env.ui.say(text).pipe(Effect.andThen(env.record(`${text}\n\n`)));
     /** Issue #243: the exhaustion question open beside the repeats, in a Scope of its own, and its answer's signal. */
-    let question: Readonly<{ handle: BesideQuestion; scope: Scope.Closeable; answered: Deferred.Deferred<void> }> | null = null;
-    const closeQuestion = Effect.suspend(() => {
-      const open = question;
-      question = null;
-      return open === null ? Effect.void : Scope.close(open.scope, Exit.void);
-    });
+    const cell: SlotCell = { slot: CLOSED_SLOT };
+    const closeQuestion = closeSlot(cell);
     /** Fails at once when the question is answered "q" (its producer fails with UserStopped); otherwise never completes. */
-    const quitWatch = (open: NonNullable<typeof question>): Effect.Effect<never, UserStopped> =>
+    const quitWatch = (open: OpenBeside): Effect.Effect<never, UserStopped> =>
       Fiber.join(open.handle.fiber).pipe(Effect.matchEffect({ onFailure: (e) => (e._tag === "UserStopped" ? Effect.fail(e) : Effect.never), onSuccess: () => Effect.never }));
     /** The question's answer, read after every attempt and wait: Stop fails with the last failure, Retry again starts afresh. */
     const answeredNow = (tracker: string, last: AttemptFailed | null) =>
       Effect.gen(function* () {
+        const question = slotQuestion(cell.slot);
         if (question === null) return "none" as const;
         const answer = yield* question.handle.answer;
         if (Option.isNone(answer)) return "none" as const;
@@ -159,7 +156,7 @@ const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<
      */
     const step = (n: number, total: number, faulted: string | null, last: AttemptFailed | null): Effect.Effect<A, AttemptFailed | RunError> =>
       Effect.gen(function* () {
-        const open = question;
+        const open = slotQuestion(cell.slot);
         const result = yield* Effect.result(open === null ? attempt : Effect.raceFirst(attempt, quitWatch(open)));
         // A Stop answered while the attempt ran is honored even where it succeeded: the developer chose to stop.
         const before = yield* answeredNow(faulted ?? "", last);
@@ -173,7 +170,7 @@ const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<
         if (failed._tag !== "AttemptFailed" || !retryable(failed.error)) return yield* Effect.fail(failed);
         const error = failed.error;
         if (before === "retry") return yield* step(1, total + 1, error.tracker, failed);
-        const delay = question === null ? delays[n - 1] : undefined;
+        const delay = slotQuestion(cell.slot) === null ? delays[n - 1] : undefined;
         if (delay !== undefined) {
           const fromMs = yield* Clock.currentTimeMillis;
           const untilMs = fromMs + delay * 1000;
@@ -198,15 +195,13 @@ const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<
         }
         // Issue #243: the question no longer waits. It is opened beside the repeats, which go on every
         // USAGE_LIMIT_RETRY_SECONDS with no limit, each wait one the developer may end early.
-        if (question === null) {
+        let waiting = slotQuestion(cell.slot);
+        if (waiting === null) {
           const origin: QuestionOrigin = { kind: "tracker", tracker: error.tracker, what, attempts, fault: error.message };
           const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.trackerExhaustedQuestion(error.tracker, what)), options: trackerOptions(), attached: attachedOf("fault", prompts.transportDetails(attempts, error.message)), decision: null };
-          const scope = yield* Scope.make();
-          const answered = yield* Deferred.make<void>();
-          const handle = yield* env.openQuestion(scope, draft, () => Effect.asVoid(Deferred.succeed(answered, undefined)));
-          question = { handle, scope, answered };
+          // W6-R1-1: the Scope is recorded before the question is presented, so the repeats' cleanup closes it whenever they end.
+          waiting = yield* openInSlot(cell, (scope, answered) => env.openQuestion(scope, draft, () => Effect.asVoid(Deferred.succeed(answered, undefined))));
         }
-        const waiting = question;
         const fromMs = yield* Clock.currentTimeMillis;
         const untilMs = fromMs + USAGE_LIMIT_RETRY_SECONDS * 1000;
         yield* Effect.scoped(

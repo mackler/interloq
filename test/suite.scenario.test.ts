@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program } from "../src/program.ts";
-import { attachedHeading, commandReportsText, fallenCountsText, FULL_SUITE_PHASE, SUITE_OUTPUT_NAME, suiteFailedLine, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
+import { attachedHeading, commandReportsText, suiteStoppedQuestion, fallenCountsText, FULL_SUITE_PHASE, SUITE_OUTPUT_NAME, suiteFailedLine, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
 import { type CommandReport, encodeCountsFile, SuiteRecordSchema } from "../src/testCounts.ts";
 import { Schema } from "effect";
 import { recordPath, type RunRoot } from "../src/artifacts.ts";
@@ -16,7 +16,9 @@ import { blocksText, piecesText } from "../src/pieces.ts";
 import type { SuiteResult } from "../src/suite.ts";
 import type { OutputEvent } from "../src/liveOutput.ts";
 import type { StoreShape } from "../src/services.ts";
-import { fakeTrackerOf, finished, presentedQuestions, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
+import { fakeTrackerOf, finished, presentedQuestions, resolvable, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
+import { makeWebUi } from "../src/webUi.ts";
+import type { RunEvent } from "../src/protocol.ts";
 
 const noQuestions = { questions_for_user: [] };
 const SUITE = "script/test --all";
@@ -415,4 +417,41 @@ test("#243 W1-R1-2: Stop answered while the suite run is gated and never release
   const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
   assert.ok(conversation.includes(suiteStoppedText(SUITE, 2, 2, "it ran longer than 40 minutes and was stopped")), conversation);
   assert.equal(countOf(conversation, stopLine), 1, conversation);
+});
+
+// ---- W6-R1-1: the suite's question's Scope closed by the cleanup even while the question is being presented ----
+
+test("W6-R1-1: Stop task while the suite-stopped question's record is written: the run ends 130, and once released no question is asked", async () => {
+  const events: RunEvent[] = [];
+  const web = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const reached = resolvable();
+  const release = resolvable();
+  let released = false;
+  const afterRelease: string[] = [];
+  const questionText = suiteStoppedQuestion("", SUITE);
+  const { wiring, probe } = testWiring(tempRepo(), {
+    ...one,
+    ui: web,
+    suite: [timedOut, timedOut, "hang"],
+    config: { suiteCommand: SUITE },
+    store: (store) => ({
+      ...store,
+      converse: (md) =>
+        Effect.suspend(() => {
+          if (released) afterRelease.push(md);
+          return md.includes(questionText) ? Effect.promise(() => (reached.resolve(), release.promise)).pipe(Effect.andThen(store.converse(md))) : store.converse(md);
+        }),
+    }),
+  });
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)));
+  await reached.promise;
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.equal(exitCodeOf(exit), 130);
+  released = true;
+  release.resolve();
+  await sleep(50);
+  assert.equal(events.filter((e) => e._tag === "Asked" && e.beside !== null).length, 0, "an Asked with beside was published");
+  assert.equal(await Effect.runPromise(web.pending), null);
+  assert.deepEqual(afterRelease, []);
 });

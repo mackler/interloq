@@ -2,7 +2,7 @@
 // carries it, whatever interface asks. Separate from src/decision.ts, which runs the loop, so that the places that ask
 // (src/review.ts, src/conversation.ts, src/claude.ts) do not import the loop (no import cycle).
 
-import { Deferred, Effect, Fiber, Option, Ref, type Scope } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Ref, Scope } from "effect";
 import { type RunError, UserStopped } from "./errors.ts";
 
 import { answerOf, chooseOption, isDecide, isTermsRequest, parseAskLine, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
@@ -529,6 +529,56 @@ export type BesideQuestion = Readonly<{
   answer: Effect.Effect<Option.Option<string>>;
   fiber: Fiber.Fiber<string, UserStopped | RunError>;
 }>;
+/** Issue #243: an open question beside the run as its caller holds it: the handle, its Scope, and its answer's signal. */
+export type OpenBeside = Readonly<{ handle: BesideQuestion; scope: Scope.Closeable; answered: Deferred.Deferred<void> }>;
+/**
+ * W6-R1-1: the state of a caller's question beside the run, so that a Scope that exists is always reachable from the
+ * cleanup: none (`Closed`), its Scope made while the question is being presented (`Opening`), or open (`Open`).
+ */
+export type BesideSlot =
+  | Readonly<{ _tag: "Closed" }>
+  | Readonly<{ _tag: "Opening"; scope: Scope.Closeable }>
+  | Readonly<{ _tag: "Open"; question: OpenBeside }>;
+export const CLOSED_SLOT: BesideSlot = { _tag: "Closed" };
+/** The Scope a slot holds, if any: what the cleanup closes. */
+export const slotScope = (slot: BesideSlot): Scope.Closeable | null => {
+  switch (slot._tag) {
+    case "Closed":
+      return null;
+    case "Opening":
+      return slot.scope;
+    case "Open":
+      return slot.question.scope;
+  }
+};
+/** The open question of a slot, or null while none is open (`Closed`, or still being presented). */
+export const slotQuestion = (slot: BesideSlot): OpenBeside | null => (slot._tag === "Open" ? slot.question : null);
+/** A caller's slot, read and written by the one fiber that owns it and by its cleanup. */
+export type SlotCell = { slot: BesideSlot };
+/**
+ * W6-R1-1: opens a question beside the run through `open` in a new Scope recorded in `cell` first: the Scope's making
+ * and its recording are one uninterruptible step, so the cleanup (`closeSlot`) reaches every Scope made, whether the
+ * question is still being presented or open.
+ */
+export const openInSlot = <E, R>(
+  cell: SlotCell,
+  open: (scope: Scope.Scope, answered: Deferred.Deferred<void>) => Effect.Effect<BesideQuestion, E, R>,
+): Effect.Effect<OpenBeside, E, R> =>
+  Effect.gen(function* () {
+    const answered = yield* Deferred.make<void>();
+    const scope = yield* Effect.uninterruptible(Scope.make().pipe(Effect.tap((made) => Effect.sync(() => (cell.slot = { _tag: "Opening", scope: made })))));
+    const handle = yield* open(scope, answered);
+    const question: OpenBeside = { handle, scope, answered };
+    cell.slot = { _tag: "Open", question };
+    return question;
+  });
+/** W6-R1-1: closes whatever Scope the slot holds (interrupting a producer still presenting its question) and empties it. */
+export const closeSlot = (cell: SlotCell): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    const scope = slotScope(cell.slot);
+    cell.slot = CLOSED_SLOT;
+    return scope === null ? Effect.void : Scope.close(scope, Exit.void);
+  });
 /** `onAccepted`, called inside the Ui's take before the answer is stored: an answer it refuses is not taken (W1-R1-1). */
 export type BesideOptions = Readonly<{ offer: boolean; resolve?: (answer: string, options: readonly OfferedOption[]) => string; onAccepted?: (text: string) => Effect.Effect<Taken> }>;
 /** Issue #243: what an answer taken beside the run is: an answer the question accepts, an end of the run, Help me decide, or rejected. */

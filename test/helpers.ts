@@ -1057,7 +1057,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   planner.terms = [...(options.terms ?? [])];
   planner.replies = [...(options.replies ?? [])];
   planner.closings = [...(options.closings ?? [])];
-  planner.ui = ui;
+  planner.ui = options.ui ?? ui;
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
   reviewer.updateChecks = [...(options.updateChecks ?? [])];
@@ -1065,7 +1065,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   const tracker = options.tracker === undefined ? fakeTrackerOf([scriptedItem]) : options.tracker;
   const suite = new ScriptedSuite(options.suite ?? [], options.suiteReports ?? []);
   const wiring: Wiring = {
-    ui: Effect.succeed(ui),
+    ui: Effect.succeed(options.ui ?? ui),
     platform: platformLayer,
     ...(options.store === undefined ? {} : { store: options.store }),
     sdk: new FakeSdk(),
@@ -1276,4 +1276,11 @@ export const askedInPlanReview = (options: TestOptions): TestOptions => {
     steps: [{ ...first, output: { ...output, questions_for_user: [] } }, { output: respond([["P1-R1-1", "rejected"]], { questions_for_user: questions as PlannerResponse["questions_for_user"] }) }, ...rest],
     reviews: [{ issues: [issue("P1-R1-1")] }, ...(options.reviews ?? [])],
   };
+};
+
+/** W6-R1-1: a promise with its resolver, for a test that holds an effect until it releases it. */
+export const resolvable = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve = () => {};
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve: () => resolve() };
 };

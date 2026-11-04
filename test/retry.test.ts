@@ -20,7 +20,7 @@ import { makeWebUi } from "../src/webUi.ts";
 import { makeStore } from "../src/store.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import { countdownView } from "../web/src/state.ts";
-import { finished, issue, noDecider, respond, type ScriptedAnswer, ScriptedUi, steppingClock, tempRepo, testLayer , TEST_ROOT } from "./helpers.ts";
+import { finished, issue, noDecider, resolvable, respond, type ScriptedAnswer, ScriptedUi, steppingClock, tempRepo, testLayer , TEST_ROOT } from "./helpers.ts";
 import { run } from "../src/run.ts";
 import { para } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
@@ -755,4 +755,43 @@ test("#243: Retry again, then a second exhaustion: a second, new question is pre
   const presented = ui.notified.filter((e) => e._tag === "QuestionPresented").map((e) => (e._tag === "QuestionPresented" ? e.question.number : 0));
   assert.equal(presented.length, 2);
   assert.notEqual(presented[0], presented[1]);
+});
+
+// ---- W6-R1-1: a question's Scope closed by the call's cleanup even while the question is being presented ----
+
+test("W6-R1-1: the call interrupted while the exhaustion question's record is written: once the write is released, no question is asked and nothing more is written", async () => {
+  const repo = tempRepo();
+  const store = await Effect.runPromise(makeStore(repo, TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
+  await Effect.runPromise(store.init("task"));
+  const questionText = prompts.transportExhaustedQuestion("claude", "the call");
+  const reached = resolvable();
+  const release = resolvable();
+  let released = false;
+  const afterRelease: string[] = [];
+  const held = {
+    ...store,
+    saveChoice: () => Effect.void,
+    converse: (text: string) =>
+      Effect.suspend(() => {
+        if (released) afterRelease.push(text);
+        return text.includes(questionText) ? Effect.promise(() => (reached.resolve(), release.promise)).pipe(Effect.andThen(store.converse(text))) : store.converse(text);
+      }),
+  };
+  const events: RunEvent[] = [];
+  const web = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const config = { ...S.defaultConfig, maxTransportRetries: 2, transportRetryDelaySeconds: 0.01 };
+  const layer = Layer.mergeAll(Layer.succeed(Store, held), Layer.succeed(Ui, web), Layer.succeed(RunConfig, config), Layer.succeed(Decider, noDecider));
+  const { clock } = steppingClock(START);
+  const { attempt } = scripted(["fault", "fault", "fault", "fault", "fault"]);
+  const fiber = Effect.runFork(withTransportRetry("claude", "planning", "the call", attempt, Effect.void).pipe(withClock(clock), Effect.provide(layer)));
+  await reached.promise;
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  const before = events.length;
+  released = true;
+  release.resolve();
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(events.slice(before).filter((e) => e._tag === "Asked" && e.beside !== null).length, 0, "an Asked with beside was published after the release");
+  assert.equal(events.filter((e) => e._tag === "Asked" && e.beside !== null).length, 0);
+  assert.equal(await Effect.runPromise(web.pending), null);
+  assert.deepEqual(afterRelease, []);
 });
