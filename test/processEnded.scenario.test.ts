@@ -46,7 +46,7 @@ for (const [name, ending] of [
   });
 }
 
-// Issue #162 (W1-R1-1): a continued phase whose later call's process ended keeps the checks its earlier calls reported.
+// Issue #162 (W1-R1-1): a continued phase whose later call's process ended keeps the checks its earlier calls reported; since issue #245 shown without their seconds.
 test("a continued phase whose process then ended gives the work review the checks of its earlier call", async () => {
   const continuing: ExecCallOutcome = { status: "continuing", summary: "half", remainingWork: "S2 and S3", checks: [{ step: "S1", command: "npm run test:unit", seconds: 30, selection: false, counts: null }] };
   const { layer, probe } = testLayer(tempRepo(), {
@@ -57,7 +57,8 @@ test("a continued phase whose process then ended gives the work review the check
   });
   assert.equal(await runTask(layer), 2);
   const workReview = probe.reviewer.prompts[1];
-  assert.ok(workReview.includes("`npm run test:unit` (30 seconds)"), "the work review was not given the earlier call's check");
+  assert.ok(workReview.includes("- S1: `npm run test:unit`"), "the work review was not given the earlier call's check");
+  assert.ok(!workReview.includes("30 seconds"), "the work review was shown a check's seconds");
   assert.ok(!workReview.includes("none reported"));
   assert.equal(probe.ui.notified.filter((e) => e._tag === "PhaseBegan" && e.phase.kind === "planning").length, 2);
 });
