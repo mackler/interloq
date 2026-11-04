@@ -1496,7 +1496,7 @@ test.describe("the tests of the transportLong server, in order", () => {
       await page.setViewportSize({ width, height });
       await startTask(page, TRANSPORT_LONG_URL);
       const question = pane(page).locator(".question-text");
-      await expect(question).toContainText("Do you want Interloq to retry again, or to stop the run?");
+      await expect(question).toContainText("Do you want Interloq to retry again at once with a full set of retries, or to stop the run?");
       await expect(question).not.toContainText("endpoint");
       const firstOption = () => page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
       const together = async (what: string) => {

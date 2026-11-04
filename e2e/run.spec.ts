@@ -764,7 +764,7 @@ test.describe("the tests of the transportRetry server, in order", () => {
 test.describe("the tests of the unchangedPause server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  test("(18) the pause of an accepted issue with the file unchanged: Proceed continues the review (issue #30)", async ({ page }) => {
+  test("(18) the question of an accepted issue with the file unchanged is open beside the running review; Proceed is taken and the run ends (issues #30, #243)", async ({ page }) => {
     await startTask(page, "unchangedPause");
     await option(page, new RegExp(`^p\\. ${UNCHANGED_PROCEED}`)).click();
     await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]").getByText(UNCHANGED_PROCEED)).toBeVisible();

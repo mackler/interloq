@@ -303,7 +303,8 @@ export const SCENARIOS: Record<string, TestOptions> = {
     reviews: [{ issues: [issue("D1-R1-1", "The advantage of SQLite states no extent.")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   }),
-  // A long transcript: 60 accepted rounds, then two rounds without an acceptance and the idle pause, which waits.
+  // A long transcript: 60 accepted rounds, then two rounds without an acceptance, whose idle question is open beside the
+  // review (issue #243: it no longer waits), then a round whose response carries Claude Code's own question, which waits.
   long: {
     config: { maxRounds: 100, maxIdleRounds: 2 },
     steps: [
@@ -311,9 +312,10 @@ export const SCENARIOS: Record<string, TestOptions> = {
       ...Array.from({ length: LONG }, (_, i) => ({ output: respond([[`P1-R${i + 1}-1`, "accepted"]]), plan: `v${i + 1}\n`, resultText: `Round ${i + 1}: the plan now covers point ${i + 1} in detail. `.repeat(4) })),
       { output: respond([[`P1-R${LONG + 1}-1`, "rejected"]]) },
       { output: respond([[`P1-R${LONG + 2}-1`, "rejected"]]) },
+      { output: respond([[`P1-R${LONG + 3}-1`, "rejected"]], { questions_for_user: [questionOf({ context: "c", question: "Which database should the service use?", terms: [], options: [] })] }) },
     ],
     reviews: [
-      ...Array.from({ length: LONG + 2 }, (_, i) => ({ issues: [issue(`P1-R${i + 1}-1`, `Point ${i + 1} of the plan is not specific enough to implement without guessing.`)] })),
+      ...Array.from({ length: LONG + 3 }, (_, i) => ({ issues: [issue(`P1-R${i + 1}-1`, `Point ${i + 1} of the plan is not specific enough to implement without guessing.`)] })),
       { issues: [] },
       { issues: [] },
     ],
@@ -343,14 +345,16 @@ SCENARIOS.transportRetry = {
   execs: [finished],
   config: { maxTransportRetries: 3, transportRetryDelaySeconds: 2 },
 };
-// Issue #30: an accepted issue with plan.json unchanged after the corrective turn: the pause, answered Proceed.
+// Issue #30: an accepted issue with plan.json unchanged after the corrective turn: the question, answered Proceed.
+// Issue #243: the question is open beside the running review; its second cycle is held (a timed gate, since the test
+// cannot reach into the server) so that the test answers while the review runs.
 SCENARIOS.unchangedPause = {
   steps: [
     { output: noQuestions, plan: "1. [ ] the step\n" },
     { output: respond([["P1-R1-1", "accepted"]]) },
     { output: respond([["P1-R1-1", "accepted"]]) },
   ],
-  reviews: [{ issues: [issue("P1-R1-1", "The step names no file.")] }, { issues: [] }, { issues: [] }],
+  reviews: [{ issues: [issue("P1-R1-1", "The step names no file.")] }, { issues: [], gate: () => new Promise<void>((r) => setTimeout(r, 20_000)) }, { issues: [] }],
   execs: [finished],
 };
 
