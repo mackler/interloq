@@ -6,6 +6,7 @@ import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, 
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 import { FIGURE_NARROW } from "./figures.ts";
+import { FIGURE_VIEW_MARGIN } from "../web/src/figureView.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
 // and both columns are side by side; below it, one column at a time, chosen by its title, and a prompt selects "You and
@@ -1953,6 +1954,13 @@ test.describe("the tests of the figureChoices server, in order", () => {
    * than the card's picture, its drawing scaled with it; a click inside the view, Escape, a click on the picture and the
    * close control send no answer.
    */
+  // A view closed, or a page laid out anew, leaves the pointer where it was, and a picture under it opens its own view by
+  // hover: the window's edge margin is the one place no view covers, so the pointer goes there and every view closes.
+  const pointerToMargin = async (page: Page) => {
+    const edge = FIGURE_VIEW_MARGIN / 4;
+    await page.mouse.move(edge, edge);
+    await expect(page.locator("[data-figure-view]")).toHaveCount(0);
+  };
   const enlargedChoosesNothing = async (page: Page, size: string) => {
     const lastAnswers = await page.locator("[data-last-answer]").count();
     const control = page.locator("[data-choice]").nth(0).locator("[data-figure-enlarge]");
@@ -1983,6 +1991,7 @@ test.describe("the tests of the figureChoices server, in order", () => {
     await expect(cards(page)).toHaveCount(2);
     await page.keyboard.press("Escape");
     await expect(view).toBeHidden();
+    await pointerToMargin(page);
     await control.click();
     await expect(view).toBeVisible();
     await expect(cards(page)).toHaveCount(2);
@@ -2007,6 +2016,7 @@ test.describe("the tests of the figureChoices server, in order", () => {
       await expect(analysis).toBeVisible();
       await picturesOnCards(page);
       expect(await analysis.locator(".column [data-option-figure]").count(), "the columns show no picture").toBe(0);
+      await pointerToMargin(page);
       await answerDismisses(page, analysis);
     });
   }
