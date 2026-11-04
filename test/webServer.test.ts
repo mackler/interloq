@@ -7,13 +7,14 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
 import { test } from "node:test";
 import { Deferred, Effect, Exit, Fiber, Layer, Option, Result, Schema } from "effect";
 import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
-import { decodeClient as decodeClientMessage, listedItemOf, ServerMessageSchema } from "../src/protocol.ts";
+import { decodeClient as decodeClientMessage, decodeServer, FELL_BEHIND_FRAME, listedItemOf, ServerMessageSchema } from "../src/protocol.ts";
 import type { ClientMessage, ListedItem, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
 import { makeWebServer, OUTPUT_BACKLOG_BOUND, requestTarget } from "../src/webServer.ts";
@@ -26,6 +27,7 @@ import type { ItemId } from "../src/tracker.ts";
 import { listedState } from "../src/runMode.ts";
 import { runInProgressText, termsChoiceLine, WAIT_ALREADY_ENDED_TEXT } from "../src/prompts.ts";
 import { initialState, reduce, type TimelineEntry } from "../web/src/state.ts";
+import { connectionNotices, messages as pageMessages } from "../web/src/notices.ts";
 import { railView } from "../web/src/rail.ts";
 import { choiceOf, isOpen } from "../src/uiState.ts";
 import { codexReviewerLayer } from "../src/codex.ts";
@@ -456,16 +458,20 @@ test("a client that sends start and closes at once leaves the server in a state 
 });
 
 // Finding 15 of docs/gui-review.md: the server can be stopped while a tab holds its WebSocket.
-type Watched = Client & { closedAt: () => number | null };
+type Watched = Client & { closedAt: () => number | null; raw: readonly string[] };
 const watch = (port: number): Promise<Watched> =>
   new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     const messages: ServerMessage[] = [];
+    const raw: string[] = [];
     let closedAt: number | null = null;
-    ws.onmessage = (e) => void messages.push(JSON.parse(String(e.data)));
+    ws.onmessage = (e) => {
+      raw.push(String(e.data));
+      messages.push(JSON.parse(String(e.data)));
+    };
     ws.onclose = () => void (closedAt = messages.length);
     ws.onerror = () => reject(new Error("the WebSocket failed"));
-    ws.onopen = () => resolve({ messages, send: (m) => ws.send(JSON.stringify(m)), close: () => ws.close(), closedAt: () => closedAt });
+    ws.onopen = () => resolve({ messages, send: (m) => ws.send(JSON.stringify(m)), close: () => ws.close(), closedAt: () => closedAt, raw });
   });
 const serving = async (closingFirst: boolean) => {
   const repo = tempRepo();
@@ -493,7 +499,11 @@ test("the closing finalizer registered before serveEffect runs after the HTTP sh
 });
 
 // Finding 13 of docs/gui-review.md: a tab that falls behind by the bound is told, disconnected and recovers by replay.
-test("a tab that falls behind by its queue's bound is told, its socket is closed, and a reconnect gets the whole replay", async () => {
+/**
+ * Finding 13: a tab of a fake run that falls behind its queue's bound of 3 in a burst of events; `body` is given the slow
+ * tab once its socket closed, the port, the listeners and the replayed events.
+ */
+const fallBehind = async (body: (slow: Watched, port: number, listeners: readonly unknown[], events: readonly Stamped[]) => Promise<void>): Promise<void> => {
   const listeners: ((b: Broadcast) => Effect.Effect<void>)[] = [];
   const time = "2026-09-27T14:00:00.000Z";
   const events: Stamped[] = [{ time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id: "1", title: "t" } } }, ...Array.from({ length: 20 }, (_, i): Stamped => ({ time, event: { _tag: "Said", text: `line ${i}` } }))];
@@ -532,18 +542,42 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
           const listener = listeners[0];
           await run(Effect.forEach(Array.from({ length: 20 }, (_, i) => i + 21), (seq) => listener({ _tag: "event", run: 1, seq, time, event: { _tag: "Said", text: `later ${seq}` } }), { discard: true }));
           await until("the close", () => slow.closedAt() !== null);
-          assert.ok(refusals(slow).some((r) => /too far behind/.test(r)), `refusals: ${refusals(slow)}`);
-          await until("the listener's removal", () => listeners.length === 0);
-          const again = await connect(port);
-          await until("the replay", () => again.messages.some((m) => m.type === "replay"));
-          const replay = again.messages.find((m) => m.type === "replay");
-          assert.equal(replay?.type === "replay" ? replay.runs[0].events.length : 0, events.length);
-          again.close();
+          await body(slow, port, listeners, events);
         });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
-});
+};
+
+test("a tab that falls behind by its queue's bound is told, its socket is closed, and a reconnect gets the whole replay", () =>
+  fallBehind(async (slow, port, listeners, events) => {
+    // Issue #13: told by a frame of its own, never by a refusal of no mode distinguished by its wording.
+    assert.ok(slow.messages.some((m) => isDeepStrictEqual(m, FELL_BEHIND_FRAME)), `messages: ${JSON.stringify(slow.messages.map((m) => m.type))}`);
+    assert.deepEqual(slow.messages.filter((m) => m.type === "refused" && m.mode === null), []);
+    await until("the listener's removal", () => listeners.length === 0);
+    const again = await connect(port);
+    await until("the replay", () => again.messages.some((m) => m.type === "replay"));
+    const replay = again.messages.find((m) => m.type === "replay");
+    assert.equal(replay?.type === "replay" ? replay.runs[0].events.length : 0, events.length);
+    again.close();
+  }));
+
+// Issue #13, the seam of requirement 5: the frame the real server writes to a tab that fell behind, decoded as the page
+// decodes it and folded by the page's reducer, is a connection notice, which the next connection's hello withdraws.
+test("the fallen-behind frame the server sends is a connection notice in the page", () =>
+  fallBehind(async (slow) => {
+    const view = slow.raw.reduce((state, text) => {
+      const decoded = decodeServer(text);
+      assert.ok(Result.isSuccess(decoded), `a frame the page could not read: ${text.slice(0, 200)}`);
+      return reduce(state, decoded.success);
+    }, initialState);
+    assert.deepEqual(connectionNotices(view.notices).map((n) => n.kind), [{ _tag: "Connection", condition: { _tag: "FellBehind" } }]);
+    assert.deepEqual(pageMessages(view.notices), []);
+    assert.equal(view.connection, "reconnecting");
+    const hello = slow.messages.find((m) => m.type === "hello");
+    assert.ok(hello !== undefined);
+    assert.deepEqual(connectionNotices(reduce(view, hello).notices), []);
+  }));
 
 // Issue #87 (decision G-R1-1): the seam of the shared state. Two tabs of one run, and a third that connects later, fold
 // the server's frames with the page's own reducer and agree on which entries are open; an entry of one decision is a

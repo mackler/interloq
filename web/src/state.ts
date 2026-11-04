@@ -9,8 +9,9 @@ import { type PreparationMark, type PreparationView, preparingItemOf } from "../
 import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
+import { added, afterHello as noticesAfterHello, type ConnectionCondition, dismissed, EMPTY_NOTICES, type NoticeId, type Notices } from "./notices.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, NO_UNANSWERED_QUESTIONS, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, NO_UNANSWERED_QUESTIONS, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -323,8 +324,12 @@ export type ViewState = Readonly<{
   runModes: Readonly<Record<number, RunMode>>;
   /** A seq that did not follow: the page must reconnect to receive the replay. */
   needsReconnect: boolean;
-  /** Messages from the server or the page for the user that belong to no tab: notices, and refusals of no mode. */
-  notices: readonly string[];
+  /**
+   * Issue #13: the notices that belong to no tab, each with its id and kind: a condition of the connection, withdrawn by
+   * the hello of the connection that ends it, or a message for the developer (an action not delivered, a draft withdrawn
+   * or expired, a refusal of no mode), kept until he dismisses it.
+   */
+  notices: Notices;
   /** The answers the page could not send and could not put back into the answer field, in order, until dismissed. */
   unsent: readonly string[];
   /**
@@ -383,7 +388,7 @@ export const initialState: ViewState = {
   closed: [],
   runModes: {},
   needsReconnect: false,
-  notices: [],
+  notices: EMPTY_NOTICES,
   unsent: [],
   termsChoice: null,
   chain: null,
@@ -1240,11 +1245,22 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
 
 const foldRun = (id: number, events: readonly Stamped[]): RunView => events.reduce(foldEvent, emptyRun(id));
 
-/** A notice for the user that the page itself produces (for example an action discarded after a reconnect). */
-export const notice = (state: ViewState, text: string): ViewState => ({ ...state, notices: [...state.notices, text] });
+/** A message for the developer that the page itself produces (for example an action discarded after a reconnect). */
+export const notice = (state: ViewState, text: string): ViewState => ({ ...state, notices: added(state.notices, { _tag: "Message", text }) });
 
-/** A frame of the server the page could not read, the count-th in a row: one notice for a run of them (decision Q2). */
-export const protocolError = (state: ViewState, reason: string, count: number): ViewState => (count === 1 ? notice(state, protocolErrorNotice(reason)) : state);
+/** A condition of the connection, shown until the next connection's hello (issue #13). */
+export const connectionNotice = (state: ViewState, condition: ConnectionCondition): ViewState => ({ ...state, notices: added(state.notices, { _tag: "Connection", condition }) });
+
+/**
+ * A frame of the server the page could not read (decision Q2), a connection notice (issue #13, Q1) added on every one,
+ * whatever its count in a row: the socket resets its count only on a decoded replay, so a failure after a hello that
+ * withdrew the notice may arrive with a count above 1. A run of them holds one notice, its latest reason, because a
+ * connection condition replaces its earlier notice (`added`).
+ */
+export const protocolError = (state: ViewState, reason: string, _count: number): ViewState => connectionNotice(state, { _tag: "Unreadable", reason });
+
+/** The notices without the developer's message of that id (issue #13). */
+export const dismissNotice = (state: ViewState, id: NoticeId): ViewState => ({ ...state, notices: dismissed(state.notices, id) });
 /** An answer not sent that could not go back to its field, kept for the user to copy (P1-R1-2). */
 /** A chain frame sent, or queued where `queued`, recorded until the server acknowledges it (issue #147). */
 export const chainSent = (state: ViewState, frame: ChainFrameSettings, queued: boolean): ViewState => ({
@@ -1375,7 +1391,7 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // a new server's (`restartedMode`); the same incarnation is a reconnection (`reconnectedMode`).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(currentOf(message.current, m)) : reconnectedMode(state.modes[m], currentOf(message.current, m))])) as Record<RunMode, ModeView>;
-      const helloed: ViewState = { ...state, modes, closed: restarted ? [] : state.closed, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, preparation: message.preparation, ...chainAfterHello(state, message.chain, restarted), ...queueAfterHello(state) };
+      const helloed: ViewState = { ...state, modes, closed: restarted ? [] : state.closed, runModes: restarted ? {} : state.runModes, connection: "open", notices: noticesAfterHello(state.notices), location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, preparation: message.preparation, ...chainAfterHello(state, message.chain, restarted), ...queueAfterHello(state) };
       // W3-R1-1: a reconnection of the same incarnation asks again, once, for a Refinement list still shown and listed,
       // whatever was outstanding: a preparation frame, an automatic listing or a deferred change may have been lost with
       // the old connection, and the hello cannot tell which. It costs one listing per reconnection while the list is
@@ -1443,7 +1459,13 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
     case "closing":
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.
-      return notice({ ...state, connection: state.connection === "failed" ? "failed" : "reconnecting" }, SERVER_CLOSED_NOTICE);
+      // Issue #13: a connection notice, withdrawn by the next connection's hello.
+      return connectionNotice({ ...state, connection: state.connection === "failed" ? "failed" : "reconnecting" }, { _tag: "ServerClosed" });
+    case "behind":
+      // Issue #13: the server closes this tab for falling too far behind; it sends the close right after this frame and
+      // the socket changes the connection only on that close, so the page says reconnecting here, never "connected"
+      // beside the notice. A failed page stays failed.
+      return connectionNotice({ ...state, connection: state.connection === "failed" ? "failed" : "reconnecting" }, { _tag: "FellBehind" });
     case "output":
       // Issue #49: the live output is never folded here; the panel's own buffer (web/src/livePanel.ts) takes it.
       return state;

@@ -28,6 +28,8 @@
   // clamped to the window, so a resize never rewrites them. No separator exists below 840 px, and the panels' one is
   // absent while the decision page spans both panels.
   import { Button, ConnectedButtons } from "m3-svelte";
+  import Notices from "./Notices.svelte";
+  import type { NoticeId } from "../notices.ts";
   import ScrollableTabs from "./ScrollableTabs.svelte";
   import EndedLine from "./EndedLine.svelte";
   import ModeTabs from "./ModeTabs.svelte";
@@ -53,7 +55,7 @@
   import ColumnSeparator from "./ColumnSeparator.svelte";
   import { Result } from "effect";
   import { ownName } from "../../../src/hostDir.ts";
-  import { limitPauseOf, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainRunsToggled, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { limitPauseOf, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainRunsToggled, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissNotice, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -97,9 +99,10 @@
     if (isTermsRequest(text) && own !== null && own._tag === "Held" && own.key.prompt === prompt && number !== undefined) drafts = { ...drafts, [key]: carried(own, number) };
     send({ type: "answer", incarnation: view.incarnation ?? "", run: target.id, prompt, text });
   };
+  /** Issue #13: the developer dismisses one message; nothing else removes it. */
+  const dismiss = (id: NoticeId) => (view = dismissNotice(view, id));
   /** Issue #142: a refinement starts with the choice of terms its tab's control shows. */
   const startItem = (mode: RunMode, item: ListedItem) => {
-    noticesSeen = view.notices.length;
     // Issue #191: this page shows the run it started when its Started arrives.
     view = startRequested(view, mode, item.id);
     if (mode === "implementation") return send(startFrame({ mode, item }));
@@ -241,9 +244,6 @@
     view = selectMode(view, value);
     if (showsList(value) && view.connection === "open") requestItems(value);
   };
-  // The notices since the user last started a run or went back to a list.
-  let noticesSeen = $state(0);
-  const latestNotice = $derived(view.notices.length > noticesSeen ? (view.notices.at(-1) ?? null) : null);
   const offline = $derived(view.connection === "failed");
   // Issue #131: the preparation's switch, on the Refinement tab alone, and a new listing of its items whenever the item
   // being prepared changes while that list is shown, without the loading state, so every row's mark follows the pass.
@@ -290,7 +290,6 @@
   });
   /** A tab's items, asked for again as a revisited list is (S15). */
   const toList = (m: RunMode) => {
-    noticesSeen = view.notices.length;
     view = focusList(view, m);
     if (view.connection === "open") requestItems(m);
   };
@@ -472,7 +471,7 @@
 <svelte:window bind:innerWidth={width} />
 <div class="app">
   <TopBar {run} location={view.location} incarnation={view.incarnation} connection={view.connection} onStop={(incarnation, id) => send({ type: "stop", incarnation, run: id })} {preferences} {permission} onPreferences={choose} onRequestPermission={requestPermission} />
-  <!-- A failed page says so for as long as it lasts, apart from the notices, which a new task marks as seen, and keeps
+  <!-- A failed page says so for as long as it lasts, apart from the notices (issue #13: a connection notice until the next hello, a message until dismissed), and keeps
        the answers it could not send until each is dismissed [visibility of system status; help users recognise,
        diagnose and recover from errors; user control and freedom: nothing typed is lost]. -->
   {#if offline}<p class="notice failed m3-font-body-medium" role="alert">{CONNECTION_FAILED_NOTICE}</p>{/if}
@@ -504,10 +503,10 @@
   {#if tab.refusal !== null}<p class="notice refusal m3-font-body-medium" role="alert">{tab.refusal}</p>{/if}
   {#if showList}
     <main class="list">
-      <!-- W2-R1-2: the run's branch, which holds the other notices, is unmounted while the list shows, so the latest
-           notice is shown here at every width and with an ended run attached [help users recognize, diagnose, and
+      <!-- W2-R1-2: the run's branch, which holds the other notices, is unmounted while the list shows, so the
+           notices are shown here at every width and with an ended run attached [help users recognize, diagnose, and
            recover from errors; visibility of system status]. -->
-      {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
+      <Notices notices={view.notices} onDismiss={dismiss} />
       {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} runsOpen={view.chainRunsOpen} onRunsToggle={toggleChainRuns} />{/if}
       {#if preparation !== null}<PreparationControl view={preparation} onChange={setPreparation} />{/if}
       {#if queue !== null && queue.source === "queue"}<QueueEditor {queue} listed={listedIds} {offline} onEdit={editQueue} />{/if}
@@ -534,8 +533,8 @@
             {/each}
           </ConnectedButtons>
         {/if}
-        <!-- The latest notice above the panels, whichever is shown (W2-R1-2) [visibility of system status]. -->
-        {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
+        <!-- The notices above the panels, whichever is shown (W2-R1-2, issue #13) [visibility of system status]. -->
+        <Notices notices={view.notices} onDismiss={dismiss} />
       {:else if chain !== null}
         <!-- Issue #147: the chain's control at the top of the rail's column, which holds no question, so the question
              pane and the decision page keep their room. The column takes the rail's place in the grid. -->
@@ -599,7 +598,7 @@
         {#if asking && !deciding}
           <div class="dashboard-compact" class:running={hasRunning(runOutput)}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} onEndWait={(w) => { if (run !== null) endWait(run, w); }} endWaitSent={(w) => run !== null && endWaitsSent.has(endWaitKey(run, w))} /></div>
         {/if}
-        {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
+        {#if !compact}<Notices notices={view.notices} onDismiss={dismiss} />{/if}
         {#if run.ended !== null}
           <div class="ended">
             <EndedLine ending={run.ended} />

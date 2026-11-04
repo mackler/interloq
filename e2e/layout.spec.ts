@@ -1448,7 +1448,8 @@ test.describe("the tests of the permissionLong server, in order", () => {
     const reason = "a run is in progress; stop it or wait for its end";
     expect(toPage, "the page's WebSocket was not routed").not.toBeNull();
     toPage!(JSON.stringify({ type: "refused", mode, reason }));
-    await expect(page.getByRole("alert").filter({ hasText: reason })).toBeVisible();
+    // Issue #13: a refusal of no mode is a message, an entry of the messages' list; one of the run's mode an alert.
+    await expect(page.locator('[role="alert"], [data-notice="messages"] li').filter({ hasText: reason })).toBeVisible();
     // The room is measured again when the line appears (an observer of the run's children or of its size), and the
     // analysis is laid out again after it; the layout settles within a few frames, so the check is retried until then.
     await expect(async () => questionAndFirstAnswerAtTheTop()).toPass({ timeout: 5_000 });

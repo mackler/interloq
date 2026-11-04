@@ -20,7 +20,8 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { limitPauseOf, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { limitPauseOf, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState, dismissNotice, notice } from "./state.ts";
+import { type ConnectionCondition, connectionNotices, messages, type Notices } from "./notices.ts";
 import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
 import { tabTitle } from "./title.ts";
@@ -49,7 +50,10 @@ const at = (seconds: number): string => new Date(BASE + seconds * 1000).toISOStr
 const stamp = (events: readonly RunEvent[], times?: readonly number[]): Stamped[] => events.map((event, seq) => ({ time: at(times?.[seq] ?? seq), event }));
 /** The live messages of one run: hello, an empty replay, then the events with seq from 0. */
 const live = (events: readonly RunEvent[], run = 1, times?: readonly number[]): ServerMessage[] => [hello(run), { type: "replay", ui: [], runs: [] }, ...stamp(events, times).map(({ time, event }, seq): ServerMessage => ({ type: "event", run, seq, time, event }))];
-const fold = (messages: readonly ServerMessage[], from: ViewState = initialState): ViewState => messages.reduce(reduce, from);
+const fold = (frames: readonly ServerMessage[], from: ViewState = initialState): ViewState => frames.reduce(reduce, from);
+/** Issue #13: the texts of the developer's messages, and the conditions of the connection notices, held. */
+const messageTexts = (n: Notices): readonly string[] => messages(n).map((m) => (m.kind._tag === "Message" ? m.kind.text : ""));
+const conditions = (n: Notices): readonly ConnectionCondition[] => connectionNotices(n).flatMap((c) => (c.kind._tag === "Connection" ? [c.kind.condition] : []));
 const replayed = (events: readonly RunEvent[], run = 1, current: number | null = run, times?: readonly number[]): ViewState => fold([hello(current), { type: "replay", ui: [], runs: [{ id: run, events: stamp(events, times) }] }]);
 /** A shown plan without its stages' rendering keys: the plan it shows. */
 const bare = (p: ShownPlan | null) => (p === null ? null : { stages: p.stages.map(({ key: _key, ...st }) => st) });
@@ -701,10 +705,10 @@ describe("runs, replay and gaps", () => {
   test("a refusal of a mode goes to that mode's tab alone, whichever tab is shown; one of no mode becomes a notice", () => {
     const shown = selectMode(fold([hello(null)]), "implementation");
     const s = fold([{ type: "refused", mode: "refinement", reason: "a refinement run is in progress" }], shown);
-    expect([s.modes.refinement.refusal, s.modes.implementation.refusal, s.notices]).toEqual(["a refinement run is in progress", null, []]);
+    expect([s.modes.refinement.refusal, s.modes.implementation.refusal, s.notices.held]).toEqual(["a refinement run is in progress", null, []]);
     expect(s.connection).toBe("open");
     const none = fold([{ type: "refused", mode: null, reason: "not a message" }], s);
-    expect(none.notices).toEqual(["not a message"]);
+    expect(messageTexts(none.notices)).toEqual(["not a message"]);
     expect(none.modes.refinement.refusal).toBe("a refinement run is in progress");
   });
 
@@ -886,7 +890,101 @@ describe("the server closing", () => {
   test("closing sets the connection to reconnecting and says so", () => {
     const next = reduce(reduce(initialState, hello()), { type: "closing" });
     expect(next.connection).toBe("reconnecting");
-    expect(next.notices.at(-1)).toBe(prompts.SERVER_CLOSED_NOTICE);
+    expect(conditions(next.notices)).toEqual([{ _tag: "ServerClosed" }]);
+  });
+});
+
+// Issue #13: a notice about the connection ends with the condition it describes; every message survives a reconnection.
+describe("notices across a reconnection", () => {
+  const other: ServerMessage = { ...hello(), incarnation: "b" } as ServerMessage;
+  test("closing then a hello leaves no connection notice and the connection open", () => {
+    const s = fold([hello(), { type: "closing" }, hello()]);
+    expect(conditions(s.notices)).toEqual([]);
+    expect(s.connection).toBe("open");
+  });
+
+  test("behind sets the connection reconnecting with its notice before any close; a failed page stays failed; a hello ends it", () => {
+    const s = fold([hello(), { type: "behind" }]);
+    expect(s.connection).toBe("reconnecting");
+    expect(conditions(s.notices)).toEqual([{ _tag: "FellBehind" }]);
+    expect(reduce({ ...fold([hello()]), connection: "failed" }, { type: "behind" }).connection).toBe("failed");
+    expect(conditions(reduce(s, hello()).notices)).toEqual([]);
+  });
+
+  test("an unreadable frame then a hello leaves no connection notice; a later failure is shown again", () => {
+    const one = protocolError(fold([hello()]), "r1", 1);
+    expect(conditions(one.notices)).toEqual([{ _tag: "Unreadable", reason: "r1" }]);
+    const after = reduce(one, hello());
+    expect(conditions(after.notices)).toEqual([]);
+    expect(conditions(protocolError(after, "r2", 2).notices)).toEqual([{ _tag: "Unreadable", reason: "r2" }]);
+    expect(conditions(protocolError(protocolError(after, "a", 1), "b", 2).notices)).toEqual([{ _tag: "Unreadable", reason: "b" }]);
+  });
+
+  test("a message survives a hello of the same and of another incarnation; unsent is untouched", () => {
+    const s = keepUnsent(fold([{ type: "refused", mode: null, reason: "refused" }], notice(fold([hello()]), "mine")), "kept");
+    for (const h of [hello(), other]) {
+      const after = reduce(s, h);
+      expect(messageTexts(after.notices)).toEqual(["mine", "refused"]);
+      expect(after.unsent).toEqual(s.unsent);
+    }
+  });
+
+  test("dismissNotice removes that message alone", () => {
+    const s = notice(notice(fold([hello()]), "a"), "b");
+    const [first] = messages(s.notices);
+    expect(messageTexts(dismissNotice(s, first.id).notices)).toEqual(["b"]);
+  });
+
+  type Step =
+    | Readonly<{ _tag: "Frame"; frame: ServerMessage }>
+    | Readonly<{ _tag: "Unreadable"; reason: string; count: number }>
+    | Readonly<{ _tag: "Notice"; text: string }>
+    | Readonly<{ _tag: "Keep"; text: string }>
+    | Readonly<{ _tag: "Dismiss"; pick: number }>;
+  const arbStep: fc.Arbitrary<Step> = fc.oneof(
+    fc.constantFrom<ServerMessage>(hello(), other, { type: "closing" }, { type: "behind" }).map((frame): Step => ({ _tag: "Frame", frame })),
+    fc.string().map((reason): Step => ({ _tag: "Frame", frame: { type: "refused", mode: null, reason } })),
+    fc.tuple(fc.string(), fc.integer({ min: 1, max: 4 })).map(([reason, count]): Step => ({ _tag: "Unreadable", reason, count })),
+    fc.oneof(fc.string(), fc.constant(prompts.SERVER_CLOSED_NOTICE)).map((text): Step => ({ _tag: "Notice", text })),
+    fc.string().map((text): Step => ({ _tag: "Keep", text })),
+    fc.nat(10).map((pick): Step => ({ _tag: "Dismiss", pick })),
+  );
+
+  test("property: connection notices exactly since the last hello; never open beside one; messages and unsent kept", () => {
+    fc.assert(
+      fc.property(fc.array(arbStep, { maxLength: 30 }), (steps) => {
+        type Acc = Readonly<{ s: ViewState; since: boolean; model: readonly string[]; unsent: readonly string[] }>;
+        const end = steps.reduce<Acc>(
+          (acc, step) => {
+            switch (step._tag) {
+              case "Frame": {
+                const s = reduce(acc.s, step.frame);
+                const t = step.frame.type;
+                return { ...acc, s, since: t === "hello" ? false : t === "closing" || t === "behind" ? true : acc.since, model: t === "refused" ? [...acc.model, step.frame.type === "refused" ? step.frame.reason : ""] : acc.model };
+              }
+              case "Unreadable":
+                return { ...acc, s: protocolError(acc.s, step.reason, step.count), since: true };
+              case "Notice":
+                return { ...acc, s: notice(acc.s, step.text), model: [...acc.model, step.text] };
+              case "Keep":
+                return { ...acc, s: keepUnsent(acc.s, step.text), unsent: [...acc.unsent, step.text] };
+              case "Dismiss": {
+                const held = messages(acc.s.notices);
+                if (held.length === 0) return acc;
+                const i = step.pick % held.length;
+                return { ...acc, s: dismissNotice(acc.s, held[i].id), model: acc.model.filter((_, j) => j !== i) };
+              }
+            }
+          },
+          { s: fold([hello()]), since: false, model: [], unsent: [] },
+        );
+        expect(connectionNotices(end.s.notices).length > 0).toBe(end.since);
+        if (conditions(end.s.notices).some((c) => c._tag === "ServerClosed" || c._tag === "FellBehind")) expect(end.s.connection).not.toBe("open");
+        expect(messageTexts(end.s.notices)).toEqual(end.model);
+        expect(end.s.unsent).toEqual(end.unsent);
+      }),
+      { numRuns: 100, seed: 20261104 },
+    );
   });
 });
 
@@ -915,11 +1013,11 @@ describe("the interview's opening help", () => {
 // Defect B of docs/page-question-phase-defects.md: one notice per run of frames the page could not read (Q2), a failed
 // page that stays failed, and the answers not sent kept apart from the notices (P1-R1-2).
 describe("a frame the page could not read", () => {
-  test("the first of a run adds the notice with its reason; the second and third add none", () => {
+  // Issue #13: a connection notice, so a run of unreadable frames holds one, its latest reason.
+  test("a run of unreadable frames holds one connection notice, with the latest reason", () => {
     const s = [1, 2, 3].reduce((acc, n) => protocolError(acc, `reason ${n}`, n), fold([hello()]));
-    expect(s.notices).toEqual([prompts.protocolErrorNotice("reason 1")]);
-    const long = protocolError(initialState, "z".repeat(500), 1);
-    expect(long.notices[0].endsWith(`${"z".repeat(200)}…`)).toBe(true);
+    expect(conditions(s.notices)).toEqual([{ _tag: "Unreadable", reason: "reason 3" }]);
+    expect(messageTexts(s.notices)).toEqual([]);
   });
 
   test("the server's closing does not turn a failed page into a reconnecting one", () => {

@@ -186,12 +186,19 @@ export type ServerMessage =
   | Readonly<{ type: "preparation"; view: PreparationView }>
   /** The server is ending (finding 15 of docs/gui-review.md); the tab's socket is closed after this. */
   | Readonly<{ type: "closing" }>
+  /** Issue #13: this tab fell more than its bound behind the run (`subscribeBounded`); its socket is closed after this. */
+  | Readonly<{ type: "behind" }>
   /** Issue #49: what a running process of the run printed, live only: in no replay, and never sent again. */
   | Readonly<{ type: "output"; run: number; event: OutputEvent }>;
 
 const Int = S.NonNegativeInt;
 const Str = Schema.String;
 const tagged = <const T extends string, F extends Schema.Struct.Fields>(tag: T, fields: F) => Schema.Struct({ _tag: Schema.Literal(tag), ...fields });
+/**
+ * Issue #13: the one frame the server sends a tab it closes for falling more than its bound behind the run
+ * (`subscribeBounded` of src/webServer.ts). It carries no text: the page's words are `FELL_BEHIND_NOTICE`.
+ */
+export const FELL_BEHIND_FRAME: ServerMessage = { type: "behind" };
 const typed = <const T extends string, F extends Schema.Struct.Fields>(type: T, fields: F) => Schema.Struct({ type: Schema.Literal(type), ...fields });
 
 const SubjectIdSchema = Schema.Union([Schema.Literal("update"), Schema.Literal("questions"), Schema.Literal("terms"), Schema.Literal("requirements"), Schema.Struct({ plan: Int }), Schema.Struct({ work: Int }), Schema.Struct({ decision: Int }), Schema.Struct({ verdict: Int })]);
@@ -387,6 +394,7 @@ export const ServerMessageSchema = Schema.Union([
   typed("chain", { state: ChainStateSchema }),
   typed("preparation", { view: PreparationViewSchema }),
   typed("closing", {}),
+  typed("behind", {}),
   typed("output", { run: Int, event: OutputEventSchema }),
 ]);
 

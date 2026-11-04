@@ -1246,7 +1246,8 @@ describe("App and the draft", () => {
     // W2-R1-2 of work review 2 (S20): a notice of no mode is shown in the list view at every width, and after Back to the
     // list while the mode's ended run is still attached, exactly once.
     const globalNotice = "not a message: a frame the server could not read";
-    const alertsWith = (root: HTMLElement, text: string) => [...root.querySelectorAll("[role=alert]")].filter((e) => e.textContent?.includes(text));
+    // Issue #13: a refusal of no mode is a message, an entry of the messages' list.
+    const alertsWith = (root: HTMLElement, text: string) => [...root.querySelectorAll('[data-notice="messages"] li')].filter((e) => e.textContent?.includes(text));
     test("a notice of no mode shows once in the list view at a compact width", async () => {
       const width = window.innerWidth;
       Object.defineProperty(window, "innerWidth", { configurable: true, value: EXPANDED_MIN_WIDTH - 200 });
@@ -1270,6 +1271,52 @@ describe("App and the draft", () => {
       ws.receive({ type: "refused", mode: null, reason: globalNotice });
       flushSync();
       expect(alertsWith(root, globalNotice)).toHaveLength(1);
+    });
+
+    // Issue #13: a connection notice ends with its condition; a message stays until dismissed.
+    describe("notices", () => {
+      const connectionShown = (root: HTMLElement) => root.querySelectorAll('[data-notice="connection"]').length;
+      const messageTexts = (root: HTMLElement) => [...root.querySelectorAll('[data-notice="messages"] li')].map((li) => li.querySelector(".notice-text")?.textContent ?? "");
+      test("(a) after closing and a reconnection the page says connected with no connection notice", async () => {
+        vi.useFakeTimers();
+        try {
+          const { root, ws } = await begin();
+          ws.receive({ type: "closing" });
+          expect(connectionShown(root)).toBe(1);
+          expect(one(root, '[data-notice="connection"]').textContent).toContain(prompts.SERVER_CLOSED_NOTICE);
+          ws.close();
+          vi.advanceTimersByTime(30_000);
+          flushSync();
+          const next = FakeWebSocket.last!;
+          expect(next).not.toBe(ws);
+          next.onopen?.({});
+          next.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" });
+          expect(one(root, "header").textContent).toMatch(/connected/);
+          expect(one(root, "header").textContent).not.toMatch(/reconnecting/);
+          expect(connectionShown(root)).toBe(0);
+          expect(root.textContent).not.toContain(prompts.SERVER_CLOSED_NOTICE);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      test("(c) two messages are both shown; dismissing one leaves the other; starting a run removes neither", async () => {
+        const { root, ws } = await begin();
+        ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+        ws.receive({ type: "refused", mode: null, reason: "first message" });
+        ws.receive({ type: "refused", mode: null, reason: "second message" });
+        expect(messageTexts(root)).toEqual(["first message", "second message"]);
+        one(root, 'button[name=start][data-item="120"]').click();
+        flushSync();
+        expect(messageTexts(root)).toEqual(["first message", "second message"]);
+        const buttons = root.querySelectorAll('[data-notice="messages"] button[name="dismiss-notice"]');
+        expect(buttons).toHaveLength(2);
+        expect(buttons[0].textContent?.trim()).toBe(prompts.DISMISS_NOTICE);
+        (buttons[0] as HTMLElement).click();
+        flushSync();
+        expect(messageTexts(root)).toEqual(["second message"]);
+        expect(one(root, '[data-notice="messages"]').getAttribute("aria-label")).toBe(prompts.NOTICES_LABEL);
+      });
     });
 
     test("a prompt waiting in the hidden tab marks the browser tab's title", async () => {
@@ -1869,6 +1916,25 @@ describe("App and the draft", () => {
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "" }, asked(2)]) }] });
     expect(field(root).value).toBe("");
     expect(root.textContent).toMatch(/your unsent text was discarded: «draft for question one»/);
+  });
+
+  // Issue #13: a message the reconnection itself produces stays until dismissed; going back to the list removes nothing.
+  test("(b) a draft withdrawn by a reconnection's replay is a message shown until its Dismiss is pressed", async () => {
+    const { root, ws } = await openPage();
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+    type(field(root), "draft for question one");
+    ws.receive({ type: "closing" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "" }, asked(2)]) }] });
+    const items = () => [...root.querySelectorAll('[data-notice="messages"] li')];
+    expect(root.querySelectorAll('[data-notice="connection"]')).toHaveLength(0);
+    expect(items().map((li) => li.textContent)).toEqual([expect.stringContaining(prompts.draftWithdrawnNotice("draft for question one"))]);
+    (one(root, 'input[type=radio][value="list"]') as HTMLInputElement).click();
+    flushSync();
+    expect(items()).toHaveLength(1);
+    one(root, '[data-notice="messages"] button[name="dismiss-notice"]').click();
+    flushSync();
+    expect(items()).toHaveLength(0);
   });
 
   // Defect B of docs/page-question-phase-defects.md: three frames in a row the page cannot read end in a failed page

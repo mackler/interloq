@@ -111,6 +111,9 @@ test("the page's hint, notices, progress line and badge", () => {
   assert.equal(prompts.answerHint("message"), "Enter sends; Shift+Enter starts a new line.");
   assert.equal(prompts.draftWithdrawnNotice("my text"), "This question was answered in another tab; your unsent text was discarded: «my text»");
   assert.equal(prompts.SERVER_CLOSED_NOTICE, "The server has ended. The page reconnects when it is started again.");
+  assert.equal(prompts.FELL_BEHIND_NOTICE, "This tab fell too far behind the run; it is reconnecting to receive it again.");
+  assert.equal(prompts.NOTICES_LABEL, "Messages");
+  assert.equal(prompts.DISMISS_NOTICE, "Dismiss");
   assert.equal(prompts.notSentNotice("answer", "ended"), "Your answer was not sent: the run has ended.");
   assert.equal(prompts.notSentNotice("stop", "ended"), "Stop was not sent: the run has ended.");
   assert.equal(prompts.notSentNotice("answer", "restarted"), "Your answer was not sent: the server has been restarted since.");

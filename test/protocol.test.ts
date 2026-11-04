@@ -237,6 +237,8 @@ const server: fc.Arbitrary<ServerMessage> = fc.oneof(
   // Issue #131: the preparation's switch and status after a change.
   fc.record({ type: fc.constant("preparation" as const), view: preparationView }),
   fc.constant({ type: "closing" as const }),
+  // Issue #13: the frame of a tab the server closes for falling too far behind.
+  fc.constant({ type: "behind" as const }),
   fc.record({ type: fc.constant("replay" as const), runs: fc.array(runRecord, { maxLength: 2 }), ui: fc.array(fc.record({ run: nat, state: uiState }), { maxLength: 2 }) }),
   fc.record({ type: fc.constant("ui" as const), run: nat, state: uiState }),
   fc.record({ type: fc.constant("event" as const), run: nat, seq: nat, time: text, event: runEvent }),

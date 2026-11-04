@@ -4,7 +4,7 @@
 import { Deferred, Effect, Exit, FileSystem, Path, Queue, Ref, Result, type Scope } from "effect";
 import { HttpPlatform, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Socket } from "effect/socket";
-import { chainSettingsOf, type ClientMessage, decodeClient, inSnapshot, type ServerMessage } from "./protocol.ts";
+import { chainSettingsOf, type ClientMessage, decodeClient, FELL_BEHIND_FRAME, inSnapshot, type ServerMessage } from "./protocol.ts";
 import type { Broadcast, Refusal, RunManager } from "./runManager.ts";
 import { backlogAdmit, backlogTake, EMPTY_BACKLOG, type OutputBacklog, SCROLLBACK_LINES } from "./liveOutput.ts";
 
@@ -222,7 +222,7 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       );
       // A tab too far behind (finding 13): told, then closed; its reconnection gets the whole run from the replay.
       const behind = Deferred.await(overflowed).pipe(
-        Effect.andThen(send({ type: "refused", mode: null, reason: "this tab fell too far behind the run; reconnecting to receive it again" })),
+        Effect.andThen(send(FELL_BEHIND_FRAME)),
         Effect.andThen(writer.write(new Socket.CloseEvent(1013, "too far behind")).pipe(Effect.ignore)),
       );
       yield* Effect.raceAll([read, closed, behind]);

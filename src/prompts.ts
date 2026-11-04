@@ -2266,6 +2266,12 @@ export function draftWithdrawnNotice(text: string): string {
 }
 /** The server is ending (finding 15). */
 export const SERVER_CLOSED_NOTICE = "The server has ended. The page reconnects when it is started again.";
+/** Issue #13: the page's notice of a tab the server closed for falling too far behind the run (the server's `behind` frame). */
+export const FELL_BEHIND_NOTICE = "This tab fell too far behind the run; it is reconnecting to receive it again.";
+/** Issue #13: the accessible name of the list of messages for the developer, each kept until he dismisses it. */
+export const NOTICES_LABEL = "Messages";
+/** Issue #13: the label of each message's dismiss button. */
+export const DISMISS_NOTICE = "Dismiss";
 /** The heading of the answers the page could not send (G-R1-1, P1-R1-2 of the defects' plan). */
 export const UNSENT_HEADING = "Not sent";
 const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait" | "queue", string> = {
