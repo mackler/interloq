@@ -1,14 +1,14 @@
-// Issue #162: the check commands an execution phase reported, grouped per step (pure). The work review's criterion
-// judges a step by the total of its checks, not by any one command, and a step reported in two calls of one phase
-// (a continued phase) is one group (P1-R1-1).
+// Issue #162: the check commands an execution phase reported, grouped per step (pure); a step reported in two calls of
+// one phase (a continued phase) is one group (P1-R1-1). Issue #245: the groups carry no seconds and no total, since the
+// work review raises no point about how long a step's checks took.
 import type { StepCheckRun } from "./schema.ts";
 
-/** One step's reported checks: its commands with their seconds (issue #39: and their selection and counts), in order, and their sum. */
-export type StepCheckTotal = Readonly<{ step: string; commands: ReadonlyArray<Omit<StepCheckRun, "step">>; seconds: number }>;
+/** One step's reported checks: its commands with their selection and counts (issue #39), in report order. */
+export type StepCheckGroup = Readonly<{ step: string; commands: ReadonlyArray<Omit<StepCheckRun, "step" | "seconds">> }>;
 
-/** The checks grouped by step id in first-seen order, with each step's commands and the sum of their seconds. */
-export const checkTotals = (checks: ReadonlyArray<StepCheckRun>): ReadonlyArray<StepCheckTotal> =>
-  [...new Set(checks.map((check) => check.step))].map((step) => {
-    const commands = checks.filter((check) => check.step === step).map(({ command, seconds, selection, counts }) => ({ command, seconds, selection, counts }));
-    return { step, commands, seconds: commands.reduce((sum, c) => sum + c.seconds, 0) };
-  });
+/** The checks grouped by step id in first-seen order, each step's commands in report order. */
+export const checksByStep = (checks: ReadonlyArray<StepCheckRun>): ReadonlyArray<StepCheckGroup> =>
+  [...new Set(checks.map((check) => check.step))].map((step) => ({
+    step,
+    commands: checks.filter((check) => check.step === step).map(({ command, selection, counts }) => ({ command, selection, counts })),
+  }));

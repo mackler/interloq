@@ -125,15 +125,15 @@ test("a step left started by a continuing call is still started when the continu
 });
 
 // Issue #162 (P1-R1-1): the checks of every call of a continued phase reach the work review, a step reported in two
-// calls totaled once.
-test("issue #162: a continued phase's checks from both calls reach the work review, one step's total across them", async () => {
+// calls grouped once; since issue #245 without their seconds, which the recorded outcome still holds.
+test("issue #162: a continued phase's checks from both calls reach the work review, one step's checks grouped across them", async () => {
   const first: ExecCallOutcome = { status: "continuing", summary: "part done", remainingWork: "S1", checks: [{ step: "S1", command: "npm run test:unit", seconds: 70, selection: false, counts: null }] };
   const second: ExecCallOutcome = { ...finished, checks: [{ step: "S1", command: "npm run test:unit", seconds: 60, selection: false, counts: null }] };
   const { layer, probe } = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [first, second] });
   assert.equal(await runTask(layer), 1);
   const workReview = probe.reviewer.prompts[1];
-  assert.ok(workReview.includes("S1: 130 seconds in all"), workReview.slice(-800));
-  assert.ok(workReview.includes("`npm run test:unit` (70 seconds), `npm run test:unit` (60 seconds)"));
+  assert.ok(workReview.includes("S1: `npm run test:unit`, `npm run test:unit`"), workReview.slice(-800));
+  assert.ok(!workReview.includes("seconds in all"), "issue #245: the work review is shown no seconds");
   const recorded = JSON.parse(fs.readFileSync(path.join(probe.dir, "execution-1", "result.json"), "utf8"));
   assert.equal(JSON.stringify(recorded).includes('"seconds":70'), true, "the recorded outcome holds the first call's check");
 });
