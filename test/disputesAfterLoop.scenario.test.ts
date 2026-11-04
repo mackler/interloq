@@ -7,6 +7,8 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect } from "effect";
 import { program } from "../src/program.ts";
+import type { RunEvent } from "../src/protocol.ts";
+import { makeWebUi } from "../src/webUi.ts";
 import * as prompts from "../src/prompts.ts";
 import { finished, issue, questionEntry, runRefinement, summaryReply, type PlanningStep, type ReviewStep, type ScriptedAnswer, type TestOptions, respond, runTask, scriptedItem, scriptedStart, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
@@ -16,6 +18,13 @@ const signal = (): { promise: Promise<void>; resolve: () => void } => {
   let resolve = () => {};
   const promise = new Promise<void>((r) => (resolve = r));
   return { promise, resolve };
+};
+const until = async (condition: () => Promise<boolean>, ms = 30_000): Promise<void> => {
+  const end = Date.now() + ms;
+  while (!(await condition())) {
+    if (Date.now() > end) throw new Error("timed out");
+    await new Promise((r) => setTimeout(r, 2));
+  }
 };
 /** A plan review whose issue B is rejected twice, so its second cycle opens a dispute; the third cycle raises nothing. */
 const disputedPlan = (answers: readonly ScriptedAnswer[], extraSteps: readonly PlanningStep[] = [], extraReviews: readonly ReviewStep[] = []): TestOptions => ({
@@ -100,6 +109,79 @@ test("W2-R2-3: answered for Codex's position after the plan review ended and bef
   assert.match(read(records!, "user-decisions.md"), /issue B, raised again/);
   assert.deepEqual(seen, [{ review4: true, applied: true }], "the application and the review of round 4 came before the execution");
   assert.deepEqual([1, 2, 3].map((n) => fs.readFileSync(reviewFile(n), "utf8")), before, "the earlier rounds' files are unchanged");
+});
+
+test("W8-R1-1: an answer for Codex's position accepted while an earlier answer is being recorded is applied and reviewed before the execution", async () => {
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
+  const beside = () => events.flatMap((e) => (e._tag === "Asked" && e.beside !== null ? [e.prompt] : []));
+  const converged = signal();
+  const aAnswered = signal();
+  const recording = signal();
+  const release = signal();
+  let records: string | null = null;
+  let before: string[] | null = null;
+  let held = false;
+  const reviewFile = (n: number) => path.join(records!, "planning-1", `review-${n}.json`);
+  const seen: { decided: boolean; applied: boolean; review5: boolean }[] = [];
+  const { wiring, probe } = testWiring(tempRepo(), {
+    ui,
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["B", "rejected"]]) },
+      { output: respond([["B", "rejected"], ["A", "rejected"]]) },
+      { output: respond([["A", "rejected"]]) },
+      { output: noQuestions, plan: "v2" },
+    ],
+    // B is raised again in cycle 2 and A in cycle 3, so B's dispute is opened first and A's frame stands over it.
+    reviews: [{ issues: [issue("B")] }, { issues: [issue("B"), issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 9 },
+    execs: [finished],
+    execScripts: [
+      {
+        onCall: () =>
+          void seen.push({
+            decided: fs.existsSync(path.join(records!, "user-decisions.md")) && /issue B, raised again/.test(read(records!, "user-decisions.md")),
+            applied: probe.planner.prompts.some((p) => p.includes("user-decisions.md has new entries") && p.includes("plan.json")),
+            review5: fs.existsSync(reviewFile(5)),
+          }),
+      },
+    ],
+    store: (store) => ({
+      ...store,
+      converse: (markdown) =>
+        before === null && markdown.includes("The review of plan.json has converged")
+          ? Effect.sync(() => {
+              records = store.dir;
+              before = [1, 2, 3, 4].map((n) => fs.readFileSync(reviewFile(n), "utf8"));
+              converged.resolve();
+            }).pipe(Effect.andThen(Effect.promise(() => aAnswered.promise)), Effect.andThen(store.converse(markdown)))
+          : store.converse(markdown),
+      appendDecision: (decision) =>
+        !held && before !== null
+          ? Effect.sync(() => {
+              held = true;
+              recording.resolve();
+            }).pipe(Effect.andThen(Effect.promise(() => release.promise)), Effect.andThen(store.appendDecision(decision)))
+          : store.appendDecision(decision),
+    }),
+  });
+  const done = Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)));
+  await converged.promise;
+  const [b, a] = beside();
+  assert.equal((await Effect.runPromise(ui.pending))?.prompt, a, "A's frame stands over B's");
+  assert.equal(await Effect.runPromise(ui.answer(a, "2")), "taken");
+  aAnswered.resolve();
+  await recording.promise;
+  await until(async () => (await Effect.runPromise(ui.pending))?.prompt === b);
+  assert.equal(await Effect.runPromise(ui.answer(b, "1")), "taken");
+  release.resolve();
+  const outcome = done.then((code) => code, (e: unknown) => e);
+  await until(async () => seen.length > 0);
+  assert.deepEqual(seen[0], { decided: true, applied: true, review5: true }, "B's answer was recorded, applied and reviewed before the execution");
+  assert.equal(await outcome, 0);
+  assert.equal(seen.length, 1);
+  assert.deepEqual([1, 2, 3, 4].map((n) => fs.readFileSync(reviewFile(n), "utf8")), before, "the earlier rounds' files are unchanged");
 });
 
 test("a dispute unanswered at the run's end is withdrawn and recorded as settled without the developer; the item is implemented after", async () => {

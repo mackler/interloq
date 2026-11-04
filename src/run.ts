@@ -271,17 +271,18 @@ const recordTaken = (answered: readonly Answered[], note = ""): Effect.Effect<bo
   });
 /**
  * After a review ends: the answers given since, recorded; where one adopts Codex's position the subject applies them and
- * is reviewed again, continuing the review's round numbers, until none is left.
+ * is reviewed again, continuing the review's round numbers. It takes again after every batch, one of Claude Code's
+ * position included, since an answer may be accepted while a batch is recorded (W8-R1-1), and returns only when a take
+ * finds nothing.
  */
 const settled = <R extends S.PlannerResponse, D>(subject: Subject<R, D>, ended: LoopEnd | null): Effect.Effect<LoopEnd | null, RunError, Services> =>
   Effect.gen(function* () {
-    const openQuestions = yield* OpenQuestions;
-    let loop = ended;
-    for (;;) {
-      if (!(yield* recordTaken(yield* openQuestions.takeAfterLoop))) return loop;
-      yield* applyDecisions(subject);
-      loop = yield* reviewLoop(subject, loop);
-    }
+    const taken = yield* (yield* OpenQuestions).takeAfterLoop;
+    if (taken.length === 0) return ended;
+    if (!(yield* recordTaken(taken))) return yield* Effect.suspend(() => settled(subject, ended));
+    yield* applyDecisions(subject);
+    const reviewed = yield* reviewLoop(subject, ended);
+    return yield* Effect.suspend(() => settled(subject, reviewed));
   });
 /** Every disagreement still unanswered when the run ends, recorded as settled without the developer. */
 const withdrawn = (w: Withdrawn): Effect.Effect<void, StoreError, Ui | Store> =>
