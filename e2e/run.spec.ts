@@ -1,6 +1,6 @@
 import type { Ending } from "../src/ending.ts";
 import type { Locator, Page, WebSocketRoute } from "@playwright/test";
-import { dashboard, expect, listOf, listTabOf, runTabOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
+import { dashboard, expect, listOf, listTabOf, runTabOf, startFromTab, tabOf, test, toHaveEnded, toTheList, LONG_FIRST_PROMPT_MS, LONG_TEST_TIMEOUT_MS } from "./fixtures.ts";
 import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
@@ -439,11 +439,11 @@ test.describe("the tests of the drop server, in order", () => {
 });
 
 test.describe("the tests of the long server, in order", () => {
-  test.describe.configure({ mode: "default" });
+  test.describe.configure({ mode: "default", timeout: LONG_TEST_TIMEOUT_MS });
 
   test("(9) a long transcript: scrolled up, the position stays while messages arrive, and the chip leads to the end", async ({ page }) => {
     await startTask(page, "long");
-    await expect(continueWithoutDeciding(page)).toBeVisible({ timeout: 180_000 });
+    await expect(continueWithoutDeciding(page)).toBeVisible({ timeout: LONG_FIRST_PROMPT_MS });
     // Issue #22: the dashboard has no list, so the long transcript is the right panel's, the agents' exchange.
     const list = right(page).locator(".list");
     expect(await right(page).locator("article").count()).toBeGreaterThan(100);

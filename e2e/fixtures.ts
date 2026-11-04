@@ -6,6 +6,12 @@ import type { Ending } from "../src/ending.ts";
 import { LIST_TAB, runTabsLabel, TAB_TEXTS } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 
+/** The wait for the `long` scenario's first prompt: its run reaches its idle pause only after its review cycles, about
+ * 1.3 s each under the suite's load (suite run 2 of issue #13's run, 4 Nov 2026). The one source for both spec files. */
+export const LONG_FIRST_PROMPT_MS = 300_000;
+/** The timeout of every test of a `long` server: the first prompt's wait plus the rest of the test. */
+export const LONG_TEST_TIMEOUT_MS = 480_000;
+
 export const test = base.extend<{ pageErrors: string[] }>({
   pageErrors: async ({}, use) => {
     await use([]);

@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
+import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList, LONG_FIRST_PROMPT_MS, LONG_TEST_TIMEOUT_MS } from "./fixtures.ts";
 import { ELEMENT_GROUP_NAMES, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
 import { markedTabName } from "../web/src/notify.ts";
 import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
@@ -91,7 +91,7 @@ const showPanel = (page: Page, name: string) => page.getByRole("button", { name:
 const longRunAtItsPrompt = async (page: Page) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await startTask(page, LONG_URL);
-  await expect(continueWithoutDeciding(page)).toBeVisible({ timeout: 180_000 });
+  await expect(continueWithoutDeciding(page)).toBeVisible({ timeout: LONG_FIRST_PROMPT_MS });
   await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
 };
 /** Back to the question from the conversation, and the answer that continues the run. */
@@ -628,7 +628,7 @@ test.describe("the tests of the tabs server, in order", () => {
 });
 
 test.describe("the tests of the long server, in order", () => {
-  test.describe.configure({ mode: "default" });
+  test.describe.configure({ mode: "default", timeout: LONG_TEST_TIMEOUT_MS });
 
   test("(L4) the right panel's reading position survives a switch of columns and a resize across 840 px", async ({ page }) => {
     await longRunAtItsPrompt(page);
@@ -1655,7 +1655,9 @@ test.describe("the tests of the liveOutput server, in order", () => {
       // Under the suite's load a tab may receive the scenario's burst compacted, or lose it to a hello, which empties
       // the panel (issue #163's run: 926 and 883 lines after 60 s, and no panel at all). The scenario's ticks carry
       // every marker read below, so the test waits for the ticks alone to fill the panel: 1,000 ticks of 300 ms.
-      test.setTimeout(600_000);
+      // The 180 s and 330 s waits can take 510 s together, and in suite run 2 of issue #13's run (4 Nov 2026) a timeout
+      // of 600 s ran out at the first step after them, so the test has 900 s.
+      test.setTimeout(900_000);
       const size = `${width} × ${height}`;
       await page.setViewportSize({ width, height });
       await startTask(page, layoutUrl("liveOutput"));
