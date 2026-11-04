@@ -25,7 +25,6 @@ const swap = (t: string): string => t.replace(/the file being checked/gu, "the f
 
 const PAUSES: readonly PauseOrigin[] = [
   { pause: "idle", idle: 2 },
-  { pause: "identical", fileLabel: "issue.json" },
   { pause: "reraised", id: "U-R1-1" },
 ];
 const H = "Bring Up to Date";
@@ -52,8 +51,8 @@ test("the pause questions, the limit's facts and lines, and the unchanged pause'
     (pass) => prompts.limitFacts(H, 5, [2, 1], pass),
     (pass) => prompts.unchangedFacts(H, "issue.json", ["U-R1-1"], pass),
     (pass) => prompts.unchangedOptionDescriptions(false, pass).proceed,
-    (pass) => prompts.limitExtendedLine(H, "rounds", 5, true, pass),
-    (pass) => prompts.limitExtendedLine(H, "idle", 3, false, pass),
+    (pass) => prompts.limitExtendedLine(H, "rounds", 5, "asked", pass),
+    (pass) => prompts.limitExtendedLine(H, "idle", 3, "again", pass),
   ];
   for (const f of pairs) {
     noReview(f("check"));

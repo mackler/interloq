@@ -2,7 +2,7 @@
 // rounds end when a review contains no counted issue or when the user chooses to proceed.
 // The procedure is applied to three subjects: the question list, the requirements, and the plan.
 
-import { Effect, Ref, Result, Schema } from "effect";
+import { Effect, Fiber, Option as O, Ref, Result, Schema } from "effect";
 import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
@@ -14,13 +14,14 @@ import { serializeReply } from "./records.ts";
 import * as prompts from "./prompts.ts";
 import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportWhat, repairReplyPrompt, type RespondContext } from "./prompts.ts";
 import { correctiveValidation, investigationValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
-import { agentContext, askOffering, byLine, decisionAnswerOf, limitOptions, numberedOptions, positionOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
+import { agentContext, askOffering, type BesideQuestion as BesideHandle, byLine, decisionAnswerOf, limitOptions, numberedOptions, openBeside, positionOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
+import type { OpenDispute } from "./openDisputes.ts";
 import { parseUnchangedAnswer } from "./input.ts";
-import { advance, type Asks, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
+import { advance, type Asks, type Beside, type BesideKey, subjectOf, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import type { OnExpiry } from "./protocol.ts";
 import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
-import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, type ReviewSchema, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
+import { type Decider, OpenQuestions, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, type ReviewSchema, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { ASK, type Exhaustion, FAIL, withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
@@ -133,8 +134,6 @@ export const askDecisionQuestion = (draft: QuestionDraft, onExpiry: OnExpiry = "
     return yield* askOffering(byLine((p) => ui.ask(p, onExpiry)), prompts.decisionPrompt, draft, undefined, null, decisionAnswerOf);
   });
 
-/** Issue #185: the expiry of a review limit's own prompt, which extends the review instead of ending the run. */
-const extendsReview = (e: RunError): boolean => e._tag === "NoAnswer" && e.then === "extend";
 
 /** Reads one decision on a question of the plan writer, outside a review loop. An empty answer records nothing and returns "". */
 export const askPlannerQuestion = (question: UserQuestion, heading: string, phase: number, round: number): Effect.Effect<string, RunError, Ui | Store | Decider> =>
@@ -360,8 +359,21 @@ export const analysisProgress = (decision: number, question: number | null, chec
 /** How a review loop ended, and in which round. */
 export type LoopEnd = Readonly<{ result: LoopResult; round: number }>;
 
-export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>): Effect.Effect<LoopEnd, RunError, Services> =>
-  Effect.gen(function* () {
+/**
+ * Issue #243: `continueFrom`, the end of a loop of the same subject that ran before in this phase, whose round numbers
+ * this loop continues, so no round file of it is overwritten. The questions this loop opens beside the review (its
+ * limits and unchanged files) live in the loop's own scope and are cancelled when it ends; a dispute's question lives in
+ * the run's scope (OpenQuestions), since its answer applies after the loop too.
+ */
+export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>, continueFrom: LoopEnd | null = null): Effect.Effect<LoopEnd, RunError, Services> =>
+  Effect.scoped(Effect.gen(function* () {
+    const loopScope = yield* Effect.scope;
+    const openQuestions = yield* OpenQuestions;
+    /** This loop's questions open beside the review (limits, idle, unchanged), by key. */
+    const besides = yield* Ref.make<ReadonlyMap<string, BesideHandle>>(new Map());
+    /** The keys of this loop's disputes, in the run's registry. */
+    const disputeKeys = yield* Ref.make<readonly BesideKey[]>([]);
+    yield* Effect.addFinalizer(() => Ref.get(disputeKeys).pipe(Effect.flatMap((keys) => openQuestions.loopEnded(keys))));
     const store = yield* Store;
     const ui = yield* Ui;
     const config = yield* RunConfig;
@@ -465,6 +477,63 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
       };
     };
 
+    /**
+     * Issue #243: a question opened beside the review: the limit, idle and unchanged questions in this loop's scope with
+     * Help me decide (they live only while their loop runs, when no agent writes to the project); a dispute in the run's
+     * registry and scope, without the offer, since its question may outlive the loop.
+     */
+    const openBesideQuestion = (beside: Beside, state: ReviewState): Effect.Effect<void, RunError, Services> =>
+      Effect.gen(function* () {
+        const q = beside.question;
+        const loopScoped = (hint: string, draft: QuestionDraft, acceptable: (a: string) => boolean) =>
+          Effect.gen(function* () {
+            const handle = yield* openBeside(loopScope, hint, draft, acceptable, { offer: true });
+            yield* Ref.update(besides, (m) => new Map(m).set(beside.key, handle));
+          });
+        switch (q.kind) {
+          case "limit": {
+            const { proceed } = state.setup;
+            const origin: QuestionOrigin = { kind: "limit", heading, pass, limit: q.limit };
+            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.limitQuestion(heading, q.limit)), options: limitOptions(proceed), explain: prompts.limitFacts(heading, q.limit, state.counts, pass), decision: within };
+            return yield* loopScoped(proceed === null ? prompts.limitNoProceedPrompt : prompts.limitPrompt, draft, () => true);
+          }
+          case "idle":
+            return yield* loopScoped(prompts.decisionPrompt, decisionDraft(heading, { kind: "pause", facts: q.facts }, [], within, pass), () => true);
+          case "unchanged": {
+            const origin: QuestionOrigin = { kind: "unchanged", heading, pass, fileLabel, accepted: q.accepted };
+            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.unchangedQuestion(heading, fileLabel)), options: unchangedOptions(q.retry === "interview", pass), explain: prompts.unchangedFacts(heading, fileLabel, q.accepted, pass), decision: within };
+            return yield* loopScoped(prompts.unchangedPrompt, draft, (a) => parseUnchangedAnswer(a) !== null);
+          }
+          case "dispute": {
+            const d = q.dispute;
+            const dispute: OpenDispute = {
+              key: beside.key,
+              heading,
+              subject: id,
+              phase,
+              round: q.round,
+              id: d.id,
+              recordSubject: subjectOf(heading, d.asks),
+              reviewer: d.options.find((o) => o.label === prompts.REVIEWER_POSITION)?.description ?? "",
+              planner: d.options.find((o) => o.label === prompts.PLANNER_POSITION)?.description ?? "",
+              options: d.options,
+              owner: within === null ? { _tag: "Run" } : { _tag: "Decision", decision: within },
+            };
+            yield* openQuestions.opened(dispute);
+            yield* Ref.update(disputeKeys, (keys) => [...keys, beside.key]);
+            // An answer the registry no longer holds (withdrawn first) is said from a fiber of its own, never inside the take.
+            const tooLate = (text: string) => Effect.gen(function* () {
+              const line = prompts.disputeAnswerTooLateLine(heading, text);
+              yield* ui.say(line);
+              yield* store.converse(`${line}\n\n`).pipe(Effect.ignore);
+            });
+            const onAccepted = (text: string) => Effect.flatMap(openQuestions.answered(beside.key, text), (r) => (r === "tooLate" ? Effect.asVoid(Effect.forkIn(tooLate(text), openQuestions.scope)) : Effect.void));
+            const handle = yield* openBeside(openQuestions.scope, prompts.decisionPrompt, decisionDraft(heading, d.asks, d.options, within, pass), () => true, { offer: false, resolve: decisionAnswerOf, onAccepted });
+            return yield* openQuestions.attach(beside.key, handle.fiber);
+          }
+        }
+      });
+
     type Outcome = ReviewEvent | { finished: LoopResult };
     /** Executes one command; the commands that yield an event return it. */
     const execute = (command: ReviewCommand, state: ReviewState): Effect.Effect<Outcome | null, RunError, Services> =>
@@ -508,34 +577,32 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             return yield* Effect.fail(command.error);
           case "Finish":
             return { finished: command.result };
-          case "AskLimit": {
-            // The limit is a choice between options (decision Q6), so it carries the offer; the answer is passed on as typed.
-            const { proceed } = state.setup;
-            const origin: QuestionOrigin = { kind: "limit", heading, pass, limit: command.limit };
-            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.limitQuestion(heading, command.limit)), options: limitOptions(proceed), explain: prompts.limitFacts(heading, command.limit, state.counts, pass), decision: within };
-            // Issue #185 (G-R1-3): asked with "extend"; only the expiry of this prompt itself extends the review, while a
-            // question asked inside it (the context call's, decision support's) expires with "abandon" and ends the run.
-            return yield* askOffering(byLine((p) => ui.ask(p, "extend")), proceed === null ? prompts.limitNoProceedPrompt : prompts.limitPrompt, draft).pipe(
-              Effect.map((answer): ReviewEvent => ({ kind: "LimitAnswer", answer })),
-              Effect.catchIf(extendsReview, () => Effect.succeed<ReviewEvent>({ kind: "LimitUnanswered" })),
-            );
+          case "AskDecision":
+            // Issue #243: Claude Code's own questions are the one ask of a loop that still waits.
+            return { kind: "DecisionGiven", text: yield* askDecisionQuestion(decisionDraft(heading, command.asks, command.options, within, pass)) };
+          case "OpenBeside":
+            yield* openBesideQuestion(command.beside, state);
+            return null;
+          case "CloseBeside": {
+            const handle = (yield* Ref.get(besides)).get(command.key);
+            yield* Ref.update(besides, (m) => new Map([...m].filter(([k]) => k !== command.key)));
+            if (handle !== undefined) yield* Fiber.interrupt(handle.fiber);
+            return null;
           }
-          case "AskUnchanged": {
-            // Issue #30: Retry, Proceed or Stop, with the offer of decision support; an answer that is none of them is asked again.
-            const origin: QuestionOrigin = { kind: "unchanged", heading, pass, fileLabel, accepted: command.accepted };
-            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.unchangedQuestion(heading, fileLabel)), options: unchangedOptions(command.retry === "interview", pass), explain: prompts.unchangedFacts(heading, fileLabel, command.accepted, pass), decision: within };
-            const answer = yield* askOffering(byLine((p) => ui.ask(p)), prompts.unchangedPrompt, draft, (a) => parseUnchangedAnswer(a) !== null);
-            return { kind: "UnchangedAnswer", answer: parseUnchangedAnswer(answer)! };
-          }
-          case "AskDecision": {
-            const draft = decisionDraft(heading, command.asks, command.options, within, pass);
-            // Issue #185 (G-R1-3): the idle limit extends the review when unanswered, as the round limit does.
-            if (command.asks.kind === "pause" && command.asks.facts.pause === "idle")
-              return yield* askDecisionQuestion(draft, "extend").pipe(
-                Effect.map((text): ReviewEvent => ({ kind: "DecisionGiven", text })),
-                Effect.catchIf(extendsReview, () => Effect.succeed<ReviewEvent>({ kind: "IdleUnanswered" })),
-              );
-            return { kind: "DecisionGiven", text: yield* askDecisionQuestion(draft) };
+          case "AcknowledgeDisputes":
+            yield* openQuestions.acknowledge(command.keys);
+            return null;
+          case "AwaitBoundary": {
+            // The answers taken so far, each stored in the Ui's own take, so none is missed; nothing is waited for.
+            const answers: { key: string; text: string }[] = [];
+            for (const [key, handle] of yield* Ref.get(besides)) {
+              const answer = yield* handle.answer;
+              if (O.isSome(answer)) answers.push({ key, text: answer.value });
+            }
+            const read = new Set(answers.map((a) => a.key));
+            yield* Ref.update(besides, (m) => new Map([...m].filter(([k]) => !read.has(k))));
+            for (const a of yield* openQuestions.peek(yield* Ref.get(disputeKeys))) answers.push({ key: a.dispute.key, text: a.text });
+            return { kind: "BoundaryReached", answers };
           }
           case "CallReviewer": {
             const thread = yield* roundThread(command.round);
@@ -617,5 +684,5 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
 
     const setup: ReviewSetup = { subject: id, heading, fileLabel, dirName: subjectDir(id), phase, idNumber: typeof id === "object" && "decision" in id ? id.decision : typeof id === "object" && "verdict" in id ? id.verdict : phase, proceed: subject.proceed, hasAmend: subject.amend !== null, leaveOnAcceptance: subject.leaveOnAcceptance, leaveOnDecision: subject.leaveOnDecision, onUnchanged: subject.onUnchanged, disputesSettledBy: subject.disputesSettledBy, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor };
     const begun = yield* store.observeFile(id);
-    return yield* interpret(advance(initialState(setup, config), { kind: "Begin", hash: begun.hash, text: begun.text, log: yield* store.loadLog(id) }));
-  });
+    return yield* interpret(advance(initialState(setup, config, continueFrom), { kind: "Begin", hash: begun.hash, text: begun.text, log: yield* store.loadLog(id) }));
+  }));

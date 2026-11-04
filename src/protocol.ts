@@ -232,7 +232,6 @@ const QuestionOriginSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literals(["reraised", "secondClarification", "disputedSelfCorrection", "authorityResolution"]), id: Str }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literal("reversal"), id: Str, reverses: Str }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literal("repeatedUnderNewId"), id: Str, repeats: Str }),
-  Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literal("identical"), fileLabel: Str }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literal("idle"), idle: Int }),
   Schema.Struct({ kind: Schema.Literal("limit"), ...withPass, limit: Int }),
   Schema.Struct({ kind: Schema.Literal("unchanged"), ...withPass, fileLabel: Str, accepted: Schema.Array(Str) }),

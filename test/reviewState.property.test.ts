@@ -13,7 +13,7 @@ import { lineChange } from "../src/lineChange.ts";
 
 const RUNS = { numRuns: 150, seed: 20260925 };
 const setup: ReviewSetup = { subject: { plan: 1 }, heading: "Planning phase 1", fileLabel: "plan.md", dirName: "planning-1", phase: 1, idNumber: 1, proceed: "proceed", hasAmend: false, leaveOnAcceptance: false, leaveOnDecision: false, onUnchanged: null, disputesSettledBy: "user", maxRounds: 3, maxIdleRounds: 2, countMinor: true };
-const PRODUCING = new Set(["AskLimit", "AskUnchanged", "CallCorrective", "AskDecision", "CallReviewer", "CallPlanner", "ApplyDecisions", "Amend", "ObserveFile", "Halt", "Finish"]);
+const PRODUCING = new Set(["AwaitBoundary", "CallCorrective", "AskDecision", "CallReviewer", "CallPlanner", "ApplyDecisions", "Amend", "ObserveFile", "Halt", "Finish"]);
 const ACTIONS: readonly Action[] = ["accepted", "partially_accepted", "rejected", "no_change_needed", "clarification_requested"];
 
 /** One generated round: its review, the actions of the response, whether a self-correction is included, and the world's answers. */
@@ -42,6 +42,26 @@ const drive = (scripts: readonly Script[], use: ReviewSetup = setup) => {
   const plannerCalls: number[] = [];
   let finished: string | null = null;
   let currentRound = 0;
+  // Issue #243: the answers to the questions opened beside the review, given at once and read at the next boundary.
+  let pending: { key: string; text: string }[] = [];
+  const answerOf = (c: Extract<ReviewCommand, { kind: "OpenBeside" }>): string => {
+    const q = c.beside.question;
+    const script = scripts[Math.min(Math.max(currentRound - 1, 0), scripts.length - 1)];
+    switch (q.kind) {
+      case "limit":
+        return currentRound < scripts.length ? scripts[currentRound].limitAnswer : "0";
+      case "idle":
+        return script.decide ? "do it" : "";
+      case "unchanged":
+        return script.unchangedAnswer;
+      case "dispute":
+        return script.decide ? "do it" : "";
+    }
+  };
+  const opening = (commands: readonly ReviewCommand[]) => {
+    for (const c of commands) if (c.kind === "OpenBeside") pending.push({ key: c.beside.key, text: answerOf(c) });
+  };
+  opening(t.commands);
   for (let guard = 0; guard < 400 && finished === null; guard++) {
     const producing = t.commands.filter((c) => PRODUCING.has(c.kind));
     assert.ok(producing.length <= 1 && (producing.length === 0 || t.commands[t.commands.length - 1] === producing[0]), "a batch with a misplaced event command");
@@ -82,11 +102,9 @@ const drive = (scripts: readonly Script[], use: ReviewSetup = setup) => {
       case "AskDecision":
         event = { kind: "DecisionGiven", text: script.decide ? "do it" : "" };
         break;
-      case "AskUnchanged":
-        event = { kind: "UnchangedAnswer", answer: script.unchangedAnswer };
-        break;
-      case "AskLimit":
-        event = { kind: "LimitAnswer", answer: currentRound < scripts.length ? scripts[currentRound].limitAnswer : "0" };
+      case "AwaitBoundary":
+        event = { kind: "BoundaryReached", answers: pending };
+        pending = [];
         break;
       case "ApplyDecisions":
         event = { kind: "DecisionsApplied" };
@@ -101,6 +119,7 @@ const drive = (scripts: readonly Script[], use: ReviewSetup = setup) => {
     if (event !== null) {
       t = advance(t.state, event);
       trace.push(...t.commands);
+      opening(t.commands);
     }
   }
   return { state: t.state, finished, reviewerCalls, plannerCalls, trace };
@@ -179,41 +198,58 @@ test("property: a work review ends at the first correction due or decision, logs
   );
 });
 
-// Finding 9 of docs/gui-review.md: the first exit of a work review, against an independent model of behaviour 7.
-// The order of the checks after a response is that of src/reviewState.ts: the pauses of the response (none is
-// reachable here, see below), the log and leaveOnAcceptance, then the observation: accepted-without-change (not
-// reachable: an accepted issue leaves first), the identical content (an unexplained change is recorded, not asked,
-// issue #208), the idle pause; the round
-// limit when the next round would begin. A non-empty decision at any pause leaves with revise (leaveOnDecision).
+// Finding 9 of docs/gui-review.md: the first exit of a work review, against an independent model of behaviour 7 as
+// issue #243 left it. Nothing waits: the round limit is extended at once and its question opened beside the review
+// (while none is open), the idle limit restarts its count and opens its question, identical content is a line; the
+// answers are read at the next round's boundary, a Stop first, then an idle decision (which leaves with revise, the work
+// review leaving on a decision), then a number of cycles. An end of the loop reads the answers still to come first: a
+// Stop then halts, anything else stands.
 type Exit = Readonly<{ exit: "converged" | "revise" | "RoundLimitStop"; round: number; pauses: readonly string[] }>;
 const model = (scripts: readonly Script[], use: ReviewSetup): Exit => {
   const scriptOf = (round: number) => scripts[Math.min(round - 1, scripts.length - 1)];
+  const stops = (answer: string) => answer !== "2";
   const seen: string[] = ["h0"];
   const pauses: string[] = [];
   let limit = use.maxRounds;
   let idle = 0;
+  let pending: { kind: "limit" | "idle"; text: string }[] = [];
+  let limitOpen = false;
+  let idleOpen = false;
+  const drained = (round: number, exit: Exit["exit"]): Exit => {
+    if (pending.some((p) => p.kind === "limit" && stops(p.text))) return { exit: "RoundLimitStop", round, pauses };
+    return { exit, round, pauses };
+  };
   for (let round = 1; round <= 60; round++) {
-    while (round > limit) {
-      pauses.push("limit");
-      const answer = round - 1 < scripts.length ? scripts[round - 1].limitAnswer : "0";
-      if (answer !== "2") return { exit: "RoundLimitStop", round: round - 1, pauses };
-      limit += 2;
+    if (pending.length > 0) {
+      if (pending.some((p) => p.kind === "limit" && stops(p.text))) return { exit: "RoundLimitStop", round: round - 1, pauses };
+      if (pending.some((p) => p.kind === "idle" && p.text !== "")) return { exit: "revise", round: round - 1, pauses };
+      const count = pending.find((p) => p.kind === "limit");
+      if (count !== undefined) limit = round - 1 + 2;
+      if (pending.some((p) => p.kind === "limit")) limitOpen = false;
+      if (pending.some((p) => p.kind === "idle")) idleOpen = false;
+      pending = [];
+    }
+    if (round > limit) {
+      limit += use.maxRounds;
+      if (!limitOpen) {
+        pauses.push("limit");
+        limitOpen = true;
+        pending.push({ kind: "limit", text: round - 1 < scripts.length ? scripts[round - 1].limitAnswer : "0" });
+      }
     }
     const script = scriptOf(round);
-    if (script.issueCount === 0) return { exit: "converged", round, pauses };
+    if (script.issueCount === 0) return drained(round, "converged");
     const accepted = script.actions.slice(0, script.issueCount).some((a) => a === "accepted" || a === "partially_accepted");
-    if (accepted || script.selfCorrection) return { exit: "revise", round, pauses };
-    const last = seen[seen.length - 1];
-    if (script.hash !== last && seen.includes(script.hash)) {
-      pauses.push("identical");
-      if (script.decide) return { exit: "revise", round, pauses };
-    }
+    if (accepted || script.selfCorrection) return drained(round, "revise");
     seen.push(script.hash);
     idle += 1;
     if (idle >= use.maxIdleRounds) {
-      pauses.push("idle");
-      if (script.decide) return { exit: "revise", round, pauses };
       idle = 0;
+      if (!idleOpen) {
+        pauses.push("idle");
+        idleOpen = true;
+        pending.push({ kind: "idle", text: script.decide ? "do it" : "" });
+      }
     }
   }
   throw new Error("the model did not end");
@@ -222,9 +258,9 @@ const model = (scripts: readonly Script[], use: ReviewSetup): Exit => {
 const UNREACHABLE = /raised again|a second time|considers wrong|against the accepted correction|a repetition of|question from Claude Code/;
 const pausesOf = (trace: readonly ReviewCommand[]): string[] =>
   trace.flatMap((c) => {
-    if (c.kind === "AskLimit") return ["limit"];
+    if (c.kind === "OpenBeside") return [c.beside.question.kind === "dispute" ? subjectOf("", c.beside.question.dispute.asks) : c.beside.question.kind];
     if (c.kind !== "AskDecision") return [];
-    return [c.asks.kind === "pause" && (c.asks.facts.pause === "identical" || c.asks.facts.pause === "idle") ? c.asks.facts.pause : subjectOf("", c.asks)];
+    return [subjectOf("", c.asks)];
   });
 
 test("property: a work review's first exit, its round and its pauses equal the independent model's", () => {
@@ -235,7 +271,7 @@ test("property: a work review's first exit, its round and its pauses equal the i
       assert.equal(finished, expected.exit);
       assert.equal(state.round, expected.round, "the exit's round");
       assert.deepEqual(pausesOf(trace), expected.pauses);
-      for (const c of trace) if (c.kind === "AskDecision") assert.doesNotMatch(subjectOf("", c.asks), UNREACHABLE, "a pause the generator cannot reach occurred");
+      for (const p of pausesOf(trace)) assert.doesNotMatch(p, UNREACHABLE, "a pause the generator cannot reach occurred");
     }),
     RUNS,
   );
@@ -251,7 +287,8 @@ test("property: after a correction due, nothing follows the round's logged check
       const logged = trace.findIndex((c) => c.kind === "Checkpoint" && c.point.stage === "logged" && c.point.round === state.round);
       assert.ok(logged >= 0, "no logged checkpoint in the round of the correction");
       const after = trace.slice(logged + 1).map((c) => c.kind);
-      assert.deepEqual(after.filter((k) => k !== "Notify"), ["Finish"], `after the logged checkpoint: ${after}`);
+      // Issue #243: the boundary's answers are read before the end, and an answer after it is only recorded.
+      assert.deepEqual(after.filter((k) => k !== "Notify" && k !== "AwaitBoundary" && k !== "Converse"), ["Finish"], `after the logged checkpoint: ${after}`);
     }),
     RUNS,
   );
@@ -268,7 +305,7 @@ test("the generated work reviews reach round 2, every reachable pause and every 
     if (state.round >= 2) count("round 2");
     for (const p of new Set(pausesOf(trace))) count(p);
   }
-  for (const k of ["exit:converged", "exit:revise", "exit:RoundLimitStop", "identical", "idle", "limit"]) assert.ok((reached.get(k) ?? 0) > 0, `never reached: ${k}`);
+  for (const k of ["exit:converged", "exit:revise", "exit:RoundLimitStop", "idle", "limit"]) assert.ok((reached.get(k) ?? 0) > 0, `never reached: ${k}`);
   assert.ok((reached.get("round 2") ?? 0) >= samples.length / 5, `only ${reached.get("round 2")} of ${samples.length} traces reached round 2`);
 });
 

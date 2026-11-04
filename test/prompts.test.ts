@@ -725,7 +725,6 @@ test("S17: every question Interloq composes names the user as the one who decide
     { pause: "reversal", id: "A", reverses: "B" },
     { pause: "repeatedUnderNewId", id: "A", repeats: "B" },
     { pause: "disputedSelfCorrection", id: "A" },
-    { pause: "identical", fileLabel: "plan.json" },
     { pause: "idle", idle: 2 },
   ] as const;
   const questions = [

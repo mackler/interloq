@@ -3001,7 +3001,7 @@ export function unchangedLine(fileLabel: string, round: number, acceptedIds: rea
   return `\nCycle ${round}: Claude Code accepted ${acceptedIds.join(", ")} in full or in part, but ${fileLabel} is unchanged${corrected ? " after a corrective turn" : ""}.`;
 }
 export function unchangedQuestion(heading: string, fileLabel: string): string {
-  return `${heading}: Claude Code accepted issues, but ${fileLabel} is unchanged. How do you want the run to continue?`;
+  return `${heading}: Claude Code accepted issues, but ${fileLabel} is unchanged. The review goes on meanwhile as if you had answered Proceed; your answer applies when the current cycle ends. How do you want the run to continue?`;
 }
 export function unchangedDecisionLine(answer: "retry" | "proceed" | "stop", fileLabel: string, round: number, heading: string): string {
   const what = answer === "retry" ? "retry" : answer === "proceed" ? `proceed with ${fileLabel} unchanged` : "stop the run";
@@ -3045,7 +3045,7 @@ export function limitOptionDescriptions(proceed: string | null): Readonly<{ proc
 }
 /** The question of the cycle limit for a decision. */
 export function limitQuestion(heading: string, limit: number): string {
-  return `${heading} has completed ${limit} cycles without convergence. How do you want the run to continue?`;
+  return `${heading} has completed ${limit} cycles and Codex still raises points. The review goes on meanwhile; your answer applies when the current cycle ends. How do you want the run to continue?`;
 }
 /** The options of a permission request. */
 export const PERMISSION_ALLOW = "Allow this";
@@ -3889,7 +3889,7 @@ const originText = (origin: QuestionOrigin): string => {
     case "permission":
       return "Claude Code, the coding agent, asks for permission while it carries out the plan";
     case "pause":
-      return origin.pause === "identical" || origin.pause === "idle"
+      return origin.pause === "idle"
         ? `Asked because the ${origin.pass} in ${origin.heading} is not making progress`
         : `Asked because Claude Code and Codex disagree during ${origin.heading}`;
     case "limit":
@@ -3935,8 +3935,6 @@ export const pauseSubject = (p: PauseOrigin): string => {
       return `issue ${p.id}, a repetition of issue ${p.repeats}`;
     case "authorityResolution":
       return `issue ${p.id}, whose resolution of both concerns would change what only the user may change`;
-    case "identical":
-      return alternatingSubject(p.fileLabel);
     case "idle":
       return idleSubject(p.idle);
   }
@@ -3960,10 +3958,8 @@ export function pauseQuestion(p: PauseOrigin, pass: PassNoun): string {
       return "Claude Code now considers wrong a correction it made earlier for a point that Codex raised. Do you want the correction to stay or to be withdrawn?";
     case "authorityResolution":
       return "A change that meets both concerns would change a requirement, a decision of yours or a decided behavior of the program, which only you may change. Which outcome do you want?";
-    case "identical":
-      return `${p.fileLabel} has returned to a version it had before, so the ${pass} alternates between two versions. Which of the two versions do you want kept?`;
     case "idle":
-      return `Claude Code has accepted no point of the ${pass} ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}. What do you want Claude Code and Codex to do about the points that led to no change?`;
+      return `Claude Code has accepted no point of the ${pass} ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}. The ${pass} goes on meanwhile; your answer applies when the current cycle ends. What do you want Claude Code and Codex to do about the points that led to no change?`;
   }
 }
 /** The heading of a question's context on the page (issue #137), the name issue #133 gives the same field on the decision page. */
@@ -4059,7 +4055,7 @@ export function fallbackContext(origin: QuestionOrigin): string {
     case "permission":
       return `${interloq} While Claude Code carries out the plan, it asks before it uses a tool that Interloq's permission settings do not allow on their own: here ${origin.tool}, with the input shown below. If you allow it, the tool runs in this project; if not, Claude Code is told so and continues without it. The question protects the project from an action you did not intend.`;
     case "pause":
-      return origin.pause === "identical" || origin.pause === "idle"
+      return origin.pause === "idle"
         ? `${interloq} During ${origin.heading}, Codex ${origin.pass}s a document in rounds and Claude Code answers each point and amends the document. When the rounds stop making progress, Interloq halts the ${origin.pass} and asks you how to continue, so that the agents do not go round in circles at your cost.`
         : `${interloq} During ${origin.heading}, Codex ${origin.pass}s a document in rounds, and Claude Code accepts, rejects or questions each point it raises. When the two keep disagreeing about a point, Interloq stops the ${origin.pass} and asks you to settle it, so that the document follows your judgment rather than whichever agent insists longer.`;
     case "limit":
@@ -4149,8 +4145,6 @@ export function pauseLead(p: PauseOrigin): string {
       return `Codex's issue ${p.id} repeats issue ${p.repeats}, which Claude Code did not accept in full.`;
     case "authorityResolution":
       return `Claude Code proposes, for issue ${p.id}, a change that meets both concerns but would change what only you may change.`;
-    case "identical":
-      return `${p.fileLabel} has returned to an earlier version.`;
     case "idle":
       return `Claude Code accepted no issue ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}.`;
   }
@@ -4666,13 +4660,40 @@ export const notRefinedStoppedText = (item: string | null, reason: "refinementAs
  * Issue #185 (G-R1-3): a review loop's round limit (`rounds`) or limit of cycles without a correction (`idle`) extended
  * by `added` cycles: `first` where its question went unanswered, otherwise a later limit extended without a question.
  */
-export const limitExtendedLine = (heading: string, kind: "rounds" | "idle", added: number, first: boolean, pass: PassNoun): string => {
+export const limitExtendedLine = (heading: string, kind: "rounds" | "idle", added: number, when: "asked" | "again", pass: PassNoun): string => {
   const cycles = `${added} more ${added === 1 ? "cycle" : "cycles"}`;
   const limit = kind === "rounds" ? "its limit of cycles" : "its limit of cycles without a correction";
-  return first
-    ? `No answer came to the question at ${limit} of ${heading}, so the ${pass} goes on for ${cycles}.`
-    : `${heading} reached ${limit} again; Interloq gave it ${cycles} without asking, because an earlier limit went unanswered.`;
+  // Issue #243: the review never waits for the answer; the question stays open beside it.
+  return when === "asked"
+    ? `${heading} reached ${limit}. The ${pass} goes on for ${cycles} while the question about it waits for your answer, which applies when the current cycle ends.`
+    : `${heading} reached ${limit} again. The ${pass} goes on for ${cycles}; the question about it still waits for your answer.`;
 };
+/** Issue #243: an answer of a number of cycles, given at the limit's question beside the review, applied at a cycle's end. */
+export const limitAnsweredLine = (heading: string, added: number, round: number): string =>
+  `${heading}: your answer gives the review ${added} more ${added === 1 ? "cycle" : "cycles"} after cycle ${round}.`;
+/** Issue #243: an answer given during a loop's last cycle, recorded; the loop ended as it would have without it. */
+export const answerAfterEndLine = (heading: string, text: string): string =>
+  `${heading}: your answer "${text}" arrived while the last cycle ran; the loop ended as it would have without it, and the answer is recorded here.`;
+/** Issue #243: an accepted point left the file unchanged; the run goes on as Proceed would, the question beside it. */
+export const unchangedContinuesLine = (fileLabel: string, round: number, pass: PassNoun): string =>
+  `The ${pass} goes on as if you had answered Proceed: the next cycle reviews ${fileLabel} as it is after cycle ${round}. The question waits for your answer beside it.`;
+/** Issue #243: a Retry answered to an earlier cycle's unchanged question, carried out as a decision the planner applies. */
+export const unchangedRetryDecision = (fileLabel: string, round: number, accepted: readonly string[]): string =>
+  `Carry out the accepted points ${accepted.join(", ")} of cycle ${round}, which left ${fileLabel} unchanged.`;
+/** Issue #243: an answer to a dispute's question that arrived after the dispute was withdrawn, so it changes nothing. */
+export const disputeAnswerTooLateLine = (heading: string, text: string): string =>
+  `${heading}: your answer "${text}" arrived after the disagreement it answered was withdrawn, so it changes nothing.`;
+/** Issue #243: the heading of the line that says the review goes on after an accepted point left its file unchanged. */
+export const UNCHANGED_HEADING = "Accepted without a change:";
+/** Issue #243: the record's subject of a Retry answered to an unchanged question. */
+export const unchangedRecordSubject = (fileLabel: string): string => `the accepted points that left ${fileLabel} unchanged`;
+/** Issue #243: the heading of the line that records content identical to an earlier round, which no longer asks. */
+export const IDENTICAL_CONTENT_HEADING = "Returned to an earlier version:";
+/** Issue #243: the heading of the line of a disagreement put to the developer beside the running review. */
+export const DISPUTE_PUT_TO_YOU_HEADING = "Put to you beside the review:";
+/** Issue #243: a disputed point put to the developer beside the review; Claude Code's position stands meanwhile. */
+export const disputeBesideLine = (origin: PauseOrigin, heading: string): string =>
+  `${heading}: ${pauseSubject(origin)}. The question waits for your answer beside the review, which goes on meanwhile with Claude Code's position standing; an answer for Codex's position is carried out at the next point where the run can still change the work.`;
 /** Issue #185 (G-R1-1): the tracker's repeats used up after an abandonment, where nothing is asked. */
 export const trackerRepeatsExhaustedLine = (tracker: string, what: string, attempts: number, fault: string): string =>
   `Interloq made its last repeat of ${what} on ${tracker} (${attempts} attempts; last failure: ${fault}) and asked nothing, because the run was abandoned for want of an answer.`;

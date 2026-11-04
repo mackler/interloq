@@ -136,7 +136,6 @@ test("pauseProse writes every kind of pause as prose, without the record's field
     pauseProse({ pause: "disputedSelfCorrection", reviewer: null, planner: null, id: "P1-R1-1", explanation: "It breaks the build.", history: earlier, taskDispute: false, effects: null, resolution: null }),
     pauseProse({ pause: "reversal", id: "P1-R2-1", reverses: "P1-R1-1", history: earlier, issue: issueNow, disposition, taskDispute: false, effects: null }),
     pauseProse({ pause: "repeatedUnderNewId", id: "P1-R2-1", repeats: "P1-R1-1", history: earlier, issue: issueNow, disposition: null, taskDispute: false, effects: null }),
-    pauseProse({ pause: "identical", fileLabel: "plan.json", round: 3, seen: "cycle 1" }),
     pauseProse({ pause: "idle", idle: 2, round: 2, issues: [earlier[0]] }),
   ];
   for (const text of all.map(blocksMarkdown)) {

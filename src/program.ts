@@ -12,7 +12,7 @@ import { abandonAfterSendBackLine, abandonedRecord, blankItemText, defectRecord,
 import { type ImplementationEnd, implementationRun, type RefinementEnd, type RefinementSource, refinementRun, run, type UsedPreparation } from "./run.ts";
 import { preparationOf } from "./preparedComments.ts";
 import type { AgentSdk } from "./sdk.ts";
-import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
+import { OpenQuestions, Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
 import { type Config, finalCommandsOf, NO_STEP_CHECKS, type StepChecks, stepChecksOf, type TermsMode } from "./schema.ts";
 import { type CompletedWork, type ConcludedEnding, exitCodeOfEnding, type ItemReturn, type ReturnCheck } from "./ending.ts";
 import { fileOf, loadSourcedConfig } from "./config.ts";
@@ -639,7 +639,10 @@ const programWith = (
     // task during it cannot leave the item unreturned or a claimed parking unparked, and the code computed is concluded.
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        const exit = yield* restore(Effect.raceFirst(body, fault)).pipe(Effect.onInterrupt(() => interruptedFromOutside), Effect.exit);
+        // Issue #243: a question open beside the run answered "q" ends it at once, as End the run does at a question the
+        // run waits on, and a producer of such a question that failed halts it as it would have in the foreground.
+        const quitted = Context.get(context, OpenQuestions).quitted;
+        const exit = yield* restore(Effect.raceFirst(Effect.raceFirst(body, quitted), fault)).pipe(Effect.onInterrupt(() => interruptedFromOutside), Effect.exit);
         if (Exit.isSuccess(exit)) {
           if (exit.value.mode === "implementation") {
             const end = exit.value.end;

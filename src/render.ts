@@ -281,8 +281,6 @@ export const pauseProse = (facts: PauseFacts): readonly Block[] => {
         return [...issueProse(facts.issue), ...answerProse(facts.disposition), ...historyProse(facts.history)];
       case "authorityResolution":
         return [...resolutionProse(facts.resolution), ...historyProse(facts.history)];
-      case "identical":
-        return [paragraph(words.identicalFacts(facts.fileLabel, facts.round, facts.seen))];
       case "idle":
         return facts.issues.length === 0 ? [] : [paragraph(words.IDLE_ISSUES_HEADING), list(facts.issues.map(entryProse))];
     }

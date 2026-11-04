@@ -37,7 +37,8 @@ const reviewed = (...ids: string[]): TestEvent => ({ kind: "ReviewDecoded", revi
 const responded = (r: S.PlannerResponse, kind: "ResponseDecoded" | "CorrectionDecoded" | "InvestigationDecoded" = "ResponseDecoded"): TestEvent => ({ kind, response: r, resultText: "", costUsd: 0.1 });
 const observed = (hash: string): TestEvent => ({ kind: "FileObserved", hash, text: hash });
 const last = (t: Transition): ReviewCommand => t.commands[t.commands.length - 1];
-const asks = (t: Transition) => t.commands.flatMap((c) => (c.kind === "AskDecision" && c.asks.kind === "pause" ? [c] : []));
+/** Issue #243: the disputes opened beside the review, where issue #38 asked them in the foreground. */
+const asks = (t: Transition) => t.commands.flatMap((c) => (c.kind === "OpenBeside" && c.beside.question.kind === "dispute" ? [{ key: c.beside.key, asks: c.beside.question.dispute.asks, options: c.beside.question.dispute.options }] : []));
 const says = (t: Transition): string => t.commands.flatMap((c) => (c.kind === "Say" ? [c.text] : [])).join("\n");
 const text = (s: string) => s as S.PositionText;
 const resolutionReply = (t: string, changes: string[] = []): S.ResolutionReply => ({ text: t, changes });
@@ -259,7 +260,7 @@ test("a decision on a review with no counted issue is logged before the loop con
 
 // The second property of S6 (W1-R1-4): over generated rounds, a raised id whose current review entry is not accepted in
 // full and that was investigated in an earlier round is, at that review, asked or settled, never absent from both.
-const ownIdOf = (c: ReviewCommand): string | null => (c.kind === "AskDecision" && c.asks.kind === "pause" && "id" in c.asks.facts ? c.asks.facts.id : null);
+const ownIdOf = (c: ReviewCommand): string | null => (c.kind === "OpenBeside" && c.beside.question.kind === "dispute" && "id" in c.beside.question.dispute.asks.facts ? c.beside.question.dispute.asks.facts.id : null);
 test("property: an investigated open point raised again is asked or settled at that review, never absent from both", () => {
   const IDS = ["A", "B"] as const;
   const ACTIONS = ["accepted", "rejected", "partially_accepted", "no_change_needed", "clarification_requested"] as const;

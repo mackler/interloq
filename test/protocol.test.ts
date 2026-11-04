@@ -80,7 +80,6 @@ const origin = fc.oneof(
   fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constantFrom("reraised" as const, "secondClarification" as const, "disputedSelfCorrection" as const), id: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constant("reversal" as const), id: text, reverses: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constant("repeatedUnderNewId" as const), id: text, repeats: text }),
-  fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constant("identical" as const), fileLabel: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constant("idle" as const), idle: nat }),
   fc.record({ kind: fc.constant("limit" as const), heading: text, pass, limit: nat }),
   fc.record({ kind: fc.constant("unchanged" as const), heading: text, pass, fileLabel: text, accepted: fc.array(text, { maxLength: 2 }) }),
@@ -661,7 +660,6 @@ test("a pause, limit or unchanged origin round-trips with pass check, and decode
   const origins = [
     { kind: "pause", heading: "h", pause: "idle", idle: 2 },
     { kind: "pause", heading: "h", pause: "reraised", id: "U-R1-1" },
-    { kind: "pause", heading: "h", pause: "identical", fileLabel: "issue.json" },
     { kind: "limit", heading: "h", limit: 5 },
     { kind: "unchanged", heading: "h", fileLabel: "issue.json", accepted: ["U-R1-1"] },
   ];

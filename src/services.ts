@@ -2,7 +2,9 @@
 // Tests provide scripted layers; src/web.ts provides the live ones. API names: docs/effect-v4-api.md.
 
 import { Context, Effect } from "effect";
-import type { Brand, Option, Schema, Scope } from "effect";
+import type { Brand, Fiber, Option, Schema, Scope } from "effect";
+import type { Answered, DisputeOwner, OpenDispute, Withdrawn } from "./openDisputes.ts";
+import type { BesideKey } from "./reviewState.ts";
 import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
 import type { OnExpiry } from "./protocol.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
@@ -469,6 +471,27 @@ export class RunKind extends Context.Service<RunKind, Readonly<{ mode: RunMode }
 export type OpenQuestionsShape = Readonly<{
   /** The run's scope: a question forked here outlives its review loop, and is cancelled when the run's layer closes. */
   scope: Scope.Scope;
+  /** A dispute registered before its question is presented. */
+  opened: (dispute: OpenDispute) => Effect.Effect<void>;
+  /**
+   * An answer to a dispute's question, called inside the Ui's uninterruptible take (a Ref update only): kept, or too late
+   * where the dispute was withdrawn first, which the caller says from a fiber of its own, never inside the take.
+   */
+  answered: (key: BesideKey, text: string) => Effect.Effect<"kept" | "tooLate">;
+  /** A dispute's producer, interrupted when the dispute is withdrawn. */
+  attach: (key: BesideKey, fiber: Fiber.Fiber<string, UserStopped | RunError>) => Effect.Effect<void>;
+  /** The answered disputes among `keys`, read without consuming them (a loop's boundary). */
+  peek: (keys: readonly BesideKey[]) => Effect.Effect<readonly Answered[]>;
+  /** The disputes a loop recorded, removed. */
+  acknowledge: (keys: readonly BesideKey[]) => Effect.Effect<void>;
+  /** The loop of `keys` ended: their answers are the run's to apply at its next point. */
+  loopEnded: (keys: readonly BesideKey[]) => Effect.Effect<void>;
+  /** The answered disputes owned by the run whose loop ended, removed. */
+  takeAfterLoop: Effect.Effect<readonly Answered[]>;
+  /** An owner's disputes removed in one step, then their producers interrupted; one answered first is in `answered`. */
+  withdrawOwned: (owner: DisputeOwner) => Effect.Effect<Withdrawn>;
+  /** The same for every dispute (the run's end, a send-back). */
+  withdrawAll: Effect.Effect<Withdrawn>;
   /** A question beside the run answered "q" or "/quit". */
   quit: (e: UserStopped) => Effect.Effect<void>;
   /** A beside question's producer that failed. */

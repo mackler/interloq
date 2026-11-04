@@ -5,7 +5,7 @@
 
 import { AcceptedWithoutChange, type RoundInvalid, RoundLimitStop, type RunError } from "./errors.ts";
 import { lineChange } from "./lineChange.ts";
-import { optionText, parseExtraRounds } from "./input.ts";
+import { limitStops, optionText, parseExtraRounds, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import * as log from "./issueLog.ts";
 import { renderRound } from "./render.ts";
@@ -19,7 +19,7 @@ import { changesAuthority, investigatedIds, resolutionOf, resolutionOutcomes, st
 import type * as S from "./schema.ts";
 import type { SubjectId } from "./artifacts.ts";
 import type { LoopResult, UiEvent } from "./uiEvents.ts";
-import { Result } from "effect";
+import { type Brand, Result } from "effect";
 
 /** A reply's resolution as the program keeps it (issue #38); the round's validation has refused a blank one. */
 const resolvedOf = (r: S.ResolutionReply | null): S.Resolution | null => { const v = resolutionOf(r); return Result.isSuccess(v) ? v.success : null; };
@@ -41,14 +41,19 @@ export type ReviewCommand =
   | Readonly<{ kind: "SaveLog"; log: readonly LogEntry[] }>
   | Readonly<{ kind: "SaveRound"; record: RoundRecord }>
   | Readonly<{ kind: "Checkpoint"; point: CheckpointPoint }>
-  | Readonly<{ kind: "AskLimit"; limit: number }>
-  /** Issue #30: the pause of an accepted issue with the file unchanged; Retry is a corrective turn or another interview. */
-  | Readonly<{ kind: "AskUnchanged"; accepted: readonly string[]; retry: "corrective" | "interview" }>
   /**
-   * A pause of behaviour 7, or a question Claude Code returned with its response (S7: the origin, not a composed
-   * subject); `options`: the options the decision offers (decision Q1 of decision support); none at the other pauses.
+   * A question Claude Code returned with its response (S7), the one question a review loop still waits for (issue #243:
+   * every pause of behaviour 7 is opened beside the review instead); `options`: the options the decision offers.
    */
-  | Readonly<{ kind: "AskDecision"; asks: Asks; id: IssueId | null; options: readonly Option[] }>
+  | Readonly<{ kind: "AskDecision"; asks: PlannerAsks; id: IssueId | null; options: readonly Option[] }>
+  /** Issue #243: a question opened beside the running review; the review goes on and reads its answer at a boundary. */
+  | Readonly<{ kind: "OpenBeside"; beside: Beside }>
+  /** Issue #243: a question opened beside the review withdrawn unanswered (a later one supersedes it). */
+  | Readonly<{ kind: "CloseBeside"; key: BesideKey }>
+  /** Issue #243: the dispute answers the loop recorded, which it so consumes from the run's registry. */
+  | Readonly<{ kind: "AcknowledgeDisputes"; keys: readonly BesideKey[] }>
+  /** Issue #243: the answers given so far to the questions open beside the review, read and never waited for. */
+  | Readonly<{ kind: "AwaitBoundary" }>
   /** Issue #208: `unexplained`, the previous response's unexplained change the review is told of, or null. */
   | Readonly<{ kind: "CallReviewer"; round: number; unexplained: prompts.UnexplainedChange | null }>
   /** Issue #38: `investigating`, the ids whose disagreement Claude Code's response is to look for a resolution of first. */
@@ -67,11 +72,8 @@ export type ReviewCommand =
 export type ReviewEvent =
   /** `text`: the reviewed file's text, from which the change during a response is measured (issue #31); "" when absent. */
   | Readonly<{ kind: "Begin"; hash: string; text: string; log: readonly LogEntry[] }>
-  | Readonly<{ kind: "LimitAnswer"; answer: string }>
-  /** Issue #185 (G-R1-3): the question at the round limit, or at the idle limit, went unanswered within its wait. */
-  | Readonly<{ kind: "LimitUnanswered" }>
-  | Readonly<{ kind: "IdleUnanswered" }>
-  | Readonly<{ kind: "UnchangedAnswer"; answer: "retry" | "proceed" | "stop" }>
+  /** Issue #243: the answers to the questions open beside the review given since they were opened (AwaitBoundary). */
+  | Readonly<{ kind: "BoundaryReached"; answers: readonly BoundaryAnswer[] }>
   // Issue #151: a decoded review or response carries the value the interpreter validated, with its repair turn, before
   // the state machine sees it (reviewValidation, roundValidation of src/round.ts), so no transition refuses one.
   | Readonly<{ kind: "ReviewDecoded"; review: Review; validated: ValidatedReview }>
@@ -126,7 +128,27 @@ export type ReviewSetup = Readonly<{
 /** An option of a pause's decision: a label and its description. */
 export type Option = Readonly<{ label: string; description: string }>;
 /** What a decision of the loop asks (S7): a pause of behaviour 7 with its facts (S11), or a question Claude Code returned with its response. */
-export type Asks = Readonly<{ kind: "pause"; facts: PauseFacts }> | Readonly<{ kind: "planner"; question: UserQuestion }>;
+export type Asks = Readonly<{ kind: "pause"; facts: PauseFacts }> | PlannerAsks;
+/** A question Claude Code returned with its response, the one ask that still waits (issue #243). */
+export type PlannerAsks = Readonly<{ kind: "planner"; question: UserQuestion }>;
+/** Issue #243: a question opened beside the review, `${dirName}/${phase}/R${round}/${what}`, unique across the run. */
+export type BesideKey = string & Brand.Brand<"BesideKey">;
+/** Issue #243: a disputed pause put to the developer beside the review, with the options its positions offer. */
+export type DisputeAsk = Readonly<{ asks: Readonly<{ kind: "pause"; facts: PauseFacts }>; id: IssueId | null; options: readonly Option[]; taskDispute: boolean }>;
+/**
+ * Issue #243: what a question beside the review asks: the round limit reached (`limit`, the limit then), the idle limit
+ * (its facts), an accepted point that left the file unchanged (its round and ids, so a Retry can be carried out after
+ * that round's data is gone), or a disputed pause.
+ */
+export type BesideQuestion =
+  | Readonly<{ kind: "limit"; limit: number }>
+  | Readonly<{ kind: "idle"; facts: PauseFacts }>
+  | Readonly<{ kind: "unchanged"; round: number; accepted: readonly string[]; retry: "corrective" | "interview" }>
+  | Readonly<{ kind: "dispute"; dispute: DisputeAsk; round: number }>;
+export type Beside = Readonly<{ key: BesideKey; question: BesideQuestion }>;
+/** Issue #243: an end of the loop held until the boundary is drained; `final`, the commands said only when it ends. */
+export type Ending = Readonly<{ result: LoopResult; final: readonly ReviewCommand[] }>;
+export type BoundaryAnswer = Readonly<{ key: BesideKey | string; text: string }>;
 /** `key`: the condition and the id of a pause that depends on the dispositions, so that it is asked once per round (P1-R1-3). */
 /** `taskDispute`: the disagreement Claude Code marked as about what the task requires (issue #156); none for the planner's questions. */
 type Ask = Readonly<{ asks: Asks; id: IssueId | null; options?: readonly Option[]; key?: string; taskDispute?: boolean }>;
@@ -182,14 +204,9 @@ const markedEntry = (history: readonly LogEntry[], id: string): boolean => {
 /** Where the loop is inside a round: what the next event means. */
 export type Step =
   | Readonly<{ name: "idle" }>
-  | Readonly<{ name: "awaitingLimit" }>
   | Readonly<{ name: "awaitingReview" }>
-  /**
-   * `converged` (issue #38): the asks of a review with no counted issue (a resolution only the developer may authorize, a
-   * disputed self-correction still standing); after them the loop converges unless an answer applies something.
-   */
-  | Readonly<{ name: "askingReraised"; asking: Ask; queue: readonly Ask[]; converged?: Readonly<{ applied: boolean }> }>
   | Readonly<{ name: "awaitingResponse" }>
+  /** The questions Claude Code returned with its response, asked in turn (they still wait, issue #243). */
   | Readonly<{ name: "askingPauses"; asking: Ask; queue: readonly Ask[] }>
   | Readonly<{ name: "applyingPauseDecisions" }>
   | Readonly<{ name: "amending" }>
@@ -199,15 +216,14 @@ export type Step =
   | Readonly<{ name: "correcting" }>
   /** Issue #38: awaiting the reply of an investigation turn. */
   | Readonly<{ name: "investigating" }>
-  /** Issue #30: the pause; `hash` is the observation the round continues from on Proceed. */
-  | Readonly<{ name: "askingUnchanged"; hash: string }>
   | Readonly<{ name: "observingResponse" }>
-  | Readonly<{ name: "askingIdentical"; asking: Ask; hash: string; stage: Stage }>
-  | Readonly<{ name: "applyingIdentical" }>
-  | Readonly<{ name: "observingIdentical" }>
-  | Readonly<{ name: "askingIdle"; asking: Ask }>
-  | Readonly<{ name: "applyingIdle" }>
-  | Readonly<{ name: "observingIdle" }>
+  /** Issue #243: reading the answers given beside the review before the next round. */
+  | Readonly<{ name: "atBoundary" }>
+  /** Issue #243: an end of the loop reached while questions are open, held until their answers are read. */
+  | Readonly<{ name: "finishingAtBoundary"; ending: Ending }>
+  /** Issue #243: decisions answered beside the review applied, then the file observed. */
+  | Readonly<{ name: "applyingBeside" }>
+  | Readonly<{ name: "observingBeside" }>
   | Readonly<{ name: "finished" }>;
 
 /** The data of the round in progress. */
@@ -245,8 +261,8 @@ export type ReviewState = Readonly<{
   round: number;
   limit: number;
   idle: number;
-  /** Issue #185 (G-R1-3): a limit of this loop went unanswered, so every later limit is extended without a question. */
-  unanswered: boolean;
+  /** Issue #243: this loop's questions open beside the review and not yet answered at a boundary. */
+  beside: readonly Beside[];
   log: readonly LogEntry[];
   observations: readonly Observation[];
   /** The reviewed file's text at the last observation (issue #31). */
@@ -264,13 +280,17 @@ export type Transition = Readonly<{ state: ReviewState; commands: readonly Revie
 
 const freshRound: RoundInProgress = { review: null, validatedReview: null, round: null, response: null, decided: false, toApply: false, decisions: [], asked: [], settled: [], corrections: 0, startText: "", startLog: [], investigating: new Map(), investigations: 0 };
 
-export const initialState = (setup: ReviewSetup, config: Pick<Config, "maxRounds" | "maxIdleRounds" | "countMinor">): ReviewState => ({
+/**
+ * Issue #243: `continueFrom`, a loop of the same subject that ran before in this phase: this loop continues its round
+ * numbers, so its rounds' files are written beside the earlier ones and none is overwritten.
+ */
+export const initialState = (setup: ReviewSetup, config: Pick<Config, "maxRounds" | "maxIdleRounds" | "countMinor">, continueFrom: Readonly<{ round: number }> | null = null): ReviewState => ({
   setup: { ...setup, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor },
   step: { name: "idle" },
-  round: 0,
-  limit: config.maxRounds,
+  round: continueFrom?.round ?? 0,
+  limit: (continueFrom?.round ?? 0) + config.maxRounds,
   idle: 0,
-  unanswered: false,
+  beside: [],
   log: [],
   observations: [],
   lastText: "",
@@ -313,49 +333,220 @@ const checkpoint = (s: ReviewState, stage: CheckpointPoint["stage"]): ReviewComm
 const record = (s: ReviewState, d: DecisionEvent): readonly ReviewCommand[] => [{ kind: "RecordDecision", decision: d }, checkpoint(s, "decided")];
 const ask = (s: ReviewState, step: Step, asking: Ask, before: readonly ReviewCommand[] = []): Transition => ({
   state: { ...s, step },
-  commands: [...before, { kind: "AskDecision", asks: asking.asks, id: asking.id, options: asking.options ?? [] }],
+  commands: [...before, { kind: "AskDecision", asks: asking.asks as PlannerAsks, id: asking.id, options: asking.options ?? [] }],
 });
 
-/**
- * Issue #185 (G-R1-3): the line of an extension of the loop's round limit or idle limit, said and written: `first` for
- * the unanswered question, otherwise a later limit extended without one. Each adds as many cycles as the limit reached.
- */
-const extension = (s: ReviewState, kind: "rounds" | "idle", first: boolean): readonly ReviewCommand[] => {
-  const text = prompts.limitExtendedLine(s.setup.heading, kind, kind === "rounds" ? s.setup.maxRounds : s.setup.maxIdleRounds, first, prompts.passNoun(s.setup.subject));
+// ---- issue #243: the questions beside the review ------------------------------------------------------------------
+
+/** A question opened beside the review, under its key. */
+const opening = (s: ReviewState, question: BesideQuestion, what: string): readonly [ReviewState, ReviewCommand] => {
+  const beside: Beside = { key: `${s.setup.dirName}/${s.setup.phase}/${what}` as BesideKey, question };
+  return [{ ...s, beside: [...s.beside, beside] }, { kind: "OpenBeside", beside }];
+};
+/** The line of a limit reached, the question opened (`asked`) or still open (`again`), said and written. */
+const extension = (s: ReviewState, kind: "rounds" | "idle", when: "asked" | "again"): readonly ReviewCommand[] => {
+  const text = prompts.limitExtendedLine(s.setup.heading, kind, kind === "rounds" ? s.setup.maxRounds : s.setup.maxIdleRounds, when, prompts.passNoun(s.setup.subject));
   return [say(text), { kind: "Converse", markdown: `${text}\n\n` }];
 };
-/** The round limit extended by maxRounds, the next round started. */
-const extendRounds = (s: ReviewState, first: boolean): Transition =>
-  withBefore(startRound({ ...s, unanswered: true, limit: s.limit + s.setup.maxRounds }), extension(s, "rounds", first));
-/** The idle limit extended: the idle count reset, no decision recorded, the next round started. */
-const extendIdle = (s: ReviewState, first: boolean): Transition => withBefore(startRound({ ...s, unanswered: true, idle: 0 }), extension(s, "idle", first));
+const isOpen = (s: ReviewState, kind: BesideQuestion["kind"]): boolean => s.beside.some((b) => b.question.kind === kind);
 
-/** Round n + 1 begins: the limit prompt if the limit is reached, otherwise the Codex review. */
-const startRound = (s: ReviewState): Transition => {
-  const { heading } = s.setup;
+/** Round n + 1 begins: the answers given beside the review read first where any question is open. */
+const startRound = (s: ReviewState): Transition =>
+  s.beside.length > 0 ? { state: { ...s, step: { name: "atBoundary" } }, commands: [{ kind: "AwaitBoundary" }] } : roundOrLimit(s);
+
+/**
+ * Issue #243: the round limit never stops the review: reached, it is extended by maxRounds at once and the round begins
+ * in the same batch, the limit's question opened beside it where none is open.
+ */
+const roundOrLimit = (s: ReviewState, before: readonly ReviewCommand[] = []): Transition => {
+  if (s.round + 1 <= s.limit) return withBefore(beginRound(s), before);
+  const extended: ReviewState = { ...s, limit: s.limit + s.setup.maxRounds };
+  const counts = prompts.cycleCountsLines(s.setup.heading, s.counts, s.costs).map(say);
+  if (isOpen(s, "limit")) return withBefore(beginRound(extended), [...before, ...counts, ...extension(s, "rounds", "again")]);
+  const [state, open] = opening(extended, { kind: "limit", limit: s.limit }, `R${s.round}/limit`);
+  return withBefore(beginRound(state), [...before, ...counts, ...extension(s, "rounds", "asked"), open]);
+};
+const beginRound = (s: ReviewState): Transition => {
   const n = s.round + 1;
-  if (n > s.limit && s.unanswered) return extendRounds(s, false);
-  if (n > s.limit) {
-    const lines = prompts.cycleCountsLines(heading, s.counts, s.costs);
-    return { state: { ...s, step: { name: "awaitingLimit" } }, commands: [...lines.map(say), { kind: "AskLimit", limit: s.limit }] };
-  }
   return {
     state: { ...s, round: n, step: { name: "awaitingReview" }, current: { ...freshRound, startText: s.lastText, startLog: s.log }, unexplained: null },
-    commands: [notify({ _tag: "RoundBegan", subject: s.setup.subject, round: n, limit: s.limit }), status(prompts.cycleReviewLine(heading, n, prompts.passNoun(s.setup.subject))), { kind: "CallReviewer", round: n, unexplained: s.unexplained }],
+    commands: [notify({ _tag: "RoundBegan", subject: s.setup.subject, round: n, limit: s.limit }), status(prompts.cycleReviewLine(s.setup.heading, n, prompts.passNoun(s.setup.subject))), { kind: "CallReviewer", round: n, unexplained: s.unexplained }],
   };
 };
 
-const onLimitAnswer = (s: ReviewState, answer: string): Transition => {
-  const { heading, proceed } = s.setup;
-  if (answer === "p" && proceed !== null) {
-    return done(s, { kind: "Finish", result: "proceed" }, [
-      { kind: "Converse", markdown: `**User decision:** ${proceed} without convergence after round ${s.round} of ${heading}.\n\n` },
-      notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "proceed" }),
-    ]);
+/**
+ * Issue #243: an end of the loop. Where questions are open beside the review their answers are read first
+ * (`finishingAtBoundary`), so an answer given during the last cycle is never lost; `final` is said only when it ends.
+ */
+const ending = (s: ReviewState, result: LoopResult, before: readonly ReviewCommand[], final: readonly ReviewCommand[]): Transition =>
+  s.beside.length === 0
+    ? done(s, { kind: "Finish", result }, [...before, ...final])
+    : { state: { ...s, step: { name: "finishingAtBoundary", ending: { result, final } } }, commands: [...before, { kind: "AwaitBoundary" }] };
+const finished = (s: ReviewState, result: LoopResult): readonly ReviewCommand[] => [notify({ _tag: "LoopFinished", subject: s.setup.subject, result })];
+const proceedLine = (s: ReviewState): ReviewCommand => ({ kind: "Converse", markdown: `**User decision:** ${s.setup.proceed} without convergence after round ${s.round} of ${s.setup.heading}.\n\n` });
+
+/** An answer read at a boundary, with the question it answers. */
+type Answered = Readonly<{ beside: Beside; text: string }>;
+/** The answers that halt: Stop at the limit, Stop at an unchanged question. */
+const haltingAnswer = (s: ReviewState, answered: readonly Answered[]): Transition | null => {
+  const { heading, fileLabel, proceed } = s.setup;
+  for (const a of answered) {
+    const q = a.beside.question;
+    if (q.kind === "limit" && limitStops(a.text, proceed !== null)) return halt(s, new RoundLimitStop({ heading }));
+    if (q.kind === "unchanged" && parseUnchangedAnswer(a.text) === "stop") {
+      const recorded: ReviewCommand = { kind: "Converse", markdown: prompts.unchangedDecisionLine("stop", fileLabel, q.round, heading) };
+      return done(s, { kind: "Halt", error: new AcceptedWithoutChange({ fileLabel, accepted: q.accepted.length }) }, [recorded]);
+    }
   }
-  const added = parseExtraRounds(answer);
-  if (added === null) return halt(s, new RoundLimitStop({ heading }));
-  return startRound({ ...s, limit: s.limit + added });
+  return null;
+};
+/** The decision of a question beside the review in the records. */
+const besideDecision = (s: ReviewState, asks: Asks, id: IssueId | null, text: string): DecisionEvent => ({ subject: subjectOf(s.setup.heading, asks), id, decision: text, phase: s.setup.phase, round: s.round });
+/** A Retry of an earlier round's unchanged question, as a decision the planner applies. */
+const retryDecision = (s: ReviewState, q: Extract<BesideQuestion, { kind: "unchanged" }>): DecisionEvent => ({
+  subject: prompts.unchangedRecordSubject(s.setup.fileLabel),
+  id: null,
+  decision: prompts.unchangedRetryDecision(s.setup.fileLabel, q.round, q.accepted),
+  phase: s.setup.phase,
+  round: s.round,
+});
+/** A dispute answered: recorded, logged on its id; whether it applies anything (an answer for Claude Code's position does not). */
+const recordDispute = (s: ReviewState, d: DisputeAsk, text: string): Readonly<{ state: ReviewState; commands: readonly ReviewCommand[]; applies: boolean }> => {
+  const decision = besideDecision(s, d.asks, d.id, text);
+  const updated = d.id === null ? s.log : log.appendUserDecision(s.log, d.id, text, s.setup.phase, s.round);
+  return { state: { ...s, log: updated }, commands: [...record(s, decision), { kind: "SaveLog", log: updated }], applies: !keepsPlannerPosition(d.options, text) };
+};
+/** Decisions answered beside the review applied, then the file observed, then the next round. */
+const applyBeside = (s: ReviewState, before: readonly ReviewCommand[]): Transition => ({ state: { ...s, step: { name: "applyingBeside" } }, commands: [...before, { kind: "ApplyDecisions" }] });
+/** Every unchanged question still open but the latest is closed: a later round's question supersedes it. */
+const closeSuperseded = (s: ReviewState): Readonly<{ state: ReviewState; commands: readonly ReviewCommand[] }> => {
+  const unchanged = s.beside.filter((b) => b.question.kind === "unchanged");
+  const superseded = unchanged.slice(0, -1).map((b) => b.key);
+  return { state: { ...s, beside: s.beside.filter((b) => !superseded.includes(b.key)) }, commands: superseded.map((key): ReviewCommand => ({ kind: "CloseBeside", key })) };
+};
+const answeredOf = (s: ReviewState, answers: readonly BoundaryAnswer[]): Readonly<{ answered: readonly Answered[]; state: ReviewState }> => {
+  const answered = answers.flatMap((a): readonly Answered[] => {
+    const beside = s.beside.find((b) => b.key === a.key);
+    return beside === undefined ? [] : [{ beside, text: a.text }];
+  });
+  const keys = answered.map((a) => a.beside.key);
+  return { answered, state: { ...s, beside: s.beside.filter((b) => !keys.includes(b.key)) } };
+};
+
+/**
+ * Issue #243: the answers given beside the review read at a round's boundary, applied in their precedence: a Stop halts;
+ * Proceed ends the loop; the disputes answered are recorded (and so consumed), an answer for Codex's position applied or,
+ * where the subject leaves on a decision, the loop left; an idle answer applied; a number of cycles sets the limit; a
+ * Retry corrects the round just ended or, for an earlier round, is applied as a decision; then the next round.
+ */
+const onBoundary = (s0: ReviewState, answers: readonly BoundaryAnswer[]): Transition => {
+  const { answered, state: s1 } = answeredOf(s0, answers);
+  const halting = haltingAnswer(s1, answered);
+  if (halting !== null) return halting;
+  const { heading, fileLabel, proceed } = s1.setup;
+  if (proceed !== null && answered.some((a) => a.beside.question.kind === "limit" && a.text.trim() === "p")) return ending(s1, "proceed", [proceedLine(s1)], finished(s1, "proceed"));
+  let s = s1;
+  const commands: ReviewCommand[] = [];
+  let toApply = false;
+  let leaving = false;
+  const acknowledged: BesideKey[] = [];
+  for (const a of answered) {
+    const q = a.beside.question;
+    if (q.kind !== "dispute") continue;
+    const r = recordDispute(s, q.dispute, a.text);
+    s = r.state;
+    commands.push(...r.commands);
+    acknowledged.push(a.beside.key);
+    if (r.applies && s.setup.leaveOnDecision) leaving = true;
+    else if (r.applies) toApply = true;
+  }
+  if (acknowledged.length > 0) commands.push({ kind: "AcknowledgeDisputes", keys: acknowledged });
+  if (leaving) return leave(s, commands);
+  for (const a of answered) {
+    const q = a.beside.question;
+    if (q.kind === "idle" && a.text.trim() !== "") {
+      commands.push(...record(s, besideDecision(s, { kind: "pause", facts: q.facts }, null, a.text)));
+      // A subject that leaves on a decision (the work review, whose response is read-only) leaves for a revision.
+      if (s.setup.leaveOnDecision) return leave(s, commands);
+      toApply = true;
+    }
+    if (q.kind === "limit") {
+      const added = parseExtraRounds(a.text);
+      if (added !== null) {
+        s = { ...s, limit: s.round + added };
+        commands.push({ kind: "Converse", markdown: `${prompts.limitAnsweredLine(heading, added, s.round)}\n\n` });
+      }
+    }
+  }
+  let correctNow = false;
+  for (const a of answered) {
+    const q = a.beside.question;
+    if (q.kind !== "unchanged") continue;
+    const answer = parseUnchangedAnswer(a.text);
+    commands.push({ kind: "Converse", markdown: prompts.unchangedDecisionLine(answer ?? "proceed", fileLabel, q.round, heading) });
+    if (answer !== "retry") continue;
+    if (q.round === s.round && !toApply && s.current.round !== null) correctNow = true;
+    else {
+      commands.push(...record(s, retryDecision(s, q)));
+      toApply = true;
+    }
+  }
+  if (correctNow && toApply) {
+    // A Retry of the round just ended joins the decisions being applied.
+    const q = answered.find((a) => a.beside.question.kind === "unchanged" && a.beside.question.round === s.round)!.beside.question as Extract<BesideQuestion, { kind: "unchanged" }>;
+    commands.push(...record(s, retryDecision(s, q)));
+    correctNow = false;
+  }
+  const closed = closeSuperseded(s);
+  s = closed.state;
+  commands.push(...closed.commands);
+  if (toApply) return applyBeside(s, commands);
+  if (correctNow) return s.setup.onUnchanged === "pause" ? { state: { ...s, step: { name: "amending" } }, commands: [...commands, { kind: "Amend", round: s.round }] } : correct(s, commands);
+  return roundOrLimit(s, commands);
+};
+
+/**
+ * Issue #243: the answers read when the loop would end. A Stop halts. Where it would end with no counted issue, an answer
+ * for Codex's position in a dispute and a Retry of an unchanged question are carried out (the file changes, so Codex
+ * reviews it in another round), or, where the subject leaves on a decision, the dispute's answer makes the loop leave.
+ * Every other answer is recorded with its line and the end stands. Where it would leave for a revision, or proceed, the
+ * disputes answered are left to the run's registry, which carries them to the next point that can change the work.
+ */
+const onFinishingBoundary = (s0: ReviewState, held: Ending, answers: readonly BoundaryAnswer[]): Transition => {
+  const { answered, state: s1 } = answeredOf(s0, answers);
+  const halting = haltingAnswer(s1, answered);
+  if (halting !== null) return halting;
+  const { heading, fileLabel } = s1.setup;
+  let s = s1;
+  const commands: ReviewCommand[] = [];
+  const after = (text: string): ReviewCommand => ({ kind: "Converse", markdown: `${prompts.answerAfterEndLine(heading, text)}\n\n` });
+  let toApply = false;
+  let result = held.result;
+  const acknowledged: BesideKey[] = [];
+  for (const a of answered) {
+    const q = a.beside.question;
+    if (q.kind === "dispute") {
+      if (held.result !== "converged") continue;
+      const applies = !keepsPlannerPosition(q.dispute.options, a.text);
+      acknowledged.push(a.beside.key);
+      if (!applies) {
+        commands.push(after(a.text));
+        continue;
+      }
+      const r = recordDispute(s, q.dispute, a.text);
+      s = r.state;
+      commands.push(...r.commands);
+      if (s.setup.leaveOnDecision) result = "revise";
+      else toApply = true;
+    } else if (q.kind === "unchanged" && parseUnchangedAnswer(a.text) === "retry" && held.result === "converged") {
+      commands.push(...record(s, retryDecision(s, q)));
+      toApply = true;
+    } else commands.push(after(a.text));
+  }
+  if (acknowledged.length > 0) commands.push({ kind: "AcknowledgeDisputes", keys: acknowledged });
+  if (toApply && result === "converged") return applyBeside(s, commands);
+  const final = result === held.result ? held.final : finished(s, result);
+  return done(s, { kind: "Finish", result }, [...commands, ...final]);
 };
 
 /** After the reraised prompts: the planner's response. */
@@ -413,13 +604,12 @@ const withEffectOptions = (setup: ReviewSetup, a: Ask): Ask => {
   };
 };
 /**
- * Whether an answer at a disputed pause keeps Claude Code's position (issue #183): the planner's option as the answer
+ * Whether an answer to a disputed pause keeps Claude Code's position (issue #183): the planner's option as the answer
  * stands for it (optionText, which answerOf returns for its number) or its label as typed. Such an answer decides nothing
- * to carry out, so a subject that leaves on a decision goes on with the review instead.
+ * to carry out (issue #243: the loop and the run's registry of disputes both read it).
  */
-export const standsWithPlanner = (asking: Ask, text: string): boolean => {
-  if (asking.asks.kind !== "pause" || !("effects" in asking.asks.facts)) return false;
-  const planner = asking.options?.find((o) => o.label === prompts.PLANNER_POSITION);
+export const keepsPlannerPosition = (options: readonly Option[], text: string): boolean => {
+  const planner = options.find((o) => o.label === prompts.PLANNER_POSITION);
   return planner !== undefined && (text === optionText(planner) || text.trim() === planner.label);
 };
 /** The agents' statements a pause's facts carry: those of the five disputed pauses, null for every other pause (issue #183). */
@@ -445,6 +635,19 @@ const askedOrSettled = (s: ReviewState, asks: readonly Ask[]): Readonly<{ asked:
     settled: settledAsks.flatMap((a) => (a.asks.kind === "pause" ? settledLines(s, a as Ask & { asks: { kind: "pause" } }) : [])),
   };
 };
+
+/** Issue #243: the disputes a subject's policy does not settle, opened beside the review, each with its line. */
+const openDisputes = (s: ReviewState, asks: readonly Ask[]): Readonly<{ state: ReviewState; commands: readonly ReviewCommand[] }> =>
+  asks.reduce(
+    (acc, a) => {
+      if (a.asks.kind !== "pause") return acc;
+      const facts = a.asks.facts;
+      const dispute: DisputeAsk = { asks: { kind: "pause", facts }, id: a.id, options: a.options ?? [], taskDispute: a.taskDispute === true };
+      const [state, open] = opening(acc.state, { kind: "dispute", dispute, round: s.round }, `R${s.round}/${a.key ?? `reraised ${a.id ?? ""}`}`);
+      return { state, commands: [...acc.commands, ...recordedLine(prompts.DISPUTE_PUT_TO_YOU_HEADING, prompts.disputeBesideLine(pauseOriginOf(facts), s.setup.heading)), open] };
+    },
+    { state: s, commands: [] as readonly ReviewCommand[] },
+  );
 
 const askEach = (s: ReviewState, queue: readonly Ask[], step: (asking: Ask, rest: readonly Ask[]) => Step, otherwise: (s: ReviewState, before: readonly ReviewCommand[]) => Transition, before: readonly ReviewCommand[] = []): Transition => {
   if (queue.length === 0) return otherwise(s, before);
@@ -554,10 +757,6 @@ const investigating = (s: ReviewState, asks: readonly Ask[]): ReviewState => {
   for (const id of new Set(asks.map((a) => ownId(a) ?? ""))) map.set(id, asks.filter((a) => ownId(a) === id).map(investigationOf));
   return { ...s, investigated: new Set([...s.investigated, ...map.keys()]), current: { ...s.current, investigating: map } };
 };
-const converge = (s: ReviewState, before: readonly ReviewCommand[]): Transition => {
-  const { heading, fileLabel } = s.setup;
-  return done(s, { kind: "Finish", result: "converged" }, [...before, { kind: "Converse", markdown: prompts.reviewConvergedMarkdown(heading, s.round, fileLabel, prompts.passNoun(s.setup.subject)) }, checkpoint(s, "reviewed"), notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "converged" })]);
-};
 
 const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedReview): Transition => {
   const { countMinor } = s.setup;
@@ -577,17 +776,19 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
   const standing = standingAsks(state, review, validated);
   if (counted === 0) {
     const selfCorrections = askedOrSettled(state, standing.filter((a) => a.asks.kind === "pause" && a.asks.facts.pause === "disputedSelfCorrection"));
-    const queue = [...authority, ...selfCorrections.asked];
-    if (queue.length === 0) return converge(state, [...before, ...agreed, ...selfCorrections.settled]);
-    return askEach(state, queue, (asking, rest) => ({ name: "askingReraised", asking, queue: rest, converged: { applied: false } }), toResponse, [...before, ...agreed, ...selfCorrections.settled, checkpoint(state, "reviewed")]);
+    // Issue #243: the asks of a review with no counted issue are opened beside the run, and the loop ends.
+    const opened = openDisputes(state, [...authority, ...selfCorrections.asked]);
+    return ending(opened.state, "converged", [...before, ...agreed, ...selfCorrections.settled, ...opened.commands], [{ kind: "Converse", markdown: prompts.reviewConvergedMarkdown(s.setup.heading, n, s.setup.fileLabel, prompts.passNoun(s.setup.subject)) }, checkpoint(state, "reviewed"), ...finished(state, "converged")]);
   }
   const disputes = [...standing, ...reraisedAsks(state, review, validated, standing)];
   const { asked, settled } = askedOrSettled(state, disputes);
   const deferred = asked.filter((a) => fresh(state, a));
   const now = asked.filter((a) => !fresh(state, a));
-  // A dispute asked at the review is not asked again for the response of the same round.
+  // A dispute opened at the review is not opened again for the response of the same round.
   const investigated = investigating({ ...state, current: { ...state.current, asked: now.map((a) => a.key ?? "") } }, deferred);
-  return askEach(investigated, [...authority, ...now], (asking, queue) => ({ name: "askingReraised", asking, queue }), toResponse, [...before, ...agreed, ...settled, ...investigationLines(state, deferred), checkpoint(state, "reviewed")]);
+  // Issue #243: what would have been asked is opened beside the review, which goes on to the response.
+  const opened = openDisputes(investigated, [...authority, ...now]);
+  return toResponse(opened.state, [...before, ...agreed, ...settled, ...investigationLines(state, deferred), checkpoint(state, "reviewed"), ...opened.commands]);
 };
 
 /**
@@ -694,8 +895,11 @@ const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: Val
   const freshAsks = toAsk.filter((a) => fresh(withCost, a));
   // Issue #38: a dispute not yet investigated has its investigation turn first, and nothing of this reply is asked.
   const asked = freshAsks.length > 0 ? [] : toAsk;
+  // Issue #243: a disputed pause is opened beside the review; only Claude Code's own questions are asked and waited for.
+  const planner = asked.filter((a) => a.asks.kind === "planner");
+  const disputes = openDisputes(withCost, asked.filter((a) => a.asks.kind === "pause"));
   const base: ReviewState = {
-    ...withCost,
+    ...disputes.state,
     current: { ...s.current, round, response, asked: [...s.current.asked, ...keysOf(asked)], settled: [...s.current.settled, ...keysOf(settledAsks)], investigating: records },
   };
   const state = investigating(base, freshAsks);
@@ -725,13 +929,14 @@ const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: Val
     ...(response.reviewer_feedback !== "" && !corrective ? [{ kind: "RecordFeedback", round: n, text: response.reviewer_feedback } as ReviewCommand] : []),
     ...settled,
     checkpoint(state, "responded"),
+    ...disputes.commands,
   ];
   if (freshAsks.length > 0) {
     const attempt = state.current.investigations + 1;
     const ids = [...new Set(freshAsks.map((a) => ownId(a) ?? ""))] as IssueId[];
     return { state: { ...state, step: { name: "investigating" }, current: { ...state.current, investigations: attempt } }, commands: [...before, ...investigationLines(state, freshAsks), { kind: "CallInvestigation", round: n, ids, attempt }] };
   }
-  return askEach(state, asked, (asking, queue) => ({ name: "askingPauses", asking, queue }), afterPauses, before);
+  return askEach(state, planner, (asking, queue) => ({ name: "askingPauses", asking, queue }), afterPauses, before);
 };
 
 const afterPauses = (s: ReviewState, before: readonly ReviewCommand[] = []): Transition =>
@@ -745,8 +950,7 @@ const roundLog = (s: ReviewState, decisions: readonly DecisionEvent[], change: F
   decisions.reduce((acc, d) => (d.id === null ? acc : log.appendUserDecision(acc, d.id, d.decision, s.setup.phase, s.round)), log.appendRound(s.current.startLog, s.current.round!, change, s.current.investigating));
 
 /** The loop leaves for a planning phase (a work review, plan 2.4). */
-const leave = (s: ReviewState, before: readonly ReviewCommand[]): Transition =>
-  done(s, { kind: "Finish", result: "revise" }, [...before, notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "revise" })]);
+const leave = (s: ReviewState, before: readonly ReviewCommand[]): Transition => ending(s, "revise", before, finished(s, "revise"));
 
 /**
  * The issue log update. A measured subject (issue #31) first observes the file, so that the log carries the response's
@@ -770,26 +974,28 @@ const roundCounts = (s: ReviewState): { accepted: number; selfCount: number } =>
   selfCount: s.current.response!.self_corrections.length,
 });
 
-/** Behaviour 7's identical-content pause, then the end of the round. */
+/** Behaviour 7's identical-content check (issue #243: a line, asking nothing), then the end of the round. */
 const identicalCheck = (s: ReviewState, hash: string, stage: Stage, before: readonly ReviewCommand[] = []): Transition => {
-  const { fileLabel } = s.setup;
   const seen = hash !== lastHash(s) ? s.observations.find((o) => o.hash === hash) : undefined;
   if (seen === undefined) return finishRound(s, hash, stage, before);
-  const asking: Ask = { asks: { kind: "pause", facts: { pause: "identical", fileLabel, round: s.round, seen: describeObservation(seen) } }, id: null };
-  return ask(s, { name: "askingIdentical", hash, stage, asking }, asking, before);
+  return finishRound(s, hash, stage, [...before, ...recordedLine(prompts.IDENTICAL_CONTENT_HEADING, prompts.identicalContentLine(s.setup.fileLabel, s.round, describeObservation(seen)).trim())]);
 };
 
-/** The observation of the round is recorded; the idle counter follows the policy; the idle pause when it is reached. */
+/**
+ * The observation of the round is recorded; the idle counter follows the policy. Issue #243: the idle limit reached
+ * restarts the count and opens its question beside the review, where none is open, and the review goes on.
+ */
 const finishRound = (s: ReviewState, hash: string, stage: Stage, before: readonly ReviewCommand[] = []): Transition => {
   const { phase, maxIdleRounds } = s.setup;
   const { accepted, selfCount } = roundCounts(s);
   const idle = accepted === 0 && selfCount === 0 ? s.idle + 1 : 0;
   const state: ReviewState = { ...s, observations: [...s.observations, { round: s.round, stage, hash }], idle };
   if (idle < maxIdleRounds) return withBefore(startRound(state), before);
-  if (s.unanswered) return withBefore(extendIdle(state, false), before);
+  const reset: ReviewState = { ...state, idle: 0 };
+  if (isOpen(s, "idle")) return withBefore(startRound(reset), [...before, ...extension(s, "idle", "again")]);
   const issues = state.log.filter((x) => x.phase === phase && x.round === s.round && x.source === "review" && x.action !== "accepted");
-  const asking: Ask = { asks: { kind: "pause", facts: { pause: "idle", idle, round: s.round, issues } }, id: null };
-  return ask(state, { name: "askingIdle", asking }, asking, before);
+  const [opened, open] = opening(reset, { kind: "idle", facts: { pause: "idle", idle, round: s.round, issues } }, `R${s.round}/idle`);
+  return withBefore(startRound(opened), [...before, ...extension(s, "idle", "asked"), open]);
 };
 const withBefore = (t: Transition, before: readonly ReviewCommand[]): Transition => (before.length === 0 ? t : { state: t.state, commands: [...before, ...t.commands] });
 
@@ -804,12 +1010,16 @@ const checkResponse = (s: ReviewState, hash: string, before: readonly ReviewComm
   if (accepted > 0 && hash === last) {
     // Issue #30: one corrective turn in the same session before the condition is put to the user.
     if (s.setup.onUnchanged === "corrective" && s.current.corrections === 0) return correct(s, before);
+    // Issue #243: the question is opened beside the review, which goes on as Proceed would; one per round and attempt.
     const ids = s.current.round!.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
     const retry = s.setup.onUnchanged === "pause" ? "interview" : "corrective";
-    return {
-      state: { ...s, step: { name: "askingUnchanged", hash } },
-      commands: [...before, say(prompts.unchangedLine(fileLabel, s.round, ids, s.current.corrections > 0)), { kind: "AskUnchanged", accepted: ids, retry }],
-    };
+    const [state, open] = opening(s, { kind: "unchanged", round: s.round, accepted: ids, retry }, `R${s.round}/unchanged ${s.current.corrections}`);
+    return identicalCheck(state, hash, "response", [
+      ...before,
+      say(prompts.unchangedLine(fileLabel, s.round, ids, s.current.corrections > 0)),
+      open,
+      ...recordedLine(prompts.UNCHANGED_HEADING, prompts.unchangedContinuesLine(fileLabel, s.round, prompts.passNoun(s.setup.subject))),
+    ]);
   }
   if (accepted === 0 && selfCount === 0 && !s.current.decided && hash !== last) {
     // Issue #208: not asked, since Codex reviews the changed file in the next round anyway; it is told of the change.
@@ -826,22 +1036,6 @@ const correct = (s: ReviewState, before: readonly ReviewCommand[] = []): Transit
   return { state: { ...s, step: { name: "correcting" }, current: { ...s.current, corrections: attempt } }, commands: [...before, { kind: "CallCorrective", round: s.round, attempt }] };
 };
 
-/** The user's answer at the pause of issue #30. */
-const onUnchangedAnswer = (s: ReviewState, hash: string, answer: "retry" | "proceed" | "stop"): Transition => {
-  const { fileLabel, heading } = s.setup;
-  const recorded: ReviewCommand = { kind: "Converse", markdown: prompts.unchangedDecisionLine(answer, fileLabel, s.round, heading) };
-  switch (answer) {
-    case "retry":
-      return s.setup.onUnchanged === "pause" ? { state: { ...s, step: { name: "amending" } }, commands: [recorded, { kind: "Amend", round: s.round }] } : correct(s, [recorded]);
-    case "proceed":
-      return identicalCheck(s, hash, "response", [recorded]);
-    case "stop": {
-      const accepted = log.acceptedCount(s.current.round!);
-      return done(s, { kind: "Halt", error: new AcceptedWithoutChange({ fileLabel, accepted }) }, [recorded]);
-    }
-  }
-};
-
 /** Every observation leaves its text as the last seen (issue #31). */
 const onFileObserved = (s: ReviewState, hash: string, text: string): Transition => onObservation({ ...s, lastText: text }, hash, text);
 const onObservation = (s: ReviewState, hash: string, text: string): Transition => {
@@ -852,105 +1046,46 @@ const onObservation = (s: ReviewState, hash: string, text: string): Transition =
     }
     case "observingResponse":
       return checkResponse(s, hash);
-    case "observingIdentical":
-      return finishRound(s, hash, "decision");
-    case "observingIdle":
-      return startRound({ ...s, observations: [...s.observations, { round: s.round, stage: "decision", hash }], idle: 0 });
+    case "observingBeside":
+      return startRound({ ...s, observations: [...s.observations, { round: s.round, stage: "decision", hash }] });
     default:
       return noop(s);
   }
 };
 
 /**
- * A non-empty decision with leaveOnDecision (G-R1-1): recorded, then what the step has not yet persisted, then
- * the exit. Each checkpoint written is one readCheckpoint accepts (P1-R1-1 of the earlier run's second review).
+ * A non-empty decision with leaveOnDecision (G-R1-1): recorded, then the round with every issue-naming decision of it,
+ * logged once, then the exit. Each checkpoint written is one readCheckpoint accepts. Issue #243: only Claude Code's own
+ * questions are still asked, after the response and before the round is logged.
  */
 const leaveOnDecision = (s: ReviewState, asking: Ask, text: string): Transition | null => {
   if (!s.setup.leaveOnDecision) return null;
   const decision = decisionOf(s, asking, text);
-  const recorded = record(s, decision);
-  switch (s.step.name) {
-    // (i) After the response, before logStep: the round and every issue-naming decision of it, once; then logged.
-    case "askingPauses": {
-      const updated = roundLog(s, asking.id === null ? s.current.decisions : [...s.current.decisions, decision], null);
-      return leave({ ...s, log: updated }, [...recorded, { kind: "SaveLog", log: updated }, checkpoint(s, "logged")]);
-    }
-    // (iii) Before the response: only the decision's entry; the round record stays no_response, so decided, not logged.
-    case "askingReraised": {
-      const updated = asking.id === null ? s.log : log.appendUserDecision(s.log, asking.id, text, s.setup.phase, s.round);
-      return leave({ ...s, log: updated }, [...recorded, { kind: "SaveLog", log: updated }, checkpoint(s, "decided")]);
-    }
-    // (ii) After logStep: the round is already logged, and these asks name no issue.
-    default:
-      return leave(s, recorded);
-  }
+  const updated = roundLog(s, asking.id === null ? s.current.decisions : [...s.current.decisions, decision], null);
+  return leave({ ...s, log: updated }, [...record(s, decision), { kind: "SaveLog", log: updated }, checkpoint(s, "logged")]);
 };
 
-/**
- * The round's decisions that name an issue, appended to the log (W1-R1-2 of issue #38): the convergence of a review with no
- * counted issue skips the response, whose roundLog appends them otherwise, so without this the developer's answer would
- * leave the id's resolution or disputed self-correction current and the next loop over the log would ask it again.
- */
-const decisionsLogged = (s: ReviewState): Readonly<{ state: ReviewState; commands: readonly ReviewCommand[] }> => {
-  const named = s.current.decisions.filter((d) => d.id !== null);
-  if (named.length === 0) return { state: s, commands: [] };
-  const updated = named.reduce((acc, d) => log.appendUserDecision(acc, d.id!, d.decision, s.setup.phase, s.round), s.log);
-  return { state: { ...s, log: updated }, commands: [{ kind: "SaveLog", log: updated }] };
-};
 
 const onDecisionGiven = (s: ReviewState, text: string): Transition => {
   const step = s.step;
+  if (step.name !== "askingPauses") return noop(s);
   const given = text !== "";
-  // Issue #183: an answer that keeps Claude Code's position applies nothing, so the review goes on.
-  const standing = given && "asking" in step && standsWithPlanner(step.asking, text);
-  if (given && "asking" in step && !standing) {
+  if (given) {
     const left = leaveOnDecision(s, step.asking, text);
     if (left !== null) return left;
   }
-  switch (step.name) {
-    case "askingReraised": {
-      const decision = decisionOf(s, step.asking, text);
-      const state: ReviewState = given ? { ...s, current: { ...s.current, decisions: [...s.current.decisions, decision] } } : s;
-      // Issue #38: on a review with no counted issue the loop converges after its asks, unless an answer applies something.
-      const converged = step.converged === undefined ? undefined : { applied: step.converged.applied || (given && !standing) };
-      const after =
-        converged === undefined || converged.applied
-          ? toResponse
-          : (t: ReviewState, b: readonly ReviewCommand[]) => {
-              const l = decisionsLogged(t);
-              return converge(l.state, [...b, ...l.commands]);
-            };
-      return askEach(state, step.queue, (asking, queue) => ({ name: "askingReraised", asking, queue, ...(converged === undefined ? {} : { converged }) }), after, given ? record(s, decision) : []);
-    }
-    case "askingPauses": {
-      const decision = decisionOf(s, step.asking, text);
-      const decisions = step.asking.id === null ? s.current.decisions : [...s.current.decisions, decision];
-      // A standing answer in a subject that leaves on a decision is recorded and logged, and applies nothing (issue #183).
-      const applies = !(standing && s.setup.leaveOnDecision);
-      const state: ReviewState = given ? { ...s, current: { ...s.current, decided: s.current.decided || applies, toApply: s.current.toApply || applies, decisions } } : s;
-      return askEach(state, step.queue, (asking, queue) => ({ name: "askingPauses", asking, queue }), afterPauses, given ? record(s, decision) : []);
-    }
-    case "askingIdentical":
-      return given
-        ? { state: { ...s, step: { name: "applyingIdentical" } }, commands: [...record(s, decisionOf(s, step.asking, text)), { kind: "ApplyDecisions" }] }
-        : finishRound(s, step.hash, step.stage);
-    case "askingIdle":
-      return given
-        ? { state: { ...s, step: { name: "applyingIdle" } }, commands: [...record(s, decisionOf(s, step.asking, text)), { kind: "ApplyDecisions" }] }
-        : startRound({ ...s, idle: 0 });
-    default:
-      return noop(s);
-  }
+  const decision = decisionOf(s, step.asking, text);
+  const decisions = step.asking.id === null ? s.current.decisions : [...s.current.decisions, decision];
+  const state: ReviewState = given ? { ...s, current: { ...s.current, decided: true, toApply: true, decisions } } : s;
+  return askEach(state, step.queue, (asking, queue) => ({ name: "askingPauses", asking, queue }), afterPauses, given ? record(s, decision) : []);
 };
 
 const onDecisionsApplied = (s: ReviewState): Transition => {
   switch (s.step.name) {
     case "applyingPauseDecisions":
       return amendStep({ ...s, current: { ...s.current, toApply: false } });
-    case "applyingIdentical":
-      return { state: { ...s, step: { name: "observingIdentical" } }, commands: [{ kind: "ObserveFile", stage: "decision" }] };
-    case "applyingIdle":
-      return { state: { ...s, step: { name: "observingIdle" } }, commands: [{ kind: "ObserveFile", stage: "decision" }] };
+    case "applyingBeside":
+      return { state: { ...s, step: { name: "observingBeside" } }, commands: [{ kind: "ObserveFile", stage: "decision" }] };
     default:
       return noop(s);
   }
@@ -961,14 +1096,8 @@ export const advance = (state: ReviewState, event: ReviewEvent): Transition => {
   switch (event.kind) {
     case "Begin":
       return startRound({ ...state, log: event.log, lastText: event.text, observations: [{ round: 0, stage: "start", hash: event.hash }], investigated: new Set([...state.investigated, ...investigatedIds(event.log)]) });
-    case "LimitAnswer":
-      return state.step.name === "awaitingLimit" ? onLimitAnswer(state, event.answer) : noop(state);
-    case "LimitUnanswered":
-      return state.step.name === "awaitingLimit" ? extendRounds(state, true) : noop(state);
-    case "IdleUnanswered":
-      return state.step.name === "askingIdle" ? extendIdle(state, true) : noop(state);
-    case "UnchangedAnswer":
-      return state.step.name === "askingUnchanged" ? onUnchangedAnswer(state, state.step.hash, event.answer) : noop(state);
+    case "BoundaryReached":
+      return state.step.name === "atBoundary" ? onBoundary(state, event.answers) : state.step.name === "finishingAtBoundary" ? onFinishingBoundary(state, state.step.ending, event.answers) : noop(state);
     case "ReviewDecoded":
       return state.step.name === "awaitingReview" ? onReviewDecoded(state, event.review, event.validated) : noop(state);
     case "ResponseDecoded":

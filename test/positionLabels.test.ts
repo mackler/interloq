@@ -39,7 +39,7 @@ test("namesAgent finds an agent's name as a whole word in any case", () => {
 test("isDisputedPause holds for the disputed pauses alone", () => {
   for (const kind of prompts.DISPUTED_PAUSE_KINDS) assert.equal(prompts.isDisputedPause({ kind: "pause", pass: "review", heading: "Planning 1", ...pauseOf(kind) }), true, kind);
   const others: readonly QuestionOrigin[] = [
-    { kind: "pause", pass: "review", heading: "Planning 1", pause: "identical", fileLabel: "plan.json" },
+    { kind: "pause", pass: "review", heading: "Planning 1", pause: "idle", idle: 2 },
     { kind: "pause", pass: "review", heading: "Planning 1", pause: "idle", idle: 3 },
     { kind: "relayed" },
   ];

@@ -253,7 +253,6 @@ export type PauseOrigin =
   | Readonly<{ pause: "reversal"; id: string; reverses: string }>
   | Readonly<{ pause: "repeatedUnderNewId"; id: string; repeats: string }>
   | Readonly<{ pause: "authorityResolution"; id: string }>
-  | Readonly<{ pause: "identical"; fileLabel: string }>
   | Readonly<{ pause: "idle"; idle: number }>;
 
 /** A log entry of a pause's facts; its prose never shows the program's measurement (issue #31). */
@@ -292,7 +291,6 @@ export type PauseFacts =
       taskDispute: boolean;
       effects: WorkEffects | null;
     }>
-  | Readonly<{ pause: "identical"; fileLabel: string; round: number; seen: string }>
   | Readonly<{ pause: "idle"; idle: number; round: number; issues: readonly ShownEntry[] }>;
 /**
  * Whether a disputed pause's disagreement is one Claude Code marked as about what the task requires (issue #156); the
@@ -307,7 +305,6 @@ export const taskDisputeOf = (facts: PauseFacts): boolean => {
     case "repeatedUnderNewId":
     case "authorityResolution":
       return facts.taskDispute;
-    case "identical":
     case "idle":
       return false;
   }
@@ -324,8 +321,6 @@ export const pauseOriginOf = (facts: PauseFacts): PauseOrigin => {
       return { pause: "reversal", id: facts.id, reverses: facts.reverses };
     case "repeatedUnderNewId":
       return { pause: "repeatedUnderNewId", id: facts.id, repeats: facts.repeats };
-    case "identical":
-      return { pause: "identical", fileLabel: facts.fileLabel };
     case "idle":
       return { pause: "idle", idle: facts.idle };
   }
