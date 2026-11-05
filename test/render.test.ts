@@ -407,7 +407,7 @@ test("renderRound shows Codex's statement per issue and Claude Code's per dispos
   assert.match(prompts.plannerEffectLine({ kind: "none" }), /Claude Code: nothing in the work would differ/);
   assert.equal(text.split(prompts.plannerEffectLine({ kind: "none" })).length - 1, 1, "only the disposition not accepted");
   const listReview = Schema.decodeUnknownSync(S.Review)({ issues: [issue("Q-R1-1")] });
-  const listResponse = Schema.decodeUnknownSync(S.QuestionListResponse)({ ...respond([["Q-R1-1", "rejected"]]), questions: [] });
+  const listResponse = Schema.decodeUnknownSync(S.QuestionListResponse)({ ...respond([["Q-R1-1", "rejected"]]), questions: [], correction_passages: [] });
   assert.equal(
     renderRound("Question review", 1, listReview, listResponse),
     "## Question review, round 1\n\n### Codex\n\n- **[Q-R1-1]** (major, s) p\n  Evidence: e\n\n### Claude Code\n\n- **[Q-R1-1]** rejected: rationale Q-R1-1\n\n",
