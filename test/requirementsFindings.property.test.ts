@@ -9,7 +9,7 @@ const RUNS = { numRuns: 200, seed: 20261103 };
 const ACTIONS = ["accepted", "partially_accepted", "rejected", "no_change_needed", "clarification_requested"] as const;
 const CURRENT = "# Requirements\n\nThe summary.\n";
 
-const dispositions = fc.uniqueArray(fc.record({ id: fc.stringMatching(/^G-R1-[0-9]{1,3}$/), action: fc.constantFrom(...ACTIONS) }), { selector: (r) => r.id, maxLength: 8 }).map((rs): Disposition[] => rs.map((r) => ({ ...r, rationale: "r", duplicate_of: "", reverses: "" })));
+const dispositions = fc.uniqueArray(fc.record({ id: fc.stringMatching(/^G-R1-[0-9]{1,3}$/), action: fc.constantFrom(...ACTIONS) }), { selector: (r) => r.id, maxLength: 8 }).map((rs): Disposition[] => rs.map((r) => ({ ...r, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null })));
 const findingFor = (id: string): fc.Arbitrary<RequirementFinding> =>
   fc.oneof(
     fc.constant({ id, kind: "answered" as const, source: "user-decisions.md: yes" }),

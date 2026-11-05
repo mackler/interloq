@@ -101,7 +101,7 @@ test("issue #117: the work response's prompt carries the summary the execution, 
 test("(b2) an accepted self-correction of an earlier work issue leaves for planning 2", async () => {
   const repo = tempRepo();
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
-  const self = { self_corrections: [{ id: "W1-R1-1", new_action: "accepted" as const, explanation: "the earlier issue is valid" }] };
+  const self = { self_corrections: [{ id: "W1-R1-1", new_action: "accepted" as const, explanation: "the earlier issue is valid", concern: "c", remedy: "r", resolution: null }] };
   const { layer, probe } = testLayer(repo, {
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]], self) }, { ...planWrite("v2"), onCall: capture.onCall }],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }, { issues: [] }, { issues: [] }],

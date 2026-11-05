@@ -8,8 +8,8 @@ import type * as S from "../src/schema.ts";
 
 const id = (s: string) => s as IssueId;
 const review = (i: string, action: "accepted" | "partially_accepted" | "rejected", kept: string[], extra: Partial<LogEntry> = {}): LogEntry =>
-  ({ id: id(i), phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: kept, ...extra }) as LogEntry;
-const self = (i: string, kept: string[]): LogEntry => ({ id: id(i), phase: 1, round: 2, source: "self_correction", problem: "p", action: "plan_error", rationale: "r", superseded: false, file_change: null, kept_passages: kept });
+  ({ id: id(i), phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, reviewer_position: null, planner_position: null, resolution: null, investigations: [], superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: kept, ...extra }) as LogEntry;
+const self = (i: string, kept: string[]): LogEntry => ({ id: id(i), phase: 1, round: 2, source: "self_correction", problem: "p", action: "plan_error", rationale: "r", superseded: false, file_change: null, kept_passages: kept, planner_position: null, resolution: null, investigations: [] });
 const disp = (i: string, action: "accepted" | "partially_accepted" | "rejected", reverses: string | null = null) => ({ id: id(i), action, reverses: reverses === null ? null : id(reverses) });
 const base: K.KeptCorrectionsInput = { baseline: [], restatable: new Set(), dispositions: [], entries: [], texts: [] };
 const kinds = (input: K.KeptCorrectionsInput) => K.keptCorrectionProblems(input).map((p) => [p.kind, p.id, p.passage]);

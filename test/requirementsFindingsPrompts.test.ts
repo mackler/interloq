@@ -43,7 +43,7 @@ test("the application of decisions returns the document and modifies no file", (
   assert.ok("requirements" in S.RequirementsWrite.fields);
 });
 
-const disposition = (id: string, action: S.Disposition["action"]): S.Disposition => ({ id, action, rationale: "r", duplicate_of: "", reverses: "" });
+const disposition = (id: string, action: S.Disposition["action"]): S.Disposition => ({ id, action, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null });
 const response = (findings: S.RequirementFinding[], requirements: string | null, ids: [string, S.Disposition["action"]][]): S.RequirementsResponse => ({
   dispositions: ids.map(([id, a]) => disposition(id, a)),
   self_corrections: [],

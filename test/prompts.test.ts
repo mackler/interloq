@@ -29,7 +29,7 @@ test("the log rules name the entries list, the three sources and null references
 // Issue #31 (the seam of S7): every key the log rules name for the measurement is a key of an entry appendRound writes,
 // and the rules name the field by the schema's constant. The rules are in round 1's prompt; later rounds refer to them in the same thread.
 test("the log rules explain file_change with the keys the log entries carry", () => {
-  const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [], correctionPassages: [] }, { changed: true, added: 1, removed: 0 });
+  const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null, position: null }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null, position: null, resolution: null }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [], correctionPassages: [] }, { changed: true, added: 1, removed: 0 });
   const serialized = JSON.parse(JSON.stringify(entry)) as Record<string, Record<string, unknown>>;
   for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), questionReviewPrompt(TEST_ROOT, 1, "continued"), prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true, workExecution, "continued")]) {
     assert.ok(text.includes(`${S.FILE_CHANGE_FIELD}:`), "the rules do not explain the field");
@@ -76,8 +76,8 @@ test("the work response prompt forbids any file change and defers the correction
 
 // Stage A, decision Q1: a read-only work response gets the review, its phase's log entries and the diff in the prompt.
 test("the work response prompt carries the review, the log entries of its phase only, and the diff verbatim", () => {
-  const review = { issues: [{ id: "W2-R2-1", severity: "major" as const, location: "src/a.ts:3", problem: "the parser drops the last line", evidence: "a.ts reads lines.slice(0, -1)" }] };
-  const entry = (phase: number, id: string) => ({ id, phase, round: 1, problem: `problem of ${id}`, rationale: `rationale of ${id}`, superseded: false, source: "review" as const, severity: "minor" as const, location: "x", evidence: "e", action: "rejected" as const, duplicate_of: null, reverses: null });
+  const review = { issues: [{ id: "W2-R2-1", severity: "major" as const, location: "src/a.ts:3", problem: "the parser drops the last line", evidence: "a.ts reads lines.slice(0, -1)", concern: "c", remedy: "r" }] };
+  const entry = (phase: number, id: string) => ({ id, phase, round: 1, problem: `problem of ${id}`, rationale: `rationale of ${id}`, superseded: false, source: "review" as const, severity: "minor" as const, location: "x", evidence: "e", action: "rejected" as const, duplicate_of: null, reverses: null, reviewer_position: null, planner_position: null, resolution: null, investigations: [] });
   const log = [entry(1, "W1-R1-1"), entry(2, "W2-R1-1")] as unknown as Parameters<typeof prompts.workRespondPrompt>[3]["log"];
   const diff = "diff --git a/src/a.ts b/src/a.ts\n+const lines = text.split(\"\\n\");\n";
   const text = prompts.workRespondPrompt(TEST_ROOT, 2, 2, { review, log, records: { changes: diff, requirements: null, decisions: "" } }, workExecution, "t");

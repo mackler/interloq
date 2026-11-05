@@ -9,7 +9,7 @@ import { respond, questionOf , TEST_ROOT } from "./helpers.ts";
 // Issue #30 (plan step S9): the corrective turn's prompt tells Claude Code which dispositions it may change, and the
 // validation accepts exactly those changes. One source (the previous response and its accepted ids) feeds both.
 const previous: PlannerResponse = respond([["P1-R2-1", "accepted"], ["P1-R2-2", "partially_accepted"], ["P1-R2-3", "rejected"]], {
-  self_corrections: [{ id: "", new_action: "plan_error", explanation: "a slip" }],
+  self_corrections: [{ id: "", new_action: "plan_error", explanation: "a slip", concern: "c", remedy: "r", resolution: null }],
   reviewer_feedback: "thanks",
   questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })],
 });

@@ -14,7 +14,7 @@ import type { IssueId } from "./schema.ts";
 export type { IssueId };
 
 /** `workEffect` (issue #183): Codex's statement of the issue's effect on the work, null where the review carries none. */
-export type ValidatedIssue = Readonly<{ id: IssueId; severity: Review["issues"][number]["severity"]; location: string; problem: string; evidence: string; workEffect: WorkEffect | null }>;
+export type ValidatedIssue = Readonly<{ id: IssueId; severity: Review["issues"][number]["severity"]; location: string; problem: string; evidence: string; workEffect: WorkEffect | null; position: S.Position | null }>;
 export type ValidatedReview = Readonly<{ issues: readonly ValidatedIssue[] }>;
 
 /** A reference that decision Q3 dropped: what the response named, in which field, and why it was dropped. */
@@ -38,8 +38,11 @@ export type ValidatedDisposition = Readonly<{
   reverses: IssueId | null;
   taskDispute: boolean;
   workEffect: WorkEffect | null;
+  /** Issue #38: Claude Code's position, null exactly where carriesPosition is false, and its resolution or null. */
+  position: S.Position | null;
+  resolution: S.Resolution | null;
 }>;
-export type ValidatedSelfCorrection = Readonly<{ id: IssueId; newAction: "accepted" | "rejected" | "plan_error"; explanation: string; generated: boolean }>;
+export type ValidatedSelfCorrection = Readonly<{ id: IssueId; newAction: "accepted" | "rejected" | "plan_error"; explanation: string; generated: boolean; position: S.Position | null; resolution: S.Resolution | null }>;
 export type ValidatedRound = Readonly<{
   phase: number;
   round: number;
@@ -60,7 +63,7 @@ const ACCEPTED = new Set(["accepted", "partially_accepted"]);
 const unique = <T>(items: readonly T[]): T[] => [...new Set(items)];
 const duplicates = (ids: readonly string[]): string[] => unique(ids.filter((id, i) => ids.indexOf(id) !== i));
 const roundInvalid = (fields: Partial<ConstructorParameters<typeof RoundInvalid>[0]>): RoundInvalid =>
-  new RoundInvalid({ duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [], ...fields });
+  new RoundInvalid({ duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [], blankPositions: [], ...fields });
 
 /**
  * A reply's statement of its effect on the work (issue #183): absent (null), the program's value, or blank. Only the plan's
@@ -84,7 +87,7 @@ export const validateReview = (review: Review): Result.Result<ValidatedReview, R
   const blankEffects = review.issues.filter((_, k) => stated[k].kind === "blank").map((i) => i.id);
   if (duplicateIssues.length > 0 || empty > 0 || blankEffects.length > 0) return Result.fail(roundInvalid({ duplicateIssues, emptyIds: empty > 0 ? ["an issue of the review"] : [], blankEffects }));
   return Result.succeed({
-    issues: review.issues.map((i, k) => ({ id: i.id as IssueId, severity: i.severity, location: i.location, problem: i.problem, evidence: i.evidence, workEffect: effectOf(stated[k]) })),
+    issues: review.issues.map((i, k) => ({ id: i.id as IssueId, severity: i.severity, location: i.location, problem: i.problem, evidence: i.evidence, workEffect: effectOf(stated[k]), position: null })),
   });
 };
 
@@ -134,6 +137,8 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
       reverses: reference(id, "reverses", d.reverses),
       taskDispute: taskDisputeOf(d),
       workEffect: effectOf(stated[k]),
+      position: null,
+      resolution: null,
     };
   });
 
@@ -143,6 +148,8 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
     newAction: sc.new_action,
     explanation: sc.explanation,
     generated: sc.id === "",
+    position: null,
+    resolution: null,
   }));
   const collidingIds = selfCorrections.filter((sc) => sc.generated && known.has(sc.id)).map((sc) => sc.id);
   if (collidingIds.length > 0) return Result.fail(roundInvalid({ collidingIds }));

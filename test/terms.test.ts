@@ -217,7 +217,7 @@ test("issue #112: a disputed self-correction of the terms is not put to the user
     terms: [
       { output: terms("A library.") },
       { output: { ...respond([["T-R1-1", "accepted"]]), ...amended } },
-      { output: { ...respond([["T-R2-1", "rejected"]], { self_corrections: [{ id: "T-R1-1", new_action: "rejected", explanation: "the longer text names a term the reader does not know" }] }), ...amended } },
+      { output: { ...respond([["T-R2-1", "rejected"]], { self_corrections: [{ id: "T-R1-1", new_action: "rejected", explanation: "the longer text names a term the reader does not know", concern: "c", remedy: "r", resolution: null }] }), ...amended } },
     ],
     termsReviews: [{ issues: [issue("T-R1-1", "The explanation of zod does not say what it does.")] }, { issues: [issue("T-R2-1", "Shape is unexplained.")] }, { issues: [] }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],

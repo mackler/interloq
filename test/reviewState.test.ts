@@ -8,7 +8,7 @@ import { Result } from "effect";
 import fc from "fast-check";
 import { advance as advanceState, initialState, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, roundCheckOf, settles, subjectOf, type Transition } from "../src/reviewState.ts";
 import { validateReview, type ValidatedRound } from "../src/round.ts";
-import type { LogEntry, PlannerResponse, Review } from "../src/schema.ts";
+import type { Action, LogEntry, PlannerResponse, Review } from "../src/schema.ts";
 import { issue, respond, questionOf } from "./helpers.ts";
 import * as prompts from "../src/prompts.ts";
 import { piecesText } from "../src/pieces.ts";
@@ -62,7 +62,7 @@ const advance = (s: ReviewState, e: TestEvent): Transition => advanceState(s, co
 const run = (first: Transition, ...events: TestEvent[]): Transition => events.reduce((t, e) => advance(t.state, e), first);
 const noQuestions = { questions_for_user: [] };
 const entry = (id: string, action: string, round = 1): LogEntry =>
-  ({ id, phase: 1, round, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false, task_dispute: false, work_effects: null }) as LogEntry;
+  ({ id: id as LogEntry["id"], phase: 1, round, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: action as Action, rationale: "r", duplicate_of: null, reverses: null, reviewer_position: null, planner_position: null, resolution: null, investigations: [], superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: [] }) as LogEntry;
 const response = (dispositions: [string, "accepted" | "rejected" | "partially_accepted" | "no_change_needed" | "clarification_requested"][], extra = {}): TestEvent => ({ kind: "ResponseDecoded", response: respond(dispositions, extra), resultText: "", costUsd: 0.1 });
 void noQuestions;
 
@@ -146,7 +146,7 @@ test("accepted without a change of the file is the pause; Stop halts", () => {
 test("the pauses ask in the decided order and a decision leads to ApplyDecisions before the log", () => {
   const log = [entry("C", "accepted"), entry("O", "rejected")];
   const dispositions = respond([["A", "clarification_requested"], ["B", "rejected"], ["N", "rejected"]]).dispositions.map((d) => (d.id === "B" ? { ...d, reverses: "C" } : d.id === "N" ? { ...d, duplicate_of: "O" } : d));
-  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x" }], questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] };
+  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x", concern: "c", remedy: "r", resolution: null }], questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] };
   const t = run(afterReview([...log, entry("A", "clarification_requested")], [issue("A"), issue("B"), issue("N")]), { kind: "ResponseDecoded", response: resp, resultText: "", costUsd: null });
   const subjects: string[] = [];
   let step = t;
@@ -209,7 +209,7 @@ test("an accepted issue with a changed file records no unexplained change", () =
 
 test("a self-correction with a changed file records no unexplained change", () => {
   const reviewed = run(startText("a\nb\n"), { kind: "ReviewDecoded", review: { issues: [issue("A")] } });
-  const responded = advance(reviewed.state, response([["A", "rejected"]], { self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "a step was wrong" }] }));
+  const responded = advance(reviewed.state, response([["A", "rejected"]], { self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "a step was wrong", concern: "c", remedy: "r", resolution: null }] }));
   assert.deepEqual(last(responded), { kind: "ObserveFile", stage: "response" });
   const observed = advance(responded.state, { kind: "FileObserved", hash: "h1", text: "a\nc\n" });
   assert.ok(![responded, observed].some(mentionsUnexplained), says(observed));
@@ -402,7 +402,7 @@ test("work review: an accepted issue ends the loop with revise after the log and
 });
 
 test("work review: an effective accepted self-correction ends the loop with revise; the plan subject continues", () => {
-  const self = { self_corrections: [{ id: "W1-R0-1", new_action: "accepted" as const, explanation: "earlier issue is valid" }] };
+  const self = { self_corrections: [{ id: "W1-R0-1", new_action: "accepted" as const, explanation: "earlier issue is valid", concern: "c", remedy: "r", resolution: null }] };
   const work = run(workStart(), { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "rejected"]], self));
   assert.deepEqual(last(work), { kind: "Finish", result: "revise" });
   const plan = run(start(), { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "rejected"]], self));
@@ -463,12 +463,12 @@ test("work review: an empty answer continues the loop as for the plan", () => {
 test("a decision subject generates ids with its decision number and records the enclosing phase in its log", () => {
   const decision: ReviewSetup = { ...setup, subject: { decision: 2 }, heading: "Decision 2", fileLabel: "analysis.json", dirName: "decision-2", phase: 1, idNumber: 2 };
   const first = advance(initialState(decision, { maxRounds: 5, maxIdleRounds: 2, countMinor: true }), { kind: "Begin", hash: "h0", text: "", log: [] });
-  const t = run(first, { kind: "ReviewDecoded", review: { issues: [issue("D2-R1-1")] } }, { kind: "ResponseDecoded", response: respond([["D2-R1-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x" }] }), resultText: "", costUsd: null });
+  const t = run(first, { kind: "ReviewDecoded", review: { issues: [issue("D2-R1-1")] } }, { kind: "ResponseDecoded", response: respond([["D2-R1-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }] }), resultText: "", costUsd: null });
   const saved = t.commands.find((c) => c.kind === "SaveLog");
   assert.ok(saved !== undefined && saved.kind === "SaveLog");
   assert.deepEqual(saved.log.map((e) => [e.id, e.phase]), [["D2-R1-1", 1], ["D2-S1-1", 1]]);
   // The plan subject is unchanged: its id number is its phase.
-  const plan = run(start(), { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, { kind: "ResponseDecoded", response: respond([["A", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x" }] }), resultText: "", costUsd: null });
+  const plan = run(start(), { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, { kind: "ResponseDecoded", response: respond([["A", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }] }), resultText: "", costUsd: null });
   const planLog = plan.commands.find((c) => c.kind === "SaveLog");
   assert.ok(planLog !== undefined && planLog.kind === "SaveLog");
   assert.deepEqual(planLog.log.map((e) => e.id), ["A", "P1-S1-1"]);
@@ -483,14 +483,14 @@ const optionsOf = (t: Transition) => {
 };
 test("each disputed pause offers the two positions; a question offers its options; the other pauses none", () => {
   const log = [entry("C", "accepted"), entry("O", "rejected"), entry("A", "clarification_requested")];
-  const issues = [{ ...issue("A"), problem: "A is unclear", evidence: "see s" }, { ...issue("B"), problem: "undo C" }, { ...issue("N"), problem: "O again" }];
+  const issues = [{ ...issue("A"), problem: "A is unclear", evidence: "see s", concern: "c", remedy: "r" }, { ...issue("B"), problem: "undo C" }, { ...issue("N"), problem: "O again" }];
   const dispositions = [
-    { id: "A", action: "clarification_requested" as const, rationale: "what do you mean by A?", duplicate_of: "", reverses: "" },
-    { id: "B", action: "rejected" as const, rationale: "C must stay", duplicate_of: "", reverses: "C" },
-    { id: "N", action: "rejected" as const, rationale: "as before", duplicate_of: "O", reverses: "" },
+    { id: "A", action: "clarification_requested" as const, rationale: "what do you mean by A?", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null },
+    { id: "B", action: "rejected" as const, rationale: "C must stay", duplicate_of: "", reverses: "C", concern: "c", remedy: "r", resolution: null },
+    { id: "N", action: "rejected" as const, rationale: "as before", duplicate_of: "O", reverses: "", concern: "c", remedy: "r", resolution: null },
   ];
   const question = questionOf({ context: "c", question: "Which?", terms: [], options: [{ label: "X", description: "x" }, { label: "Y", description: "y" }] });
-  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "C was wrong" }], questions_for_user: [question] };
+  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "C was wrong", concern: "c", remedy: "r", resolution: null }], questions_for_user: [question] };
   let step = run(afterReview(log.map((e) => (e.id === "O" ? { ...e, rationale: "O is fine" } : e.id === "C" ? { ...e, problem: "C was missing" } : e)), issues), { kind: "ResponseDecoded", response: resp, resultText: "", costUsd: null });
   const seen: (readonly { label: string; description: string }[])[] = [];
   while (last(step).kind === "AskDecision") {
@@ -595,17 +595,17 @@ test("(g) a corrective reply that turns an accepted issue into a second clarific
 
 test("(h) a pause asked for the first reply is not asked again after the corrective turn", () => {
   const history = [entry("C", "rejected")];
-  const first = run(correctiveStart(history), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B")] } }, response([["A", "accepted"], ["B", "rejected"]], { dispositions: [{ id: "A", action: "accepted", rationale: "r", duplicate_of: "", reverses: "" }, { id: "B", action: "rejected", rationale: "r", duplicate_of: "C", reverses: "" }] }));
+  const first = run(correctiveStart(history), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B")] } }, response([["A", "accepted"], ["B", "rejected"]], { dispositions: [{ id: "A", action: "accepted", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }, { id: "B", action: "rejected", rationale: "r", duplicate_of: "C", reverses: "", concern: "c", remedy: "r", resolution: null }] }));
   assert.equal(first.commands.filter((c) => c.kind === "AskDecision").length, 1);
   const unchangedAfter = run(first, { kind: "DecisionGiven", text: "" }, unchanged);
   assert.equal(last(unchangedAfter).kind, "CallCorrective");
-  const reply = advance(unchangedAfter.state, { kind: "CorrectionDecoded", response: respond([], { dispositions: [{ id: "A", action: "accepted", rationale: "now done", duplicate_of: "", reverses: "" }, { id: "B", action: "rejected", rationale: "r", duplicate_of: "C", reverses: "" }] }), resultText: "", costUsd: null });
+  const reply = advance(unchangedAfter.state, { kind: "CorrectionDecoded", response: respond([], { dispositions: [{ id: "A", action: "accepted", rationale: "now done", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }, { id: "B", action: "rejected", rationale: "r", duplicate_of: "C", reverses: "", concern: "c", remedy: "r", resolution: null }] }), resultText: "", costUsd: null });
   assert.equal(reply.commands.filter((c) => c.kind === "AskDecision").length, 0);
   assert.deepEqual(last(reply), { kind: "ObserveFile", stage: "response" });
 });
 
 test("(j) a self-correction with an empty id kept through the corrective turn keeps its generated id and is logged once", () => {
-  const self = { self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "a slip" }] };
+  const self = { self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "a slip", concern: "c", remedy: "r", resolution: null }] };
   const t = run(correctiveStart(), { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "accepted"]], self), unchanged, corrected([["A", "accepted"]], self), amended);
   assert.notEqual(last(t).kind, "Halt", describe((last(t) as { error?: RunError }).error ?? ({ _tag: "UserStopped", where: "" } as never)));
   assert.deepEqual(loggedBy(t).filter((e) => e.source === "self_correction").map((e) => e.id), ["P1-S1-1"]);
@@ -658,7 +658,7 @@ test("issue #112: an issue raised again is not asked when the agents settle disp
 test("issue #112: the four disputed pauses after a response are not asked when the agents settle disputes; the planner's question still is", () => {
   const log = [entry("C", "accepted"), entry("O", "rejected"), entry("A", "clarification_requested")];
   const dispositions = respond([["A", "clarification_requested"], ["B", "rejected"], ["N", "rejected"]]).dispositions.map((d) => (d.id === "B" ? { ...d, reverses: "C" } : d.id === "N" ? { ...d, duplicate_of: "O" } : d));
-  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x" }] };
+  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x", concern: "c", remedy: "r", resolution: null }] };
   const reviewed = run(startAgents(log), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B"), issue("N")] } });
   const t = advance(reviewed.state, { kind: "ResponseDecoded", response: resp, resultText: "", costUsd: null });
   assert.ok(!kinds(t).includes("AskDecision"), kinds(t).join(","));
@@ -730,7 +730,7 @@ test("issue #156: a mixed batch asks the marked pauses and settles the others in
 });
 
 test("issue #156: a disputed self-correction is asked when the issue's entry as the round began is marked", () => {
-  const resp = (selfId: string) => ({ ...respond([["X", "rejected"]]), self_corrections: [{ id: selfId, new_action: "rejected" as const, explanation: "x" }] });
+  const resp = (selfId: string) => ({ ...respond([["X", "rejected"]]), self_corrections: [{ id: selfId, new_action: "rejected" as const, explanation: "x", concern: "c", remedy: "r", resolution: null }] });
   const begin = (log: LogEntry[]) => run(startAgents(log), { kind: "ReviewDecoded", review: { issues: [issue("X")] } });
   const asked = advance(begin([marked("C", "rejected")]).state, { kind: "ResponseDecoded", response: resp("C"), resultText: "", costUsd: null });
   assert.deepEqual(askedPauses(asked).map((c) => [pauseOf(c)?.pause, (pauseOf(c) as { taskDispute?: boolean }).taskDispute]), [["disputedSelfCorrection", true]]);
@@ -809,7 +809,7 @@ test("issue #183: a second clarification, a reversal and a repetition carry this
     ["reversal", { reviewer: SCRIPTED, planner: SCRIPTED }],
     ["repeatedUnderNewId", { reviewer: SCRIPTED, planner: SCRIPTED }],
   ]);
-  const resp = { ...respond([["X", "rejected"]]), self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x" }] };
+  const resp = { ...respond([["X", "rejected"]]), self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x", concern: "c", remedy: "r", resolution: null }] };
   const reviewed = run(startWith(planEffects, [entry("C", "rejected")]), { kind: "ReviewDecoded", review: { issues: [issue("X")] } });
   const self = advance(reviewed.state, { kind: "ResponseDecoded", response: resp, resultText: "", costUsd: null });
   assert.deepEqual(askedPauses(self).map((c) => [pauseOf(c)?.pause, effectsOf(c)?.effects]), [["disputedSelfCorrection", null]]);
@@ -851,7 +851,7 @@ test("issue #183: a second clarification, a reversal and a repetition are settle
 });
 
 test("issue #183: a disputed self-correction is asked under noWorkEffect", () => {
-  const resp = { ...respond([["X", "rejected"]]), self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x" }] };
+  const resp = { ...respond([["X", "rejected"]]), self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x", concern: "c", remedy: "r", resolution: null }] };
   const reviewed = run(startWith(workEffects, [withEffects(entry("C", "rejected"), { reviewer: NONE, planner: NONE })]), { kind: "ReviewDecoded", review: { issues: [effectIssue("X", NONE)] } });
   const t = advance(reviewed.state, { kind: "ResponseDecoded", response: { ...resp, dispositions: resp.dispositions.map((d) => ({ ...d, work_effect: NONE })) } as PlannerResponse, resultText: "", costUsd: null });
   assert.deepEqual(askedPauses(t).map((c) => pauseOf(c)?.pause), ["disputedSelfCorrection"]);

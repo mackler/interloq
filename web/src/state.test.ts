@@ -215,8 +215,8 @@ describe("ordering and the panels", () => {
   });
 
   test("reviews and responses go to the right panel as Codex and Claude Code messages", () => {
-    const review = { issues: [{ id: "A", severity: "major" as const, location: "l", problem: "p", evidence: "e" }] };
-    const response = { dispositions: [{ id: "A", action: "accepted" as const, rationale: "r", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
+    const review = { issues: [{ id: "A", severity: "major" as const, location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] };
+    const response = { dispositions: [{ id: "A", action: "accepted" as const, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
     const s = fold(live([started, notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 2, review, counted: 1 }), notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 2, response, resultText: "" })]));
     expect(runOf(s, "implementation")?.right.map((m) => [m.author, m.heading])).toEqual([["codex", "Planning phase 1, cycle 2"], ["claude", "Planning phase 1, cycle 2"]]);
     expect(runOf(s, "implementation")?.right[0].body).toMatch(/\*\*\[A\]\*\*/);
@@ -403,8 +403,8 @@ describe("activity and timeline", () => {
 // Issue #14 (Q1, Q2, G-R1-1): a review's counts and a response's corrections reach the timeline, and the loop's result.
 describe("the cycles of a review loop in the timeline", () => {
   const plan = { plan: 1 };
-  const issueOf = (id: string, severity: "major" | "minor" = "major") => ({ id, severity, location: "l", problem: "p", evidence: "e" });
-  const disposition = (id: string, action: "accepted" | "partially_accepted" | "rejected" | "no_change_needed" | "clarification_requested") => ({ id, action, rationale: "r", duplicate_of: "", reverses: "" });
+  const issueOf = (id: string, severity: "major" | "minor" = "major") => ({ id, severity, location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" });
+  const disposition = (id: string, action: "accepted" | "partially_accepted" | "rejected" | "no_change_needed" | "clarification_requested") => ({ id, action, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null });
   const events: RunEvent[] = [
     started,
     notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }),
@@ -414,7 +414,7 @@ describe("the cycles of a review loop in the timeline", () => {
       _tag: "ResponseReceived",
       subject: plan,
       round: 1,
-      response: { dispositions: [disposition("A", "accepted"), disposition("B", "partially_accepted"), disposition("C", "rejected")], self_corrections: [{ id: "", new_action: "plan_error", explanation: "x" }, { id: "C", new_action: "accepted", explanation: "x" }], reviewer_feedback: "", questions_for_user: [] },
+      response: { dispositions: [disposition("A", "accepted"), disposition("B", "partially_accepted"), disposition("C", "rejected")], self_corrections: [{ id: "", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }, { id: "C", new_action: "accepted", explanation: "x", concern: "c", remedy: "r", resolution: null }], reviewer_feedback: "", questions_for_user: [] },
       resultText: "",
     }),
     notified({ _tag: "RoundBegan", subject: plan, round: 2, limit: 5 }),
@@ -831,8 +831,8 @@ describe("runs, replay and gaps", () => {
       { _tag: "PhaseBegan", phase: { kind: "questions" } },
       { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 2 },
       { _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 },
-      { _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e" }] }, counted: 1 },
-      { _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [{ id: "A", action: "accepted", rationale: "r", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" },
+      { _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }, counted: 1 },
+      { _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [{ id: "A", action: "accepted", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" },
       { _tag: "LoopFinished", subject: { plan: 1 }, result: "converged" },
       { _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" },
       { _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 },
@@ -1044,13 +1044,13 @@ describe("a replay of a question phase", () => {
       notified({ _tag: "ModelNamed", model: { agent: "codex", name: null } }),
       notified({ _tag: "PhaseBegan", phase: { kind: "questions" } }),
       notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
-      notified({ _tag: "ReviewReceived", subject: "questions", round: 1, review: { issues: [{ id: "Q-R1-1", severity: "major", location: "Q1", problem: "The list does not ask for the database.", evidence: "e" }] }, counted: 1 }),
+      notified({ _tag: "ReviewReceived", subject: "questions", round: 1, review: { issues: [{ id: "Q-R1-1", severity: "major", location: "Q1", problem: "The list does not ask for the database.", evidence: "e", concern: "c", remedy: "r" }] }, counted: 1 }),
       notified({
         _tag: "ResponseReceived",
         subject: "questions",
         round: 1,
         response: {
-          dispositions: [{ id: "Q-R1-1", action: "accepted", rationale: "Added the database question.", duplicate_of: "", reverses: "", task_dispute: false }],
+          dispositions: [{ id: "Q-R1-1", action: "accepted", rationale: "Added the database question.", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, task_dispute: false }],
           self_corrections: [],
           reviewer_feedback: "",
           questions_for_user: [],
@@ -1318,7 +1318,7 @@ test("a blank answer to a relayed question, then the question presented again: t
 // W2-R1-1: a decision's response (with its amended analysis) folds into one Claude message; the rail is unchanged.
 test("a decision's ResponseReceived is one Claude message in the right panel, live and replayed, and adds nothing to the rail", () => {
   const analysisOf = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
-  const response = { dispositions: [{ id: "D1-R1-1", action: "accepted" as const, rationale: "amended", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [], correction_passages: [], analysis: analysisOf };
+  const response = { dispositions: [{ id: "D1-R1-1", action: "accepted" as const, rationale: "amended", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }], self_corrections: [], reviewer_feedback: "", questions_for_user: [], correction_passages: [], analysis: analysisOf };
   const phase = notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } });
   const events: RunEvent[] = [started, phase, notified({ _tag: "ResponseReceived", subject: { decision: 1 }, round: 1, response, resultText: "" })];
   const before = fold(live([started, phase]));

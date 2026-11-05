@@ -70,6 +70,10 @@ export function appendRound(log: readonly LogEntry[], round: ValidatedRound, cha
       task_dispute: d.taskDispute,
       work_effects: issue.workEffect !== null && d.workEffect !== null ? { reviewer: issue.workEffect, planner: d.workEffect } : null,
       kept_passages: kept.review(issue.id, d.action === "accepted" || d.action === "partially_accepted"),
+      reviewer_position: issue.position,
+      planner_position: d.position,
+      resolution: d.resolution,
+      investigations: [],
     };
   });
   const fromSelf: LogEntry[] = round.selfCorrections.map((sc) => {
@@ -85,6 +89,9 @@ export function appendRound(log: readonly LogEntry[], round: ValidatedRound, cha
       superseded: false,
       file_change: change,
       kept_passages: kept.selfCorrection(sc.id),
+      planner_position: sc.position,
+      resolution: sc.resolution,
+      investigations: [],
     };
   });
   const reviewIds = new Set(fromReview.map((e) => e.id));

@@ -75,7 +75,7 @@ const samples: { readonly [K in RunError["_tag"]]: Extract<RunError, { _tag: K }
   ReviewedFileChanged: new ReviewedFileChanged({ fileLabel: "plan.json", changes: [{ kind: "added", path: "b.txt" }] }),
   RecordsChanged: new RecordsChanged({ changes: [{ kind: "content_changed", path: "plan.md" }] }),
   AcceptedWithoutChange: new AcceptedWithoutChange({ fileLabel: "plan.json", accepted: 2 }),
-  RoundInvalid: new RoundInvalid({ duplicateIssues: ["A"], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [] }),
+  RoundInvalid: new RoundInvalid({ duplicateIssues: ["A"], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [], blankPositions: [] }),
   QuestionListInvalid: new QuestionListInvalid({ duplicateIds: ["Q1"], emptyIds: 0, cycle: [] }),
   RoundLimitStop: new RoundLimitStop({ heading: "Planning phase 1" }),
   ClaudeCallFailed: new ClaudeCallFailed({ message: "authentication failed" }),

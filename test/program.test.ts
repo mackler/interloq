@@ -199,7 +199,7 @@ test("Stop at the cycle limit, confirmed, stays a halt with exit code 1; decline
   const limited = (answers: string[]) =>
     testWiring(tempRepo(), {
       steps: [{ output: noQuestions, plan: "v1" }, { output: { dispositions: [{ id: "P1-R1-1", action: "rejected", rationale: "r", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] } }],
-      reviews: [{ issues: [{ id: "P1-R1-1", severity: "major", location: "l", problem: "p", evidence: "e" }] }],
+      reviews: [{ issues: [{ id: "P1-R1-1", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }],
       config: { maxRounds: 1 },
       answers,
       confirmEnds: true,

@@ -27,9 +27,9 @@ const roundOf = (spec: Spec, n: number, log: readonly LogEntry[]): ValidatedRoun
   return {
     phase: 1,
     round: n,
-    review: { issues: spec.issues.map((i) => ({ id: i.id as IssueId, severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null })) },
-    dispositions: spec.issues.map((i) => ({ id: i.id as IssueId, action: i.accepted ? "accepted" : "rejected", rationale: "r", duplicateOf: null, reverses: i === rejected ? (reverses as IssueId | null) : null, taskDispute: false, workEffect: null })),
-    selfCorrections: spec.self.map((s) => ({ id: s.id as IssueId, newAction: s.action, explanation: "x", generated: false })),
+    review: { issues: spec.issues.map((i) => ({ id: i.id as IssueId, severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null, position: null })) },
+    dispositions: spec.issues.map((i) => ({ id: i.id as IssueId, action: i.accepted ? "accepted" : "rejected", rationale: "r", duplicateOf: null, reverses: i === rejected ? (reverses as IssueId | null) : null, taskDispute: false, workEffect: null, position: null, resolution: null })),
+    selfCorrections: spec.self.map((s) => ({ id: s.id as IssueId, newAction: s.action, explanation: "x", generated: false, position: null, resolution: null })),
     notes: [],
     reviewerFeedback: "",
     questionsForUser: [],

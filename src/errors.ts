@@ -34,6 +34,8 @@ export class RoundInvalid extends Data.TaggedError("RoundInvalid")<{
   readonly collidingIds: readonly string[];
   /** Issues or dispositions whose work_effect is `differs` with a blank difference (issue #183). */
   readonly blankEffects: readonly string[];
+  /** Issue #38: ids whose concern or remedy is blank where a position is required, or whose resolution has a blank text or change. */
+  readonly blankPositions: readonly string[];
 }> {}
 /**
  * A question list whose structure is invalid (duplicate or empty ids, found by normalizeQuestionList after the list's
@@ -428,6 +430,7 @@ const RunErrorData = Schema.Union([
     emptyIds: Strings,
     collidingIds: Strings,
     blankEffects: Strings,
+    blankPositions: Strings,
   }),
   Schema.Struct({ _tag: Schema.Literal("QuestionListInvalid"), duplicateIds: Strings, emptyIds: Schema.Number, cycle: Strings }),
   Schema.Struct({ _tag: Schema.Literal("RoundLimitStop"), heading: Schema.String }),

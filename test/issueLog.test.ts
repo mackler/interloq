@@ -9,9 +9,9 @@ const id = (s: string) => s as IssueId;
 const round = (dispositions: [string, ValidatedRound["dispositions"][number]["action"]][], self: [string, "accepted" | "rejected" | "plan_error"][] = []): ValidatedRound => ({
   phase: 1,
   round: 1,
-  review: { issues: dispositions.map(([i]) => ({ id: id(i), severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null })) },
-  dispositions: dispositions.map(([i, action]) => ({ id: id(i), action, rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null })),
-  selfCorrections: self.map(([i, newAction]) => ({ id: id(i), newAction, explanation: "x", generated: false })),
+  review: { issues: dispositions.map(([i]) => ({ id: id(i), severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null, position: null })) },
+  dispositions: dispositions.map(([i, action]) => ({ id: id(i), action, rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null, position: null, resolution: null })),
+  selfCorrections: self.map(([i, newAction]) => ({ id: id(i), newAction, explanation: "x", generated: false, position: null, resolution: null })),
   notes: [],
   reviewerFeedback: "",
   questionsForUser: [],
@@ -41,7 +41,7 @@ test("correctionsDue: a self-correction superseded by the round's disposition of
 // Issue #14 (Q2): the finished loop's line counts the corrections of its cycles, from the response the page receives.
 test("correctionCount: accepted and partially accepted dispositions and effective self-corrections outside the review", () => {
   const response = (actions: string[], self: [string, "accepted" | "rejected" | "plan_error"][] = []) => ({
-    dispositions: actions.map((action, i) => ({ id: `R${i}`, action: action as "accepted", rationale: "r", duplicate_of: "", reverses: "" })),
+    dispositions: actions.map((action, i) => ({ id: `R${i}`, action: action as "accepted", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null })),
     self_corrections: self.map(([i, new_action]) => ({ id: i, new_action, explanation: "x" })),
   });
   const ids = ["R0", "R1", "R2", "R3", "R4"];

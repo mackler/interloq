@@ -574,7 +574,7 @@ export class ScriptedPlanner implements PlannerShape {
    */
   private withPlan(schema: Schema.Top, step: PlanningStep): unknown {
     if (step.plan !== undefined) this.root.lastPlan = step.plan;
-    const output = withCorrectionPassages(withWorkEffects(step.output));
+    const output = withCorrectionPassages(withPositions(withWorkEffects(step.output)));
     // Issue #186: the run's first planning call replies a plan or the verdict under `reply`; a script written as a plan
     // write (a plan and an empty questions_for_user) is that plan, and a script with a question there is refused, since
     // the first plan asks none any more.
@@ -713,12 +713,26 @@ export class ScriptedReviewer implements ReviewerShape {
     if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "codex\n");
     // A record under plan-review/ that the turn edits, as Codex could (the work review's changes.diff).
     if (step.editRecord !== undefined) fs.appendFileSync(path.join(this.state.records(), step.editRecord), "edited by the reviewer\n");
-    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map(withIssueEffect) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null, failure: step.failure ?? null };
+    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map((i) => withIssuePosition(withIssueEffect(i))) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null, failure: step.failure ?? null };
   }
 }
 
 /** A scripted issue; it states SCRIPTED_WORK_EFFECT (issue #183), which the plan's and the work's reviews require and every other drops. */
-export const issue = (id: string, problem = "p"): Review["issues"][number] => ({ id, severity: "major", location: "s", problem, evidence: "e", [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT }) as Review["issues"][number];
+export const issue = (id: string, problem = "p"): Review["issues"][number] => ({ id, severity: "major", location: "s", problem, evidence: "e", ...SCRIPTED_POSITION, [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT }) as Review["issues"][number];
+
+/** Issue #38: the scripted position, a concern apart from a remedy, of every scripted issue, disposition and self-correction. */
+export const SCRIPTED_POSITION = { concern: "scripted concern", remedy: "scripted remedy" } as const;
+/** A scripted issue given SCRIPTED_POSITION where it states none (issue #38). */
+export const withIssuePosition = (i: Review["issues"][number]): Review["issues"][number] => ({ ...SCRIPTED_POSITION, ...i });
+/** The fields a scripted disposition or self-correction is given where it states no position (issue #38). */
+const NO_RESOLUTION = { ...SCRIPTED_POSITION, [S.RESOLUTION_FIELD]: null } as const;
+const positioned = (d: unknown): unknown => (d !== null && typeof d === "object" && !(S.CONCERN_FIELD in d) ? Object.assign({}, NO_RESOLUTION, d) : d);
+/** A scripted response with each disposition and self-correction given SCRIPTED_POSITION and no resolution where it states none (issue #38); any other output unchanged. */
+export const withPositions = (output: unknown): unknown => {
+  if (output === null || typeof output !== "object" || Array.isArray(output) || !("dispositions" in output) || !Array.isArray(output.dispositions)) return output;
+  const selfCorrections = "self_corrections" in output && Array.isArray(output.self_corrections) ? { self_corrections: output.self_corrections.map(positioned) } : {};
+  return { ...output, dispositions: output.dispositions.map(positioned), ...selfCorrections };
+};
 
 /**
  * The default statement of a scripted reply's effect on the work (issue #183): `differs`, which settles no dispute, so
@@ -758,10 +772,12 @@ export const respond = (
     rationale: `rationale ${id}`,
     duplicate_of: "",
     reverses: "",
+    ...SCRIPTED_POSITION,
+    [S.RESOLUTION_FIELD]: null,
     [TASK_DISPUTE_FIELD]: mark ?? false,
     [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT,
   }));
-  return { self_corrections: [], reviewer_feedback: "", questions_for_user: [], ...extra, dispositions: extra.dispositions?.map((d) => ({ [TASK_DISPUTE_FIELD]: false, [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT, ...d })) ?? marked };
+  return { self_corrections: [], reviewer_feedback: "", questions_for_user: [], ...extra, dispositions: extra.dispositions?.map((d) => ({ ...NO_RESOLUTION, [TASK_DISPUTE_FIELD]: false, [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT, ...d })) ?? marked };
 };
 /** Issue #47: a response to the requirements review, with Claude Code's classification of its accepted findings and the amended document. */
 export const requirementsRespond = (
@@ -776,8 +792,9 @@ export const requirementsRespond = (
  */
 export const unmarked = (dispositions: readonly S.Disposition[]): readonly S.Disposition[] =>
   dispositions.map((d) => {
-    const { id, action, rationale, duplicate_of, reverses } = d;
-    return S.WORK_EFFECT_FIELD in d ? { id, action, rationale, duplicate_of, reverses, [S.WORK_EFFECT_FIELD]: d[S.WORK_EFFECT_FIELD] } : { id, action, rationale, duplicate_of, reverses };
+    const { id, action, rationale, duplicate_of, reverses, concern, remedy, resolution } = d;
+    const base = { id, action, rationale, duplicate_of, reverses, concern, remedy, resolution };
+    return S.WORK_EFFECT_FIELD in d ? { ...base, [S.WORK_EFFECT_FIELD]: d[S.WORK_EFFECT_FIELD] } : base;
   });
 /** A response whose dispositions carry the mark, which every subject's response accepts. */
 export type MarkedResponse = Omit<PlannerResponse, "dispositions"> & Readonly<{ dispositions: readonly (MarkedDisposition & Partial<Pick<S.EffectDisposition, typeof S.WORK_EFFECT_FIELD>>)[] }>;

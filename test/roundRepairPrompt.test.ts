@@ -13,7 +13,7 @@ import { appendRound } from "../src/issueLog.ts";
 import { issue, respond } from "./helpers.ts";
 
 type Fields = ConstructorParameters<typeof RoundInvalid>[0];
-const EMPTY: Fields = { duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [] };
+const EMPTY: Fields = { duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [], blankPositions: [] };
 const invalidOf = (fields: Partial<Fields>): RoundInvalid => new RoundInvalid({ ...EMPTY, ...fields });
 const REVIEW_IDS = ["Q-R1-1", "Q-R1-2"] as const;
 
@@ -26,8 +26,8 @@ const CASES: readonly Readonly<{ field: keyof Fields; error: RoundInvalid; agent
   { field: "unknownDispositions", error: invalidOf({ unknownDispositions: ["Q-R1-9"] }), agent: "claude", instruction: ROUND_REPAIR.unknownDispositions(["Q-R1-9"], REVIEW_IDS) },
   { field: "emptyIds", error: invalidOf({ emptyIds: ["a disposition of the response"] }), agent: "claude", instruction: ROUND_REPAIR.emptyDispositionId },
   { field: "collidingIds", error: invalidOf({ collidingIds: ["P1-S1-1"] }), agent: "claude", instruction: ROUND_REPAIR.collidingIds(["P1-S1-1"]) },
-  { field: "blankEffects", error: invalidOf({ blankEffects: ["W1-R1-1"] }), agent: "codex", instruction: ROUND_REPAIR.blankEffects(["W1-R1-1"]) },
-  { field: "blankEffects", error: invalidOf({ blankEffects: ["W1-R1-2"] }), agent: "claude", instruction: ROUND_REPAIR.blankEffects(["W1-R1-2"]) },
+  { field: "blankEffects", error: invalidOf({ blankEffects: ["W1-R1-1"], blankPositions: [] }), agent: "codex", instruction: ROUND_REPAIR.blankEffects(["W1-R1-1"]) },
+  { field: "blankEffects", error: invalidOf({ blankEffects: ["W1-R1-2"], blankPositions: [] }), agent: "claude", instruction: ROUND_REPAIR.blankEffects(["W1-R1-2"]) },
 ];
 const promptOf = (c: (typeof CASES)[number]): string => (c.agent === "codex" ? reviewRepairPrompt(c.error) : roundRepairPrompt(c.error, REVIEW_IDS));
 
@@ -62,7 +62,7 @@ test("the repair prompt of an unknown disposition names the review's own issue i
 });
 
 test("the halt and the repair prompts state the problem from one source", () => {
-  const error = invalidOf({ duplicateIssues: ["A"], missing: ["B"], duplicateDispositions: ["C"], unknownDispositions: ["D"], emptyIds: ["a disposition of the response"], collidingIds: ["P1-S1-1"], blankEffects: ["E"] });
+  const error = invalidOf({ duplicateIssues: ["A"], missing: ["B"], duplicateDispositions: ["C"], unknownDispositions: ["D"], emptyIds: ["a disposition of the response"], collidingIds: ["P1-S1-1"], blankEffects: ["E"], blankPositions: [] });
   assert.ok(roundInvalidParts(error).some((part) => part.includes("E")), "the halt names the blank statement");
   assert.equal(describe(error), cycleInvalidText(roundInvalidParts(error)));
 });
@@ -123,16 +123,16 @@ test("seam: a plan_error self-correction given the instructed free id validates 
   const unrelated = { id: "P1-S1-1", phase: 1, round: 1, source: "self_correction", problem: "another error", action: "plan_error", rationale: "earlier", superseded: false } as LogEntry;
   const reviewed = validateReview({ issues: [issue("P1-R1-1")] });
   assert.ok(Result.isSuccess(reviewed));
-  const refused = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x" }] });
+  const refused = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }] });
   const failure = validateRound(reviewed.success, refused, [unrelated], 1, 1, "P");
   assert.ok(Result.isFailure(failure));
   assert.deepEqual(failure.failure.collidingIds, ["P1-S1-1"]);
   assert.ok(roundRepairPrompt(failure.failure, ["P1-R1-1"]).includes(ROUND_REPAIR.collidingIds(failure.failure.collidingIds)));
 
-  const repaired = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "P1-S1-2", new_action: "plan_error", explanation: "x" }] });
+  const repaired = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "P1-S1-2", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }] });
   const round = validateRound(reviewed.success, repaired, [unrelated], 1, 1, "P");
   assert.ok(Result.isSuccess(round));
-  assert.deepEqual(round.success.selfCorrections, [{ id: "P1-S1-2", newAction: "plan_error", explanation: "x", generated: false }]);
+  assert.deepEqual(round.success.selfCorrections, [{ id: "P1-S1-2", newAction: "plan_error", explanation: "x", generated: false, position: null, resolution: null }]);
   const logged = appendRound([unrelated], round.success, null);
   assert.deepEqual(logged[0], unrelated);
   const added = logged.filter((e) => e.id === "P1-S1-2");

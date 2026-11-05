@@ -69,7 +69,7 @@ const drive = (scripts: readonly Script[], use: ReviewSetup = setup) => {
       case "CallPlanner": {
         plannerCalls.push(command.round);
         const ids = Array.from({ length: script.issueCount }, (_, i) => `R${command.round}-${i}`);
-        const response = respond(ids.map((id, i) => [id, script.actions[i]] as [string, Action]), script.selfCorrection ? { self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "e" }] } : {});
+        const response = respond(ids.map((id, i) => [id, script.actions[i]] as [string, Action]), script.selfCorrection ? { self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "e", concern: "c", remedy: "r", resolution: null }] } : {});
         // As the interpreter does (issue #151): a response the round's validation refuses would halt after its repair turn.
         const round = roundCheckOf(t.state)(response);
         if (Result.isFailure(round)) {

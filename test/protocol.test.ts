@@ -33,7 +33,7 @@ const text = fc.string({ maxLength: 20 });
 const subject = fc.oneof(fc.constant("questions" as const), fc.constant("questionReading" as const), fc.constant("requirements" as const), nat.map((plan) => ({ plan })), nat.map((work) => ({ work })), nat.map((decision) => ({ decision })));
 const phase = fc.oneof(fc.constant({ kind: "questions" as const }), fc.record({ kind: fc.constantFrom("planning" as const, "execution" as const, "work" as const), n: nat }));
 const agent = fc.constantFrom("claude" as const, "codex" as const);
-const reviewIssue = fc.record({ id: fc.string({ minLength: 1, maxLength: 8 }), severity: fc.constantFrom("blocking" as const, "major" as const, "minor" as const), location: text, problem: text, evidence: text });
+const reviewIssue = fc.record({ id: fc.string({ minLength: 1, maxLength: 8 }), severity: fc.constantFrom("blocking" as const, "major" as const, "minor" as const), location: text, problem: text, evidence: text, concern: fc.constant("c"), remedy: fc.constant("r") });
 const review = fc.record({ issues: fc.array(reviewIssue, { maxLength: 3 }) });
 // Issue #36: a question's text as pieces and blocks, every kind of block included.
 const piece = fc.record({ text, ref: text, code: fc.boolean() });
@@ -55,10 +55,10 @@ const sense = text.filter((t) => t.trim() !== "").map((t) => t as Sense);
 const shownExplanation = fc.record({ id: text, term: text, senses: fc.tuple(sense, fc.array(sense, { maxLength: 1 })).map(([first, rest]): Senses => [first, ...rest]) });
 const pieceOption = fc.record({ label: pieces, description: pieces, figure: fc.constant(null) });
 const userQuestion = fc.record({ context: fc.array(block, { maxLength: 2 }), history: fc.array(block, { maxLength: 2 }), question: pieces, explanations: fc.array(explanation, { maxLength: 2 }), options: fc.array(pieceOption, { maxLength: 2 }) });
-const disposition = fc.record({ id: text, action: fc.constantFrom("accepted" as const, "rejected" as const, "partially_accepted" as const, "no_change_needed" as const, "clarification_requested" as const), rationale: text, duplicate_of: text, reverses: text });
+const disposition = fc.record({ id: text, action: fc.constantFrom("accepted" as const, "rejected" as const, "partially_accepted" as const, "no_change_needed" as const, "clarification_requested" as const), rationale: text, duplicate_of: text, reverses: text, concern: fc.constant("c"), remedy: fc.constant("r"), resolution: fc.constant(null) });
 const plannerResponse = fc.record({
   dispositions: fc.array(disposition, { maxLength: 3 }),
-  self_corrections: fc.array(fc.record({ id: text, new_action: fc.constantFrom("accepted" as const, "rejected" as const, "plan_error" as const), explanation: text }), { maxLength: 2 }),
+  self_corrections: fc.array(fc.record({ id: text, new_action: fc.constantFrom("accepted" as const, "rejected" as const, "plan_error" as const), explanation: text, concern: fc.constant("c"), remedy: fc.constant("r"), resolution: fc.constant(null) }), { maxLength: 2 }),
   reviewer_feedback: text,
   questions_for_user: fc.array(userQuestion, { maxLength: 2 }),
 });
@@ -356,7 +356,7 @@ test("inSnapshot: with an empty replay nothing is dropped; a later run passes fr
 // Defect A of docs/page-question-phase-defects.md: a question review's response is a QuestionListResponse, the planner's
 // response plus the amended list; the page's decoding refused it, and with it the whole replay.
 const questionListResponse: QuestionListResponse = {
-  dispositions: [{ id: "Q-R1-1", action: "accepted", rationale: "Added the database question.", duplicate_of: "", reverses: "", task_dispute: false }],
+  dispositions: [{ id: "Q-R1-1", action: "accepted", rationale: "Added the database question.", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, task_dispute: false }],
   self_corrections: [],
   reviewer_feedback: "",
   questions_for_user: [],
@@ -565,7 +565,7 @@ test("the chain frames survive the JSON round trip, and an invalid setting does 
 
 // Issue #183: the plan's and the work's reviews carry each issue's statement of its effect on the work, and the page reads it.
 test("a ReviewReceived whose issues state their effect on the work survives the round trip", () => {
-  const review = { issues: [{ id: "W1-R1-1", severity: "major" as const, location: "S22", problem: "p", evidence: "e", work_effect: { kind: "none" as const } }] };
+  const review = { issues: [{ id: "W1-R1-1", severity: "major" as const, location: "S22", problem: "p", evidence: "e", concern: "c", remedy: "r", work_effect: { kind: "none" as const } }] };
   const message: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "ReviewReceived", subject: { work: 1 }, round: 1, review, counted: 1 } } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(message))), message);
 });

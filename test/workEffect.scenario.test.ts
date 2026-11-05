@@ -19,8 +19,8 @@ const differs = (difference: string) => ({ kind: "differs", difference }) as con
 const noQuestions = { questions_for_user: [] };
 /** Lets each case's loop run past two rounds without a correction: the idle limit is not what these cases test. */
 const config = { maxIdleRounds: 5 };
-const stated = (id: string, problem: string, evidence: string, effect: S.WorkEffectReply): S.Issue => ({ id, severity: "major", location: "S22", problem, evidence, [S.WORK_EFFECT_FIELD]: effect }) as S.Issue;
-const disposed = (id: string, action: S.Disposition["action"], rationale: string, effect: S.WorkEffectReply) => ({ id, action, rationale, duplicate_of: "", reverses: "", [S.WORK_EFFECT_FIELD]: effect });
+const stated = (id: string, problem: string, evidence: string, effect: S.WorkEffectReply): S.Issue => ({ id, severity: "major", location: "S22", problem, evidence, concern: "c", remedy: "r", [S.WORK_EFFECT_FIELD]: effect }) as S.Issue;
+const disposed = (id: string, action: S.Disposition["action"], rationale: string, effect: S.WorkEffectReply) => ({ id, action, rationale, duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, [S.WORK_EFFECT_FIELD]: effect });
 const response = (...dispositions: ReturnType<typeof disposed>[]) => respond([], { dispositions });
 const runOf = (wiring: Parameters<typeof program>[1], project: string) => Effect.runPromise(Effect.scoped(program(scriptedStart(project), wiring)));
 const conversation = (dir: string): string => fs.readFileSync(path.join(dir, "conversation.md"), "utf8");

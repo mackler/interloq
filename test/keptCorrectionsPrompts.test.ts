@@ -89,7 +89,7 @@ test("both rules state the scope the check reads, once each, and never ask for e
 });
 
 const kept = (phase: number) =>
-  ({ id: "P1-R1-1" as S.IssueId, phase, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: ["retry twice"] }) as LogEntry;
+  ({ id: "P1-R1-1" as S.IssueId, phase, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, reviewer_position: null, planner_position: null, resolution: null, investigations: [], superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: ["retry twice"] }) as LogEntry;
 const missingOf = (log: readonly LogEntry[], phase: number) =>
   K.keptCorrectionProblems({ baseline: K.keptBaselineOf(log, phase), restatable: K.restatable(log, phase), dispositions: [], entries: [], texts: ["rewritten"] }).filter((p) => p.kind === "correctionMissing");
 

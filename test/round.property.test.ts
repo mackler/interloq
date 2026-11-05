@@ -19,11 +19,11 @@ const ACTIONS: readonly Action[] = ["accepted", "partially_accepted", "rejected"
 const NEW_ACTIONS = ["accepted", "rejected", "plan_error"] as const;
 
 const arbId = fc.stringMatching(/^[A-Z][A-Z0-9-]{0,7}$/);
-const arbIssue = (id: string) => record({ id: fc.constant(id), severity: fc.constantFrom("blocking", "major", "minor"), location: fc.string(), problem: fc.string(), evidence: fc.string() });
+const arbIssue = (id: string) => record({ id: fc.constant(id), severity: fc.constantFrom("blocking", "major", "minor"), location: fc.string(), problem: fc.string(), evidence: fc.string(), concern: fc.constant("c"), remedy: fc.constant("r") });
 const arbReview: fc.Arbitrary<Review> = fc.uniqueArray(arbId, { minLength: 0, maxLength: 5 }).chain((ids) => fc.tuple(...ids.map(arbIssue)).map((issues) => ({ issues })));
 const arbEntry = (id: string): fc.Arbitrary<LogEntry> =>
   fc.oneof(
-    record({ id: fc.constant(id as IssueId), phase: fc.constant(0), round: fc.constant(0), source: fc.constant("review" as const), severity: fc.constantFrom("blocking", "major", "minor"), location: fc.string(), problem: fc.string(), evidence: fc.string(), action: fc.constantFrom(...ACTIONS), rationale: fc.string(), duplicate_of: fc.constant(null), reverses: fc.constant(null), superseded: fc.constant(false), file_change: fc.constant(null), task_dispute: fc.constant(false), work_effects: fc.constant(null), kept_passages: fc.constant([]) }),
+    record({ id: fc.constant(id as IssueId), phase: fc.constant(0), round: fc.constant(0), source: fc.constant("review" as const), severity: fc.constantFrom("blocking", "major", "minor"), location: fc.string(), problem: fc.string(), evidence: fc.string(), action: fc.constantFrom(...ACTIONS), rationale: fc.string(), duplicate_of: fc.constant(null), reverses: fc.constant(null), superseded: fc.constant(false), file_change: fc.constant(null), task_dispute: fc.constant(false), work_effects: fc.constant(null), kept_passages: fc.constant([]), reviewer_position: fc.constant(null), planner_position: fc.constant(null), resolution: fc.constant(null), investigations: fc.constant([]) }),
     record({ id: fc.constant(id as IssueId), phase: fc.constant(0), round: fc.constant(0), source: fc.constant("user" as const), problem: fc.string(), action: fc.constant("decided_by_user" as const), rationale: fc.string(), superseded: fc.constant(false) }),
   );
 const arbLog: fc.Arbitrary<LogEntry[]> = fc.uniqueArray(arbId, { maxLength: 4 }).chain((ids) => fc.tuple(...ids.map(arbEntry)));
@@ -32,8 +32,8 @@ const arbResponse = (review: Review, history: LogEntry[]): fc.Arbitrary<PlannerR
   const known = history.map((e) => e.id);
   const ref = fc.oneof({ weight: 3, arbitrary: fc.constant("") }, { weight: 2, arbitrary: known.length > 0 ? fc.constantFrom(...known) : fc.constant("") }, { weight: 1, arbitrary: arbId });
   return record({
-    dispositions: fc.tuple(...review.issues.map((i) => record({ id: fc.constant(i.id), action: fc.constantFrom(...ACTIONS), rationale: fc.string(), duplicate_of: ref, reverses: ref }))),
-    self_corrections: fc.array(record({ id: fc.oneof(fc.constant(""), arbId), new_action: fc.constantFrom(...NEW_ACTIONS), explanation: fc.string() }), { maxLength: 2 }),
+    dispositions: fc.tuple(...review.issues.map((i) => record({ id: fc.constant(i.id), action: fc.constantFrom(...ACTIONS), rationale: fc.string(), duplicate_of: ref, reverses: ref, concern: fc.constant("c"), remedy: fc.constant("r"), resolution: fc.constant(null) }))),
+    self_corrections: fc.array(record({ id: fc.oneof(fc.constant(""), arbId), new_action: fc.constantFrom(...NEW_ACTIONS), explanation: fc.string(), concern: fc.constant("c"), remedy: fc.constant("r"), resolution: fc.constant(null) }), { maxLength: 2 }),
     reviewer_feedback: fc.string(),
     questions_for_user: fc.array(fc.record({ context: fc.string(), question: fc.string(), options: fc.array(fc.record({ label: fc.string(), description: fc.string() }), { maxLength: 2 }) }).map((w) => questionOf(w)), { maxLength: 2 }),
   });
@@ -77,7 +77,7 @@ test("property: a duplicate, an extra or a missing disposition, or an empty requ
       const emptyIssue: Review = { issues: round.review.issues.map((x, k) => (k === i ? { ...x, id: "" } : x)) };
       assert.ok(Result.isFailure(validateReview(emptyIssue)), "an empty issue id validated");
       // The wire sentinels: "" in duplicate_of / reverses is "no reference", "" as a self-correction id is "new".
-      const sentinels = { ...round, response: { ...round.response, dispositions: ds.map((d) => ({ ...d, duplicate_of: "", reverses: "" })), self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "e" }] } };
+      const sentinels = { ...round, response: { ...round.response, dispositions: ds.map((d) => ({ ...d, duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null })), self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "e", concern: "c", remedy: "r", resolution: null }] } };
       const result = validate(sentinels);
       assert.ok(Result.isSuccess(result), "the sentinels were rejected");
       assert.ok(result.success.dispositions.every((d) => d.duplicateOf === null && d.reverses === null));
@@ -163,8 +163,8 @@ test("property: a bijective renaming of ids commutes with the detections", () =>
 test("property: a disposition carries the mark exactly when it is marked and not accepted (issue #156)", () => {
   fc.assert(
     fc.property(fc.constantFrom(...ACTIONS), fc.boolean(), (action, mark) => {
-      const response: PlannerResponse = { dispositions: [{ id: "A", action, rationale: "r", duplicate_of: "", reverses: "", task_dispute: mark } as PlannerResponse["dispositions"][number]], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
-      const validated = validateReview({ issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e" }] });
+      const response: PlannerResponse = { dispositions: [{ id: "A", action, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, task_dispute: mark } as PlannerResponse["dispositions"][number]], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
+      const validated = validateReview({ issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] });
       if (Result.isFailure(validated)) return false;
       const round = validateRound(validated.success, response, [], 1, 1, "Q");
       return Result.isSuccess(round) && round.success.dispositions[0]!.taskDispute === (mark && action !== "accepted");
@@ -180,10 +180,10 @@ test("property: ValidatedDisposition.workEffect is null exactly when the action 
   fc.assert(
     fc.property(fc.array(disposition, { minLength: 1, maxLength: 5 }), (cases) => {
       const ids = cases.map((_, i) => `W1-R1-${i + 1}`);
-      const reviewed = validateReview({ issues: ids.map((id) => ({ id, severity: "major" as const, location: "l", problem: "p", evidence: "e" })) });
+      const reviewed = validateReview({ issues: ids.map((id) => ({ id, severity: "major" as const, location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" })) });
       assert.ok(Result.isSuccess(reviewed));
       const response = {
-        dispositions: cases.map(([action, stated], i) => ({ id: ids[i], action, rationale: "r", duplicate_of: "", reverses: "", ...(stated === undefined ? {} : { [S.WORK_EFFECT_FIELD]: stated }) })),
+        dispositions: cases.map(([action, stated], i) => ({ id: ids[i], action, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, ...(stated === undefined ? {} : { [S.WORK_EFFECT_FIELD]: stated }) })),
         self_corrections: [],
         reviewer_feedback: "",
         questions_for_user: [],

@@ -94,9 +94,9 @@ test("a missing disposition is named in the halt after the second failure", asyn
 
 // S8: a generated self-correction id that already exists in the log is repaired with an explicit free id.
 test("a colliding generated self-correction id gets one repair turn, and the explicit id is logged beside the unrelated entry", async () => {
-  const round1 = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "P1-S2-1", new_action: "plan_error", explanation: "earlier" }] });
-  const refused = respond([["P1-R2-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x" }] });
-  const repaired = respond([["P1-R2-1", "accepted"]], { self_corrections: [{ id: "P1-S2-2", new_action: "plan_error", explanation: "x" }] });
+  const round1 = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "P1-S2-1", new_action: "plan_error", explanation: "earlier", concern: "c", remedy: "r", resolution: null }] });
+  const refused = respond([["P1-R2-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }] });
+  const repaired = respond([["P1-R2-1", "accepted"]], { self_corrections: [{ id: "P1-S2-2", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }] });
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: round1, plan: "v2" }, { output: refused, plan: "v3" }, { output: repaired, plan: "v3" }],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R2-1")] }, { issues: [] }, { issues: [] }],
@@ -115,8 +115,8 @@ test("a colliding generated self-correction id gets one repair turn, and the exp
 });
 
 test("a second colliding generated self-correction id halts with RoundInvalid", async () => {
-  const round1 = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "P1-S2-1", new_action: "plan_error", explanation: "earlier" }] });
-  const refused = respond([["P1-R2-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x" }] });
+  const round1 = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "P1-S2-1", new_action: "plan_error", explanation: "earlier", concern: "c", remedy: "r", resolution: null }] });
+  const refused = respond([["P1-R2-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }] });
   const { layer } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: round1, plan: "v2" }, { output: refused, plan: "v3" }, { output: refused, plan: "v3" }],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R2-1")] }],

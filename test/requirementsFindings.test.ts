@@ -4,7 +4,7 @@ import type { Disposition, RequirementFinding } from "../src/schema.ts";
 import { findingsProblems, interviewedOf, writtenOf } from "../src/requirementsFindings.ts";
 
 // Issue #47: Claude Code classifies each accepted finding of the requirements review; the program checks it on data.
-const d = (id: string, action: Disposition["action"]): Disposition => ({ id, action, rationale: "r", duplicate_of: "", reverses: "" });
+const d = (id: string, action: Disposition["action"]): Disposition => ({ id, action, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null });
 const CURRENT = "# Requirements\n\nThe summary.\n";
 const CHANGED = "# Requirements\n\nThe summary.\n\nThe answer.\n";
 

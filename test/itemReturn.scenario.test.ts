@@ -141,7 +141,7 @@ test("(g) a finished run still ends implemented and writes no relabeling line", 
 /** A halt in the work review after an execution that left its change uncommitted (and made no commit). */
 const leavesUncommitted: TestOptions = {
   steps: [{ output: noQuestions, plan: "v1" }, { sessionTooLong: "Prompt is too long" }],
-  reviews: [{ issues: [] }, { issues: [{ id: "W1-R1-1", severity: "major", location: "l", problem: "p", evidence: "e" }] }],
+  reviews: [{ issues: [] }, { issues: [{ id: "W1-R1-1", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }],
   execScripts: [{ uncommitted: true }],
   execs: [{ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [] }],
 };

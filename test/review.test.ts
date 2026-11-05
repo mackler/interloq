@@ -305,7 +305,7 @@ for (const answer of ["2", prompts.PLANNER_POSITION, prompts.positionLabels("rer
     const noQuestions = { questions_for_user: [] };
     const none = { kind: "none" };
     const point = (effect: unknown) => ({ ...issue("W1-R1-1"), [S.WORK_EFFECT_FIELD]: effect }) as S.Issue;
-    const rejected = () => respond([], { dispositions: [{ id: "W1-R1-1", action: "rejected", rationale: "r", duplicate_of: "", reverses: "", [S.WORK_EFFECT_FIELD]: none } as S.Disposition] });
+    const rejected = () => respond([], { dispositions: [{ id: "W1-R1-1", action: "rejected", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, [S.WORK_EFFECT_FIELD]: none } as S.Disposition] });
     const { layer, probe } = testLayer(tempRepo(), {
       config: { maxIdleRounds: 5 },
       answers: [answer],
@@ -326,7 +326,7 @@ test("a work-review dispute answered with the context call's own planner label s
   const noQuestions = { questions_for_user: [] };
   const none = { kind: "none" };
   const point = (effect: unknown) => ({ ...issue("W1-R1-1"), [S.WORK_EFFECT_FIELD]: effect }) as S.Issue;
-  const rejected = () => respond([], { dispositions: [{ id: "W1-R1-1", action: "rejected", rationale: "r", duplicate_of: "", reverses: "", [S.WORK_EFFECT_FIELD]: none } as S.Disposition] });
+  const rejected = () => respond([], { dispositions: [{ id: "W1-R1-1", action: "rejected", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, [S.WORK_EFFECT_FIELD]: none } as S.Disposition] });
   const relabel = (prompt: string) => {
     const reply = scriptedContextReply(prompt);
     return { ...reply, options: reply.options.map((o, i) => ({ ...o, label: plainPieces(i === 0 ? "Correct the work as the point asks" : leave) })) };

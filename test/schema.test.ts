@@ -19,9 +19,16 @@ const decode = <T>(schema: Schema.ConstraintDecoder<T>, value: unknown): T =>
 const rejects = <T>(schema: Schema.ConstraintDecoder<T>, value: unknown, what: string): void =>
   assert.throws(() => decode(schema, value), `${what} was accepted`);
 
-const issue: legacy.Issue = { id: "P1-R1-1", severity: "major", location: "step 3", problem: "p", evidence: "e" };
-const disposition: legacy.Disposition = { id: "P1-R1-1", action: "accepted", rationale: "r", duplicate_of: "", reverses: "" };
-const selfCorrection: legacy.SelfCorrection = { id: "A", new_action: "plan_error", explanation: "x" };
+// Issue #38: each agent's position, its concern apart from its remedy, and Claude Code's resolution, beyond the frozen legacy shapes.
+type Position38 = { concern: string; remedy: string };
+type Resolution38 = { resolution: { text: string; changes: string[] } | null };
+type Issue38 = legacy.Issue & Position38;
+type Disposition38 = legacy.Disposition & Position38 & Resolution38;
+type SelfCorrection38 = legacy.SelfCorrection & Position38 & Resolution38;
+type Response38<T> = Omit<T, "dispositions" | "self_corrections"> & { dispositions: Disposition38[]; self_corrections: SelfCorrection38[] };
+const issue: Issue38 = { id: "P1-R1-1", severity: "major", location: "step 3", problem: "p", evidence: "e", concern: "c", remedy: "r" };
+const disposition: Disposition38 = { id: "P1-R1-1", action: "accepted", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null };
+const selfCorrection: SelfCorrection38 = { id: "A", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null };
 // Decision Q1 of the decision-support task: a question for the user is structured, with an optional list of options.
 // S3 (issues #36, #59): with its context paragraph and the explanations of its terms. Issue #36 (30 Sep 2026): every text
 // is a sequence of pieces, the context blocks of pieces (decision Q2), and the explanations a list the pieces refer to.
@@ -42,7 +49,7 @@ const userQuestion: UserQuestion = {
   explanations: [{ id: "t1", term: "q", senses: ["a letter"] }],
   options: [option("A", "a"), option("B", "b")],
 };
-const plannerResponse: WithQuestions<legacy.PlannerResponse> = { dispositions: [disposition], self_corrections: [selfCorrection], reviewer_feedback: "", questions_for_user: [userQuestion] };
+const plannerResponse: Response38<WithQuestions<legacy.PlannerResponse>> = { dispositions: [disposition], self_corrections: [selfCorrection], reviewer_feedback: "", questions_for_user: [userQuestion] };
 // Issue #99: an entry carries its skip condition, null or the question and the answer that make it unnecessary.
 type QuestionEntry = { id: string; context: Block[]; history: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[]; default_answer: string; skip_if: { question: string; answer: string } | null };
 const questionEntry: QuestionEntry = { id: "Q1", context: para("c"), history: para("h"), question: plain("q?"), reason: para("r"), proposed_answers: [option("A", "a")], default_answer: "A", skip_if: null };
@@ -52,8 +59,8 @@ const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQue
 const execReport = { status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks: [{ step: "S1", command: "npm run test:unit", seconds: 12.5, selection: false, counts: null }] };
 const execOutcome = { status: "needs_input", summary: "s", question: "q", remainingWork: "w", userInput: null, checks: [] };
 // Version 2 (Q5): three shapes tagged by source.
-const reviewEntry = { id: "A", phase: 1, round: 2, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: [] };
-const selfEntry = { id: "P1-S2-1", phase: 1, round: 2, source: "self_correction", problem: "p", action: "plan_error", rationale: "r", superseded: false, file_change: null, kept_passages: [] };
+const reviewEntry = { id: "A", phase: 1, round: 2, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, reviewer_position: null, planner_position: null, resolution: null, investigations: [], superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: [] };
+const selfEntry = { id: "P1-S2-1", phase: 1, round: 2, source: "self_correction", problem: "p", action: "plan_error", rationale: "r", superseded: false, file_change: null, kept_passages: [], planner_position: null, resolution: null, investigations: [] };
 const userEntry = { id: "A", phase: 1, round: 2, source: "user", problem: "p", action: "decided_by_user", rationale: "r", superseded: true };
 const usage = { version: 2, agent: "claude", time: "2026-09-24T00:00:00.000Z", session: null, num_turns: 0, total_cost_usd: 0 };
 // Issue #120, part 1: the tracker key.
@@ -86,11 +93,11 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   assert.equal(decode(S.UsageRecord, usage).agent, "claude");
   assert.equal(decode(S.UsageRecord, { version: 2, agent: "codex", time: "t", thread: "x", input_tokens: 1, output_tokens: 2 }).agent, "codex");
 
-  sameType<Equals<DeepMutable<typeof S.Issue.Type>, DeepMutable<legacy.Issue>>>();
-  sameType<Equals<DeepMutable<typeof S.Review.Type>, DeepMutable<legacy.Review>>>();
-  sameType<Equals<DeepMutable<typeof S.Disposition.Type>, DeepMutable<legacy.Disposition>>>();
-  sameType<Equals<DeepMutable<typeof S.SelfCorrection.Type>, DeepMutable<legacy.SelfCorrection>>>();
-  sameType<Equals<DeepMutable<typeof S.PlannerResponse.Type>, DeepMutable<WithQuestions<legacy.PlannerResponse>>>>();
+  sameType<Equals<DeepMutable<typeof S.Issue.Type>, DeepMutable<Issue38>>>();
+  sameType<Equals<DeepMutable<typeof S.Review.Type>, DeepMutable<{ issues: Issue38[] }>>>();
+  sameType<Equals<DeepMutable<typeof S.Disposition.Type>, DeepMutable<Disposition38>>>();
+  sameType<Equals<DeepMutable<typeof S.SelfCorrection.Type>, DeepMutable<SelfCorrection38>>>();
+  sameType<Equals<DeepMutable<typeof S.PlannerResponse.Type>, DeepMutable<Response38<WithQuestions<legacy.PlannerResponse>>>>>();
   sameType<Equals<DeepMutable<typeof S.PlanWriteResult.Type>, DeepMutable<WithQuestions<legacy.PlanWriteResult>>>>();
   sameType<Equals<DeepMutable<typeof S.QuestionEntry.Type>, QuestionEntry>>();
   sameType<Equals<DeepMutable<typeof S.QuestionList.Type>, { questions: QuestionEntry[] }>>();
@@ -98,7 +105,7 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<
     Equals<
       DeepMutable<typeof S.QuestionListResponse.Type>,
-      DeepMutable<Omit<WithQuestions<Omit<legacy.QuestionListResponse, "questions">>, "dispositions"> & { dispositions: (legacy.Disposition & { task_dispute: boolean })[]; correction_passages: { id: string; passages: string[] }[]; questions: QuestionEntry[] }>
+      DeepMutable<Omit<WithQuestions<Omit<legacy.QuestionListResponse, "questions">>, "dispositions" | "self_corrections"> & { dispositions: (Disposition38 & { task_dispute: boolean })[]; self_corrections: SelfCorrection38[]; correction_passages: { id: string; passages: string[] }[]; questions: QuestionEntry[] }>
     >
   >();
   // G-R1-1: the context call returns the whole question as pieces.

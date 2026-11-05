@@ -8,12 +8,26 @@ import type { ProcessEnd } from "./transport.ts";
 
 export const Severity = Schema.Literals(["blocking", "major", "minor"]);
 
+/**
+ * The names of each agent's position, its concern apart from its remedy, and of Claude Code's resolution of both concerns
+ * (issue #38), the one source of them for the schemas, the prompts and the tests.
+ */
+export const CONCERN_FIELD = "concern";
+export const REMEDY_FIELD = "remedy";
+export const RESOLUTION_FIELD = "resolution";
+
+/**
+ * Codex's issue. `concern` is what is at stake, apart from `remedy`, the change it proposes (issue #38): plain strings, as
+ * Codex's strict mode wants; validateReview of src/round.ts refuses a blank one.
+ */
 export const Issue = Schema.Struct({
   id: Schema.String,
   severity: Severity,
   location: Schema.String,
   problem: Schema.String,
   evidence: Schema.String,
+  [CONCERN_FIELD]: Schema.String,
+  [REMEDY_FIELD]: Schema.String,
 });
 
 export const Review = Schema.Struct({ issues: Schema.Array(Issue) });
@@ -26,12 +40,27 @@ export const Action = Schema.Literals([
   "clarification_requested",
 ]);
 
+/**
+ * A resolution of both agents' concerns as Claude Code writes it (issue #38): its text, and each requirement, decision of
+ * the developer or decided behavior it would change, empty where it changes none. Plain strings, as Codex's strict mode
+ * wants; resolutionOf of src/resolution.ts refuses a blank text or change.
+ */
+export const ResolutionReply = Schema.Struct({ text: Schema.String, changes: Schema.Array(Schema.String) });
+export type ResolutionReply = typeof ResolutionReply.Type;
+
+/**
+ * Claude Code's disposition of an issue. Beside it (never as a sixth action, issue #38) its position, `concern` and
+ * `remedy`, and a `resolution` of both concerns or null; carriesPosition of src/round.ts says where a position is required.
+ */
 export const Disposition = Schema.Struct({
   id: Schema.String,
   action: Action,
   rationale: Schema.String,
   duplicate_of: Schema.String,
   reverses: Schema.String,
+  [CONCERN_FIELD]: Schema.String,
+  [REMEDY_FIELD]: Schema.String,
+  [RESOLUTION_FIELD]: Schema.NullOr(ResolutionReply),
 });
 
 /**
@@ -71,6 +100,15 @@ export const EffectDisposition = Schema.Struct({ ...Disposition.fields, [WORK_EF
 /** A text with a character other than whitespace: the difference of a stated effect (issue #183). */
 export const EffectText = Schema.String.check(Schema.isPattern(/\S/u)).pipe(Schema.brand("EffectText"));
 export type EffectText = typeof EffectText.Type;
+/** A text with a character other than whitespace: a concern, a remedy, a resolution or one of its changes (issue #38). */
+export const PositionText = Schema.String.check(Schema.isPattern(/\S/u)).pipe(Schema.brand("PositionText"));
+export type PositionText = typeof PositionText.Type;
+/** An agent's position as the program keeps it (issue #38): its concern apart from its remedy. */
+export const Position = Schema.Struct({ concern: PositionText, remedy: PositionText });
+export type Position = typeof Position.Type;
+/** A resolution of both concerns as the program keeps it (issue #38): its text and what it would change. */
+export const Resolution = Schema.Struct({ text: PositionText, changes: Schema.Array(PositionText) });
+export type Resolution = typeof Resolution.Type;
 /** The program's value of a stated effect (issue #183): `none`, or `differs` with a difference that is not blank. */
 export const WorkEffect = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("none") }),
@@ -85,6 +123,9 @@ export const SelfCorrection = Schema.Struct({
   id: Schema.String,
   new_action: Schema.Literals(["accepted", "rejected", "plan_error"]),
   explanation: Schema.String,
+  [CONCERN_FIELD]: Schema.String,
+  [REMEDY_FIELD]: Schema.String,
+  [RESOLUTION_FIELD]: Schema.NullOr(ResolutionReply),
 });
 
 // ---- a question's text as pieces (issue #36, rewritten 30 Sep 2026) -----------------------------------------------
@@ -507,6 +548,16 @@ export const NonNegativeFinite = Schema.Finite.check(Schema.isGreaterThanOrEqual
 export const IssueId = Schema.NonEmptyString.pipe(Schema.brand("IssueId"));
 export type IssueId = typeof IssueId.Type;
 
+/** The disputed pauses that have their one investigation before the developer is asked (issue #38). */
+export const InvestigatedPause = Schema.Literals(["reraised", "secondClarification", "reversal", "repeatedUnderNewId", "disputedSelfCorrection"]);
+export type InvestigatedPause = typeof InvestigatedPause.Type;
+/**
+ * One investigated dispute (issue #38): its kind and, for a reversal or a repetition under a new id, the other id it names
+ * (the reversed id, the repeated id); null otherwise.
+ */
+export const Investigation = Schema.Struct({ pause: InvestigatedPause, other: Schema.NullOr(IssueId) });
+export type Investigation = typeof Investigation.Type;
+
 /** The fields every entry of an issue log has. `superseded` is required (Q5): true when a later entry has the same id. */
 const logEntryBase = { id: IssueId, phase: NonNegativeInt, round: NonNegativeInt, problem: Schema.String, rationale: Schema.String, superseded: Schema.Boolean };
 /**
@@ -542,6 +593,14 @@ export const ReviewEntry = Schema.Struct({
    * none, and in a log written before the field.
    */
   [KEPT_PASSAGES_FIELD]: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  /** Codex's position on the issue (issue #38); null in a log written before the field. */
+  reviewer_position: Schema.NullOr(Position).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /** Claude Code's position, null exactly where carriesPosition is false (issue #38). */
+  planner_position: Schema.NullOr(Position).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /** Claude Code's resolution of both concerns, null where it gave none (issue #38). */
+  [RESOLUTION_FIELD]: Schema.NullOr(Resolution).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /** The disputes of this id that had their one investigation (issue #38), as the round's latest reply left them. */
+  investigations: Schema.Array(Investigation).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 /** A correction Claude Code made to its own earlier work. */
 export const SelfCorrectionEntry = Schema.Struct({
@@ -555,6 +614,12 @@ export const SelfCorrectionEntry = Schema.Struct({
    * none, and in a log written before the field.
    */
   [KEPT_PASSAGES_FIELD]: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  /** Claude Code's position, null exactly where carriesPosition is false (issue #38). */
+  planner_position: Schema.NullOr(Position).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /** Claude Code's resolution of both concerns, null where it gave none (issue #38). */
+  [RESOLUTION_FIELD]: Schema.NullOr(Resolution).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /** The disputes of this id that had their one investigation (issue #38). */
+  investigations: Schema.Array(Investigation).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 /** A decision of the user on one issue. */
 export const UserEntry = Schema.Struct({ ...logEntryBase, source: Schema.Literal("user"), action: Schema.Literal("decided_by_user") });

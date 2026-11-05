@@ -1399,7 +1399,7 @@ Return the complete output again, corrected. Do not modify any file.`;
 }
 
 /** The fields of RoundInvalid (src/errors.ts), which imports this module for its texts. */
-export type RoundProblems = Readonly<{ duplicateIssues: readonly string[]; missing: readonly string[]; duplicateDispositions: readonly string[]; unknownDispositions: readonly string[]; emptyIds: readonly string[]; collidingIds: readonly string[]; blankEffects: readonly string[] }>;
+export type RoundProblems = Readonly<{ duplicateIssues: readonly string[]; missing: readonly string[]; duplicateDispositions: readonly string[]; unknownDispositions: readonly string[]; emptyIds: readonly string[]; collidingIds: readonly string[]; blankEffects: readonly string[]; blankPositions: readonly string[] }>;
 
 /** What a repair prompt asks for instead, one instruction per failure of RoundInvalid (issue #151), in the words of the review and response rules. */
 export const ROUND_REPAIR = {

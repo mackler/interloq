@@ -91,7 +91,7 @@ test("a refinement run that halts or is stopped leaves the item unrefined and it
   const halted = refine({
     answers: ["0"],
     steps: [{ output: { questions: [q("Q1")] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [q("Q1")] } }],
-    reviews: [{ issues: [{ id: "Q-R1-1", severity: "major", location: "Q1", problem: "p", evidence: "e" }] }],
+    reviews: [{ issues: [{ id: "Q-R1-1", severity: "major", location: "Q1", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }],
     config: { maxRounds: 1 },
   });
   assert.equal(failureOf(await halted.exit)._tag, "RoundLimitStop");

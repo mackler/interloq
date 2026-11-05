@@ -22,7 +22,7 @@ test("renderRound lists the issues, the dispositions with their references, the 
   const response = {
     ...base,
     dispositions: base.dispositions.map((d) => (d.id === "B" ? { ...d, duplicate_of: "A" } : d)),
-    self_corrections: [{ id: "C", new_action: "plan_error" as const, explanation: "oops" }],
+    self_corrections: [{ id: "C", new_action: "plan_error" as const, explanation: "oops", concern: "c", remedy: "r", resolution: null }],
     reviewer_feedback: "be brief",
   };
   const text = renderRound("Planning phase 1", 2, review, response);
@@ -123,11 +123,11 @@ test("conversation.md records a question under its displayed number with the rec
 test("pauseProse writes every kind of pause as prose, without the record's field names or empty fields", async () => {
   const { pauseProse } = await import("../src/render.ts");
   const earlier = [
-    { id: "P1-R1-1", phase: 1, round: 1, source: "review" as const, severity: "major" as const, location: "S3", problem: "The plan omits the migration.", evidence: "Step S3 writes the table\nbut never migrates it.", action: "rejected" as const, rationale: "The migration is in S4.", duplicate_of: null, reverses: null, superseded: true, file_change: null, task_dispute: false, work_effects: null },
+    { id: "P1-R1-1", phase: 1, round: 1, source: "review" as const, severity: "major" as const, location: "S3", problem: "The plan omits the migration.", evidence: "Step S3 writes the table\nbut never migrates it.", action: "rejected" as const, rationale: "The migration is in S4.", duplicate_of: null, reverses: null, reviewer_position: null, planner_position: null, resolution: null, investigations: [], superseded: true, file_change: null, task_dispute: false, work_effects: null },
     { id: "P1-R1-1", phase: 1, round: 2, source: "user" as const, problem: "The plan omits the migration.", action: "decided_by_user" as const, rationale: "Add it to S3.", superseded: false },
   ] as unknown as LogEntry[];
-  const issueNow = { id: "P1-R2-1", severity: "major" as const, location: "S3", problem: "Still no migration.", evidence: "S3 is unchanged." };
-  const disposition = { id: "P1-R2-1", action: "partially_accepted" as const, rationale: "Only the index.", duplicate_of: "", reverses: "" };
+  const issueNow = { id: "P1-R2-1", severity: "major" as const, location: "S3", problem: "Still no migration.", evidence: "S3 is unchanged.", concern: "c", remedy: "r" };
+  const disposition = { id: "P1-R2-1", action: "partially_accepted" as const, rationale: "Only the index.", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null };
   const all = [
     pauseProse({ pause: "reraised", id: "P1-R1-1", history: earlier, issue: issueNow, taskDispute: false, effects: null }),
     pauseProse({ pause: "secondClarification", id: "P1-R1-1", history: earlier, disposition, taskDispute: false, effects: null }),
@@ -362,10 +362,10 @@ test("W3-R1-1: renderQuestions keeps the history heading out of the question's p
 // marked entry of an issue's history or of the idle pause carries the mark.
 test("pauseProse states a marked disagreement after its lead, shows a repetition's answer, and marks a marked entry", async () => {
   const { pauseProse } = await import("../src/render.ts");
-  const markedEntry = { id: "Q-R1-1", phase: 0, round: 1, source: "review", severity: "major", location: "Q1", problem: "Drop Q1: the code settles it.", evidence: "e", action: "rejected", rationale: "The task allows another reading.", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: true, work_effects: null } as LogEntry;
+  const markedEntry = { id: "Q-R1-1" as LogEntry["id"], phase: 0, round: 1, source: "review", severity: "major", location: "Q1", problem: "Drop Q1: the code settles it.", evidence: "e", action: "rejected", rationale: "The task allows another reading.", duplicate_of: null, reverses: null, reviewer_position: null, planner_position: null, resolution: null, investigations: [], superseded: false, file_change: null, task_dispute: true, work_effects: null, kept_passages: [] } as LogEntry;
   const plainEntry = { ...markedEntry, task_dispute: false } as LogEntry;
-  const issueNow = { id: "Q-R2-1", severity: "major" as const, location: "Q1", problem: "Still drop Q1.", evidence: "e2" };
-  const disposition = { id: "Q-R2-1", action: "rejected" as const, rationale: "Either reading is open.", duplicate_of: "Q-R1-1", reverses: "" };
+  const issueNow = { id: "Q-R2-1", severity: "major" as const, location: "Q1", problem: "Still drop Q1.", evidence: "e2", concern: "c", remedy: "r" };
+  const disposition = { id: "Q-R2-1", action: "rejected" as const, rationale: "Either reading is open.", duplicate_of: "Q-R1-1", reverses: "", concern: "c", remedy: "r", resolution: null };
   const text = (facts: Parameters<typeof pauseProse>[0]) => blocksMarkdown(pauseProse(facts));
   const markedFacts = pauseProse({ pause: "reraised", id: "Q-R1-1", history: [markedEntry], issue: issueNow, taskDispute: true, effects: null });
   assert.equal(piecesText((markedFacts[1] as { pieces: Parameters<typeof piecesText>[0] }).pieces), prompts.TASK_DISPUTE_FACT);
@@ -396,8 +396,8 @@ test("renderRound shows Codex's statement per issue and Claude Code's per dispos
   const prompts = await import("../src/prompts.ts");
   const review = Schema.decodeUnknownSync(S.EffectReview)({ issues: [{ ...issue("A"), work_effect: { kind: "differs", difference: "README.md stays unwrapped" } }, { ...issue("B"), work_effect: { kind: "none" } }] });
   const response = Schema.decodeUnknownSync(S.WorkResponse)(respond([], { dispositions: [
-    { id: "A", action: "accepted", rationale: "rationale A", duplicate_of: "", reverses: "", work_effect: { kind: "none" } },
-    { id: "B", action: "rejected", rationale: "rationale B", duplicate_of: "", reverses: "", work_effect: { kind: "none" } },
+    { id: "A", action: "accepted", rationale: "rationale A", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, work_effect: { kind: "none" } },
+    { id: "B", action: "rejected", rationale: "rationale B", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null, work_effect: { kind: "none" } },
   ] as unknown as S.Disposition[] }));
   const text = renderRound("Work review 1", 1, review, response);
   assert.ok(text.includes(prompts.reviewerEffectLine({ kind: "differs", difference: "README.md stays unwrapped" } as S.WorkEffectReply)), text);
