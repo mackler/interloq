@@ -423,6 +423,8 @@ test("issue #156: a marked rejection of a request to drop a question, raised aga
     answers: [{ beside: "1" }],
     steps: [
       { output: { questions: [q("Q1")] } },
+      // Issue #38: the response that investigates the marked dispute raised again, before the developer is asked.
+      { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
       { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
       { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
       { output: { questions: [] } },

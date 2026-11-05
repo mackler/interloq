@@ -69,10 +69,11 @@ test("(b) a reading that raises nothing: one reading turn, the list unchanged", 
 test("(c) a question review left by the proceed choice at its round limit: no reading", async () => {
   const dir = tempRepo();
   const { layer, probe } = testLayer(dir, {
-    answers: ["p", "1"],
-    steps: [{ output: { questions: [entryWith(READABLE)] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [entryWith(READABLE)] } }],
+    // Issue #243: the limit's question is beside the review, which goes on into cycle 2; Proceed is read at its end.
+    answers: [{ beside: "p" }, "1"],
+    steps: [{ output: { questions: [entryWith(READABLE)] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [entryWith(READABLE)] } }, { output: { ...respond([["Q-R2-1", "rejected"]]), questions: [entryWith(READABLE)] } }],
     closings,
-    reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [] }],
+    reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R2-1")] }, { issues: [] }],
     config: { maxRounds: 1 },
   });
   await runRefinement(layer, "task", "onRequest");

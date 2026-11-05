@@ -156,8 +156,9 @@ test("(i) a disputed fact is settled by the agents and recorded; a marked one ra
   assert.match(settled.read("conversation.md"), new RegExp(prompts.WORDING_DISPUTE_HEADING.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
   assert.equal(settled.probe.ui.asked.length, 0);
   const marked = await phase(
-    [{ output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) }, { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) }],
-    [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [] }],
+    // Issue #38: the response that investigates the marked dispute raised again, before it is put to the developer.
+    [{ output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) }, { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) }, { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) }],
+    [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [] }],
     { answers: [{ beside: "2" }] },
   );
   outcomeOf(marked.exit);

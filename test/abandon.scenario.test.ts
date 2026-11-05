@@ -1,23 +1,23 @@
 // Issue #185 (requirements "The ending of an abandoned run", Q1, G-R1-1): an implementation run whose question goes
 // unanswered within the wait ends with 2: its work moved to the item's branch, the working branch returned to where the
-// run began, the item's label set to refined, and conversation.md ending with the abandonment's record. At the first
-// read nothing is committed and no label set; a send-back's unanswered tracker step sets no label.
+// run began, the item's label set to refined, and conversation.md ending with the abandonment's record. Issue #243: a
+// tracker step whose repeats are used up no longer asks and waits, its question beside further repeats (S14,
+// test/trackerRetry.test.ts and test/program.test.ts), so neither the first read nor a send-back's tracker step is
+// abandoned for want of an answer.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Option, Ref, Result } from "effect";
-import { TrackerUnreachable } from "../src/errors.ts";
 import { parkBranchOf } from "../src/park.ts";
 import { type Conclusion, program } from "../src/program.ts";
-import { abandonAfterSendBackLine, durationText, PARK_UNCHECKED_SENTENCE } from "../src/prompts.ts";
+import { durationText, PARK_UNCHECKED_SENTENCE } from "../src/prompts.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 import type { ItemState } from "../src/tracker.ts";
-import { fakeTrackerOf, finished, notRefined, questionOf, scriptedItem, scriptedStart, tempRepo, type TestOptions, testWiring, type WiringProbe } from "./helpers.ts";
+import { finished, questionOf, scriptedItem, scriptedStart, tempRepo, type TestOptions, testWiring, type WiringProbe } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
-const quickTracker = { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 };
 const git = (dir: string, ...args: string[]): string => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
 const stateOf = async (probe: WiringProbe): Promise<ItemState> => (await Effect.runPromise(probe.tracker!.items)).find((i) => i.id === scriptedItem.id)!.state;
 const conversation = (probe: WiringProbe): string => fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
@@ -69,41 +69,6 @@ test("a permission request during the execution that goes unanswered abandons th
   assert.equal(git(repo, "rev-parse", "HEAD"), start);
   assert.equal(await stateOf(probe), "refined");
 });
-
-test("the first read's question unanswered: 2, nothing committed, the label still refined, a records directory with the record", async () => {
-  const tracker = fakeTrackerOf([scriptedItem]);
-  for (let i = 0; i < 2; i++) Effect.runSync(tracker.failNext("read", new TrackerUnreachable({ tracker: "fake", message: "down", status: null })));
-  const { code, probe, repo, start, conclusion } = await runIt({ tracker, config: quickTracker, answers: [{ noAnswer: true }] });
-  assert.equal(code, 2);
-  assert.equal(git(repo, "rev-parse", "HEAD"), start);
-  assert.equal(await stateOf(probe), "refined");
-  const dirs = fs.readdirSync(path.join(repo, "plan-review", "runs"));
-  assert.equal(dirs.length, 1);
-  const record = fs.readFileSync(path.join(repo, "plan-review", "runs", dirs[0]!, "conversation.md"), "utf8");
-  assert.ok(record.includes("retry") && record.includes("**Abandoned (exit code 2):**"), record);
-  // Issue #44: concluded abandoned before the records, its label unchanged and nothing parked.
-  assert.deepEqual(conclusion?.ending._tag === "Abandoned" ? conclusion.ending.label : null, { _tag: "Unchanged" });
-  assert.equal(conclusion?.parked, null);
-});
-
-{
-  test("a send-back whose label step goes unanswered, with nothing to park, ends with 2 and sets no label refined", async () => {
-    const tracker = fakeTrackerOf([scriptedItem]);
-    for (let i = 0; i < 2; i++) Effect.runSync(tracker.failNext("setState", new TrackerUnreachable({ tracker: "fake", message: "down", status: null }), "unrefined"));
-    const { code, probe, conclusion } = await runIt({
-      tracker,
-      config: quickTracker,
-      answers: [{ noAnswer: true }],
-      steps: [{ output: notRefined("The retention period.") }],
-      reviews: [{ issues: [] }],
-    });
-    assert.equal(code, 2);
-    assert.equal(await stateOf(probe), "implementing");
-    assert.deepEqual(conclusion?.ending._tag === "Abandoned" ? conclusion.ending.label : null, { _tag: "SendBackUnfinished", step: "label" });
-    const park = conclusion?.parked ?? null;
-    assert.ok(conversation(probe).includes(abandonAfterSendBackLine(scriptedItem.id, park?._tag === "Parked" ? park.branch : null, "label")));
-  });
-}
 
 // Work review 1 of issue #185 (W1-R1-4): the page says that the parking commit skipped the project's hooks.
 test("a plan writer's question unanswered after an execution left files uncommitted: the page says the commit skipped the hooks", async () => {

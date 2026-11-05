@@ -41,6 +41,8 @@ test("a rejected issue raised again produces one prompt", async () => {
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" },
+      // Issue #38: the response that investigates B raised again, before B is put to the developer.
+      { output: respond([["B", "rejected"]]) },
       { output: respond([["B", "rejected"]]) },
       { output: noQuestions, plan: "v3" },
     ],
@@ -206,9 +208,11 @@ test("a reversal and a disputed self-correction each produce a prompt and a deci
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"]]), plan: "v2" },
+      // Issue #38: both disputes have their investigation turn, and are put to the developer at the next review, which raises C again.
       { output: reversal, plan: "v3" },
       { output: reversal, plan: "v3" },
       { output: respond([["C", "rejected"]]), plan: "v4" },
+      { output: noQuestions, plan: "v5" },
     ],
     reviews: [{ issues: [issue("A")] }, { issues: [issue("C")] }, { issues: [issue("C")] }, { issues: [] }, { issues: [] }],
     config: { maxIdleRounds: 5 },
@@ -630,6 +634,8 @@ test("issue #112: on the plan, an issue raised again after a partial acceptance 
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "partially_accepted"]]), plan: "v2" },
+      // Issue #38: the response that investigates A raised again.
+      { output: respond([["A", "rejected"]]) },
       { output: respond([["A", "rejected"]]) },
       { output: noQuestions, plan: "v3" },
     ],

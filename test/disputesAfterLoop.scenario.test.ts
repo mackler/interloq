@@ -26,11 +26,14 @@ const until = async (condition: () => Promise<boolean>, ms = 30_000): Promise<vo
     await new Promise((r) => setTimeout(r, 2));
   }
 };
-/** A plan review whose issue B is rejected twice, so its second cycle opens a dispute; the third cycle raises nothing. */
+/**
+ * A plan review whose issue B is rejected three times: its second cycle has the investigation of issue #38, its third
+ * opens a dispute; the fourth cycle raises nothing.
+ */
 const disputedPlan = (answers: readonly ScriptedAnswer[], extraSteps: readonly PlanningStep[] = [], extraReviews: readonly ReviewStep[] = []): TestOptions => ({
   answers,
-  steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["B", "rejected"]]) }, { output: respond([["B", "rejected"]]) }, ...extraSteps],
-  reviews: [{ issues: [issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }, ...extraReviews],
+  steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["B", "rejected"]]) }, { output: respond([["B", "rejected"]]) }, { output: respond([["B", "rejected"]]) }, ...extraSteps],
+  reviews: [{ issues: [issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }, ...extraReviews],
   config: { maxIdleRounds: 9 },
 });
 
@@ -64,10 +67,13 @@ test("a work-review dispute answered for Codex's position while its loop leaves 
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["W1-R1-1", "rejected"]]) },
-      { output: respond([["W1-R1-1", "rejected"], ["W1-R2-1", "accepted"]]) },
+      // Issue #38: the response that investigates the point raised again.
+      { output: respond([["W1-R1-1", "rejected"]]) },
+      { output: respond([["W1-R1-1", "rejected"], ["W1-R3-1", "accepted"]]) },
       { output: noQuestions, plan: "v2" },
     ],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1"), issue("W1-R2-1")], onCall: () => last.resolve() }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1"), issue("W1-R3-1")], onCall: () => last.resolve() }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 9 },
     execs: [finished, finished],
   });
   assert.equal(await runTask(layer), 2);
@@ -123,18 +129,20 @@ test("W8-R1-1: an answer for Codex's position accepted while an earlier answer i
   let before: string[] | null = null;
   let held = false;
   const reviewFile = (n: number) => path.join(records!, "planning-1", `review-${n}.json`);
-  const seen: { decided: boolean; applied: boolean; review5: boolean }[] = [];
+  const seen: { decided: boolean; applied: boolean; review6: boolean }[] = [];
   const { wiring, probe } = testWiring(tempRepo(), {
     ui,
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["B", "rejected"]]) },
       { output: respond([["B", "rejected"], ["A", "rejected"]]) },
+      { output: respond([["B", "rejected"], ["A", "rejected"]]) },
       { output: respond([["A", "rejected"]]) },
       { output: noQuestions, plan: "v2" },
     ],
-    // B is raised again in cycle 2 and A in cycle 3, so B's dispute is opened first and A's frame stands over it.
-    reviews: [{ issues: [issue("B")] }, { issues: [issue("B"), issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    // B is raised again in cycles 2 and 3 and A in cycles 3 and 4; each has its investigation (issue #38) at its first
+    // re-raise, so B's dispute is opened first, in cycle 3, and A's frame, opened in cycle 4, stands over it.
+    reviews: [{ issues: [issue("B")] }, { issues: [issue("B"), issue("A")] }, { issues: [issue("B"), issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     config: { maxIdleRounds: 9 },
     execs: [finished],
     execScripts: [
@@ -143,7 +151,7 @@ test("W8-R1-1: an answer for Codex's position accepted while an earlier answer i
           void seen.push({
             decided: fs.existsSync(path.join(records!, "user-decisions.md")) && /issue B, raised again/.test(read(records!, "user-decisions.md")),
             applied: probe.planner.prompts.some((p) => p.includes("user-decisions.md has new entries") && p.includes("plan.json")),
-            review5: fs.existsSync(reviewFile(5)),
+            review6: fs.existsSync(reviewFile(6)),
           }),
       },
     ],
@@ -153,7 +161,7 @@ test("W8-R1-1: an answer for Codex's position accepted while an earlier answer i
         before === null && markdown.includes("The review of plan.json has converged")
           ? Effect.sync(() => {
               records = store.dir;
-              before = [1, 2, 3, 4].map((n) => fs.readFileSync(reviewFile(n), "utf8"));
+              before = [1, 2, 3, 4, 5].map((n) => fs.readFileSync(reviewFile(n), "utf8"));
               converged.resolve();
             }).pipe(Effect.andThen(Effect.promise(() => aAnswered.promise)), Effect.andThen(store.converse(markdown)))
           : store.converse(markdown),
@@ -178,10 +186,10 @@ test("W8-R1-1: an answer for Codex's position accepted while an earlier answer i
   release.resolve();
   const outcome = done.then((code) => code, (e: unknown) => e);
   await until(async () => seen.length > 0);
-  assert.deepEqual(seen[0], { decided: true, applied: true, review5: true }, "B's answer was recorded, applied and reviewed before the execution");
+  assert.deepEqual(seen[0], { decided: true, applied: true, review6: true }, "B's answer was recorded, applied and reviewed before the execution");
   assert.equal(await outcome, 0);
   assert.equal(seen.length, 1);
-  assert.deepEqual([1, 2, 3, 4].map((n) => fs.readFileSync(reviewFile(n), "utf8")), before, "the earlier rounds' files are unchanged");
+  assert.deepEqual([1, 2, 3, 4, 5].map((n) => fs.readFileSync(reviewFile(n), "utf8")), before, "the earlier rounds' files are unchanged");
 });
 
 test("a dispute unanswered at the run's end is withdrawn and recorded as settled without the developer; the item is implemented after", async () => {
@@ -203,11 +211,13 @@ test("W9-R1-1: a dispute withdrawn unanswered at the run's end is recorded even 
       { output: noQuestions, plan: "v1" },
       { output: respond([["B", "rejected"]]) },
       { output: respond([["B", "rejected"], ["A", "rejected"]]) },
+      { output: respond([["B", "rejected"], ["A", "rejected"]]) },
       { output: respond([["A", "rejected"]]) },
       { output: noQuestions, plan: "v2" },
     ],
-    // B is raised again in cycle 2 and A in cycle 3, so B's dispute is opened first and A's frame stands over it.
-    reviews: [{ issues: [issue("B")] }, { issues: [issue("B"), issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    // B is raised again in cycles 2 and 3 and A in cycles 3 and 4; each has its investigation (issue #38) at its first
+    // re-raise, so B's dispute is opened first and A's frame stands over it.
+    reviews: [{ issues: [issue("B")] }, { issues: [issue("B"), issue("A")] }, { issues: [issue("B"), issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     config: { maxIdleRounds: 9 },
     execs: [finished, finished],
     // A answered for Codex's position after the last take and before the withdrawal, so it arrives in withdrawAll's answers.
@@ -243,9 +253,10 @@ const marked = { ...respond([["Q-R1-1", "rejected", true]]), questions: [q1] };
 /** A question review whose marked rejection of Q-R1-1, raised again, opens a dispute; the interview's closing call gives `onClosing`. */
 const refinement = (answers: readonly ScriptedAnswer[], onClosing: () => void, extraSteps: readonly PlanningStep[] = [], extraReviews: readonly ReviewStep[] = []): TestOptions => ({
   answers: [...answers, "A"],
-  steps: [{ output: { questions: [q1] } }, { output: marked }, { output: marked }, ...extraSteps],
+  // The marked dispute has its investigation (issue #38) at its first re-raise and is opened at its second.
+  steps: [{ output: { questions: [q1] } }, { output: marked }, { output: marked }, { output: marked }, ...extraSteps],
   closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done."), onCall: onClosing }],
-  reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R1-1")] }, { issues: [] }, { issues: [] }, ...extraReviews],
+  reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R1-1")] }, { issues: [] }, { issues: [] }, ...extraReviews],
   config: { maxIdleRounds: 9 },
   mode: "refinement",
 });

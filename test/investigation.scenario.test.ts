@@ -25,7 +25,7 @@ const planLog = (dir: string): S.LogEntry[] => JSON.parse(read(dir, "issue-log.j
 
 test("(1) a point raised again gets an investigation before the developer is asked, and is asked when Codex raises it again", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "rejected"]]), plan: "v2" }, { output: respond([[ID, "rejected"]]), plan: "v3" }, { output: respond([[ID, "rejected"]]), plan: "v4" }],
     reviews: [{ issues: [issue(ID)] }, { issues: [issue(ID)] }, { issues: [issue(ID)] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -61,7 +61,7 @@ test("(2) a resolution proposed in Claude Code's first response, raised by Codex
 
 test("(3) a resolution only the developer may authorize is a third choice naming the change, never applied before his answer", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: resolved("rejected", "drop the step and its test", ["requirement 2: the step is required"]) }, { output: respond([[ID, "rejected"]]) }],
     reviews: [{ issues: [issue(ID)] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -78,9 +78,25 @@ test("(3) a resolution only the developer may authorize is a third choice naming
   assert.match(read(probe.dir, "plan.md"), /v1/);
 });
 
+test("(3b) issue #243: an authority question left unanswered never applies the resolution, and the run's end records it settled without the developer", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: resolved("rejected", "drop the step and its test", ["requirement 2"]) }],
+    reviews: [{ issues: [issue(ID)] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 5 },
+  });
+  assert.equal(await runTask(layer), 1);
+  const [question] = disputes(probe.ui);
+  assert.equal(question?.origin.kind === "pause" ? question.origin.pause : "", "authorityResolution");
+  assert.match(read(probe.dir, "plan.md"), /v1/);
+  const text = read(probe.dir, "conversation.md");
+  assert.ok(text.includes("was not answered before the run ended; it is settled without you"), text.slice(-1500));
+  assert.ok(!fs.existsSync(path.join(probe.dir, "user-decisions.md")) || !read(probe.dir, "user-decisions.md").includes(prompts.RESOLUTION_POSITION));
+});
+
 test("(5) the developer chooses the third choice: it is recorded, Claude Code carries it out, and Codex reviews it", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["3"],
+    answers: [{ beside: "3" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: resolved("rejected", "drop the step and its test", ["requirement 2"]) }, { output: respond([]), plan: "v2 resolved" }],
     reviews: [{ issues: [issue(ID)] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -98,7 +114,7 @@ test("(5) the developer chooses the third choice: it is recorded, Claude Code ca
 test("(7) a reversal gets the investigation turn first, and is asked only when Codex raises its id again", async () => {
   const reversal = (action: S.Action) => ({ ...respond([["P1-R2-1", action]]), dispositions: respond([["P1-R2-1", action]]).dispositions.map((d) => ({ ...d, reverses: ID })) });
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: reversal("rejected") }, { output: reversal("rejected") }, { output: reversal("rejected") }, { output: reversal("rejected") }, { output: reversal("rejected") }],
     reviews: [{ issues: [issue(ID)] }, { issues: [issue("P1-R2-1")] }, { issues: [issue("P1-R2-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -119,7 +135,7 @@ test("(7) a reversal gets the investigation turn first, and is asked only when C
 test("(11) a disputed self-correction kept with a resolution naming a change is asked at the next review with three options", async () => {
   const disputing = { ...respond([["P1-R2-1", "accepted"]]), self_corrections: [{ id: ID, new_action: "rejected" as const, explanation: "the correction was wrong", concern: "the step must stay", remedy: "restore it", resolution: { text: "restore it behind a flag", changes: ["decision 3"] } }] };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["3"],
+    answers: [{ beside: "3" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: disputing, plan: "v3" }, { output: disputing, plan: "v3" }, { output: respond([]), plan: "v4" }, { output: respond([]) }],
     reviews: [{ issues: [issue(ID)] }, { issues: [issue("P1-R2-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -163,7 +179,7 @@ test("(W1-R1-1) in the question list a marked dispute whose review entry an earl
   const corrected = { ...respond([["Q-R2-1", "accepted"]]), self_corrections: [{ id: "Q-R1-1", new_action: "accepted" as const, explanation: "the point holds after all", concern: "", remedy: "", resolution: null }], questions: [questionEntry("Q1", "question Q1, revised?", [["A", "a"], ["B", "b"]], { context: "c", reason: "r", default_answer: "A" })] };
   const disputing = { ...respond([["Q-R3-1", "accepted"]]), self_corrections: [{ id: "Q-R1-1", new_action: "rejected" as const, explanation: "the correction misread the task", concern: "the task allows two readings", remedy: "keep Q1 as asked", resolution: null }], questions: [questionEntry("Q1", "question Q1, again?", [["A", "a"], ["B", "b"]], { context: "c", reason: "r", default_answer: "A" })] };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2", "A"],
+    answers: [{ beside: "2" }, "A"],
     steps: [{ output: { questions: [q1] } }, { output: marked }, { output: corrected }, { output: disputing }, { output: disputing }, { output: { ...respond([]), questions: [q1] } }],
     closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Complete.") }],
     reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R2-1")] }, { issues: [issue("Q-R3-1")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
@@ -181,7 +197,7 @@ test("(W1-R1-1) in the question list a marked dispute whose review entry an earl
 
 test("(W1-R1-2) an authority resolution answered with Claude Code's position on a review with no counted issue is logged as the developer's decision", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: resolved("rejected", "drop the step and its test", ["requirement 2: the step is required"]) }, { output: respond([[ID, "rejected"]]) }],
     reviews: [{ issues: [issue(ID)] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -204,7 +220,7 @@ const fourTexts = [CODEX_SIDE.concern, CODEX_SIDE.remedy, CLAUDE_SIDE.concern, C
 
 test("(4, W1-R1-3) the question after an investigation that ends without agreement shows both agents' concerns and remedies, in its options and its details", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: claudeRejects(), plan: "v2" }, { output: claudeRejects({ text: "keep the step behind a check", changes: [] }), plan: "v3" }, { output: claudeRejects(), plan: "v4" }],
     reviews: [{ issues: [codexRaises()] }, { issues: [codexRaises()] }, { issues: [{ ...codexRaises(), evidence: "the check does not meet the concern" }] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -233,7 +249,7 @@ const pauseOf = (q: ReturnType<typeof disputes>[number] | undefined): string => 
 
 test("(8) a new reversal of an issue that had its investigation gets its own investigation turn before any question", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "rejected"]]) }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: reversing("rejected") }, { output: reversing("rejected") }, { output: respond([[B, "rejected"]]) }],
     reviews: [{ issues: [issue(ID)] }, { issues: [issue(ID)] }, { issues: [issue(B)] }, { issues: [issue(B)] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -251,7 +267,7 @@ test("(8) a new reversal of an issue that had its investigation gets its own inv
 
 test("(9) a re-raised point that the investigating response turns into a reversal is asked as a reversal at the next review", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: respond([[B, "rejected"]]) }, { output: reversing("accepted"), plan: "v3" }, { output: respond([[B, "rejected"]]) }],
     reviews: [{ issues: [issue(ID)] }, { issues: [issue(B)] }, { issues: [issue(B)] }, { issues: [issue(B)] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -266,7 +282,7 @@ test("(9) a re-raised point that the investigating response turns into a reversa
 
 test("(10) a reversal whose investigation reply drops reverses is asked as a re-raised point, its record [reraised]", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: reversing("rejected") }, { output: respond([[B, "rejected"]]) }, { output: respond([[B, "rejected"]]) }],
     reviews: [{ issues: [issue(ID)] }, { issues: [issue(B)] }, { issues: [issue(B)] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -287,7 +303,7 @@ test("(12) a second clarification first arising in a corrective reply gets its o
   const selfAccepted = { ...respond([[B, "accepted"]]), self_corrections: [{ id: ID, new_action: "accepted" as const, explanation: "the point holds", concern: "", remedy: "", resolution: null }] };
   const clarifying = respond([[ID, "clarification_requested"]]);
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: clarifying }, { output: selfAccepted, plan: "v2" }, { output: respond([[ID, "accepted"]]) }, { output: clarifying }, { output: clarifying }, { output: clarifying }, { output: clarifying }],
     reviews: [{ issues: [issue(ID)] }, { issues: [issue(B)] }, { issues: [issue(ID)] }, { issues: [issue(ID)] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -332,7 +348,7 @@ const workRejects = (resolution: { text: string; changes: string[] } | null) => 
 test("(13) an investigated work dispute beside an accepted correction leaves for planning, and the next work review asks it at once", async () => {
   const round2 = { ...respond([[W, "rejected"], [WA, "accepted"]]), dispositions: [...workRejects({ text: "keep it behind a check", changes: [] }).dispositions, ...respond([[WA, "accepted"]]).dispositions] };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: workRejects(null) }, { output: round2 }, { output: noQuestions, plan: "v2" }, { output: workRejects(null) }],
     reviews: [{ issues: [] }, { issues: [issue(W)] }, { issues: [issue(W), issue(WA)] }, { issues: [] }, { issues: [{ ...issue(W), evidence: "the check does not meet the concern" }] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],

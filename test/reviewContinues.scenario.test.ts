@@ -137,10 +137,13 @@ test("(8) a disputed point goes on with Claude Code's position; Codex's position
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" },
+      // Issue #38: the response that investigates B raised again, before B is put to the developer.
+      { output: respond([["B", "rejected"]]) },
       { output: respond([["B", "rejected"]]) },
       { output: noQuestions, plan: "v3" },
     ],
-    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 9 },
     execs: [finished],
   });
   assert.equal(await runTask(layer), 1);
@@ -149,7 +152,7 @@ test("(8) a disputed point goes on with Claude Code's position; Codex's position
   assert.match(decisions, /issue B, raised again/);
   const log = await probe.loadLog();
   assert.equal(log.filter((e) => e.id === "B" && e.action === "decided_by_user").length, 1);
-  assert.ok(fs.existsSync(path.join(probe.dir, "planning-1", "review-3.json")), "the review went on after applying the answer");
+  assert.ok(fs.existsSync(path.join(probe.dir, "planning-1", "review-4.json")), "the review went on after applying the answer");
 });
 
 test("(11) with the web Ui, a plan-review dispute's prompt is still pending after its loop returned, and an answer to it is taken then", async () => {
@@ -161,9 +164,12 @@ test("(11) with the web Ui, a plan-review dispute's prompt is still pending afte
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" },
+      // Issue #38: the response that investigates B raised again, before B is put to the developer.
+      { output: respond([["B", "rejected"]]) },
       { output: respond([["B", "rejected"]]) },
     ],
-    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 9 },
     execs: [finished],
     execScripts: [
       {
@@ -202,11 +208,14 @@ test("(9) a dispute in the work review answered for Codex's position during the 
     answers: [{ beside: "1" }],
     steps: [
       { output: noQuestions, plan: "v1" },
+      // Issue #38: the response that investigates the point raised again.
+      { output: respond([["W1-R1-1", "rejected"]]) },
       { output: respond([["W1-R1-1", "rejected"]]) },
       { output: respond([["W1-R1-1", "rejected"]]) },
       { output: noQuestions, plan: "v2" },
     ],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 9 },
     execs: [finished, finished],
   });
   assert.equal(await runTask(layer), 2);
@@ -536,13 +545,15 @@ test("(20) W4-R2-4: a dispute opened inside the limit's decision is withdrawn an
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"]]), plan: "v2" },
       // Cycle 2's response waits until the decision's dispute is open beside the run.
-      { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(disputeOpen)) },
+      { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(() => disputeOpen() && conversation(probe.dir).includes(prompts.DISPUTE_PUT_TO_YOU_HEADING))) },
       { output: limitAnalysis },
+      { output: decisionResponse(limitAnalysis) },
+      // Issue #38: the response that investigates D1-R1-1 raised again, before it is opened beside the run.
       { output: decisionResponse(limitAnalysis) },
       // The decision's next response is held: its analysis is still running when the plan review ends.
       { output: decisionResponse(limitAnalysis), gate: () => new Promise(() => {}) },
     ],
-    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: { maxRounds: 1, maxIdleRounds: 5 },
   });
@@ -599,9 +610,11 @@ test("(22) W7-R1-1: the limit's decision cancelled while its dispute's question 
       { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(() => held)) },
       { output: limitAnalysis },
       { output: decisionResponse(limitAnalysis) },
+      // Issue #38: the response that investigates D1-R1-1 raised again, before it is opened beside the run.
+      { output: decisionResponse(limitAnalysis) },
       { output: decisionResponse(limitAnalysis), gate: () => new Promise(() => {}) },
     ],
-    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: { maxRounds: 1, maxIdleRounds: 5 },
   });

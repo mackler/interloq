@@ -100,7 +100,7 @@ test("a context reply whose labels name an agent is repaired, and the answer is 
     config: { maxIdleRounds: 5 },
     answers: [{ beside: "1" }],
     contexts: relabeled([prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION], [ACCEPT_LABEL, LEAVE_LABEL]),
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: noQuestions, plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: noQuestions, plan: "v2" }],
     reviews: REVIEWS,
     execs: [finishedExec],
   });
@@ -117,7 +117,7 @@ test("a typed label the context call wrote is recorded as its position (P1-R1-1)
     config: { maxIdleRounds: 5 },
     answers: [{ beside: LEAVE_LABEL }],
     contexts: relabeled([ACCEPT_LABEL, LEAVE_LABEL]),
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
     reviews: REVIEWS,
     execs: [finishedExec],
   });

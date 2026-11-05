@@ -96,8 +96,9 @@ test("a point raised again on which Codex states a difference is asked, and its 
   const { wiring, probe } = testWiring(tempRepo(), {
     config,
     answers: [{ beside: "1" }],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: noQuestions, plan: "v2" }],
-    reviews: [{ issues: [] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, NONE)] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [] }, { issues: [] }],
+    // Issue #38: the point is put to the developer after its investigation, when Codex raises it a third time.
+    steps: [{ output: noQuestions, plan: "v1" }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, NONE)] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
   });
   assert.equal(await runOf(wiring, probe.project), 0);
@@ -111,8 +112,9 @@ test("an answer that keeps Claude Code's position is recorded, and the work revi
   const { wiring, probe } = testWiring(tempRepo(), {
     config,
     answers: [{ beside: "2" }],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }],
-    reviews: [{ issues: [] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, NONE)] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [] }],
+    // Issue #38: the point is put to the developer after its investigation, when Codex raises it a third time.
+    steps: [{ output: noQuestions, plan: "v1" }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }],
+    reviews: [{ issues: [] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, NONE)] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [] }],
     execs: [finished],
   });
   assert.equal(await runOf(wiring, probe.project), 0);

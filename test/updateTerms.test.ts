@@ -113,7 +113,7 @@ const runUpdate = (layer: ReturnType<typeof testLayer>["layer"]) =>
 
 test("the transport question of a Codex turn in Bring Up to Date names the check, from passNoun of the update subject", async () => {
   const fault = { issues: [], fault: "socket hang up" };
-  const { layer, probe } = testLayer(tempRepo(), { updateChecks: [fault, fault], answers: ["s"], tracker: updateTracker(), mode: "refinement", config: { maxTransportRetries: 1, transportRetryDelaySeconds: 0.01 } });
+  const { layer, probe } = testLayer(tempRepo(), { updateChecks: [fault, fault], answers: [{ beside: "s" }], tracker: updateTracker(), mode: "refinement", config: { maxTransportRetries: 1, transportRetryDelaySeconds: 0.01 } });
   await runUpdate(layer);
   const asked = probe.ui.notified.find((e) => e._tag === "QuestionPresented" && e.question.origin.kind === "transport");
   assert.ok(asked !== undefined && asked._tag === "QuestionPresented");
@@ -130,7 +130,7 @@ test("the program's own labels of a marked dispute raised again in Bring Up to D
     steps: [{ output: marked }, { output: marked }, { output: marked }],
     updateChecks: [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }],
     contexts: [refused, refused],
-    answers: ["2"],
+    answers: [{ beside: "2" }],
     tracker: updateTracker(),
     mode: "refinement",
     config: { maxIdleRounds: 5 },

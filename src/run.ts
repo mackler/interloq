@@ -19,6 +19,7 @@ import { renderQuestions } from "./render.ts";
 import { type EarlierPlan, undonePlan } from "./earlierPlan.ts";
 import { issueObsoleteLine, issueUpdatedLine, PREPARED_TERMS_CHOICE_LINE, preparationCleanupFailedLine, preparationUsedLine, continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, fallenCountsText, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, SUITE_OUTPUT_NAME,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution, suiteAnswerLine, suiteRunningAgainLine, disputeAnsweredLine, disputesRevisionLine, disputeSettledWithoutYouLine, DISPUTE_SENT_BACK_NOTE } from "./prompts.ts";
+import { appendUserDecision } from "./issueLog.ts";
 import { pathOf, recordPath, type RunRoot } from "./artifacts.ts";
 import { type CommandReport, fallenCounts, suiteReportedOf } from "./testCounts.ts";
 import type { Baseline } from "./records.ts";
@@ -259,12 +260,18 @@ const planStartOf = (earlier: EarlierPlan): Effect.Effect<PlanStart, StoreError,
 /** A line said on the page and written to conversation.md (issues #162, #176, #180). */
 // ---- issue #243 (Q1): the disagreements put to the developer beside the run, answered after their review ended ----
 
-/** Each answer recorded in user-decisions.md, with its line (none with a note); whether any applies (Codex's position). */
+/**
+ * Each answer recorded in user-decisions.md, with its line (none with a note), and, for a dispute on an issue, in its
+ * subject's issue log as the developer's decision, so no later loop over that log puts the dispute to him again (issue
+ * #38's W1-R1-2, for an answer given after its loop); whether any applies (Codex's position).
+ */
 const recordTaken = (answered: readonly Answered[], note = ""): Effect.Effect<boolean, StoreError, Ui | Store> =>
   Effect.gen(function* () {
     const store = yield* Store;
     for (const a of answered) {
-      yield* store.appendDecision({ subject: a.dispute.recordSubject, id: a.dispute.id, decision: note === "" ? a.text : `${a.text} ${note}`, phase: a.dispute.phase, round: a.dispute.round });
+      const decision = note === "" ? a.text : `${a.text} ${note}`;
+      yield* store.appendDecision({ subject: a.dispute.recordSubject, id: a.dispute.id, decision, phase: a.dispute.phase, round: a.dispute.round });
+      if (a.dispute.id !== null) yield* store.saveLog(a.dispute.subject, appendUserDecision(yield* store.loadLog(a.dispute.subject), a.dispute.id, decision, a.dispute.phase, a.dispute.round));
       if (note === "") yield* sayAndWrite(disputeAnsweredLine(a.dispute.heading, a.text));
     }
     return answered.some((a) => a.applies);

@@ -147,17 +147,17 @@ test("an interruption while the leftovers are committed lets the parking complet
   assert.equal((await held(tracker)).state, "implementing", "the interruption took effect before the comment and the label");
 });
 
-// Issue #185: a send-back's tracker step whose exhaustion question goes unanswered is its own ending, carrying the step
-// and the parking's note; no write sets the label refined.
+// Issue #243: a send-back's tracker step whose repeats are used up asks nothing and waits for nothing: its question is
+// beside further repeats. Stop answered there ends the send-back incomplete, carrying its parking's note; no write sets
+// the label refined. (Issue #185's SendBackUnanswered, a question that went unanswered, no longer arises here.)
 for (const [step, op, work] of [["label", "setState", true], ["label", "setState", false], ["comment", "comment", true]] as const) {
-  test(`a send-back whose ${step} step's question goes unanswered${work ? "" : " with nothing to park"} fails with SendBackUnanswered`, async () => {
+  test(`a send-back whose ${step} step's repeats are used up${work ? "" : " with nothing to park"} and whose question beside them is answered Stop ends incomplete`, async () => {
     const tracker = fakeTrackerOf([itemWith([record(true)])]);
-    const { runIt } = setup(tracker, { work, answers: [{ noAnswer: true }] });
+    const { runIt } = setup(tracker, { work, answers: [{ beside: "s" }] });
     for (let i = 0; i < 2; i++) await Effect.runPromise(tracker.failNext(op, new TrackerUnreachable({ tracker: "GitHub", message: "no answer", status: null })));
     const error = failure(await runIt(sendBack(scriptedItem.id, 1, "The retention period.")));
-    assert.equal(error._tag, "SendBackUnanswered");
-    assert.ok(error._tag === "SendBackUnanswered" && error.step === step);
-    assert.equal(error._tag === "SendBackUnanswered" && error.park._tag, work ? "Parked" : "NothingParked");
+    assert.equal(error._tag, "SendBackIncomplete");
+    assert.equal(error._tag === "SendBackIncomplete" && error.park._tag, work ? "Parked" : "NothingParked");
     assert.notEqual((await held(tracker)).state, "refined");
   });
 }

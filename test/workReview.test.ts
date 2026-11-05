@@ -137,8 +137,9 @@ test("(c) exit (iii): a decision on a reraised work issue leaves for planning 2 
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
     answers: [{ beside: "act on it" }],
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    // Issue #38: the point is put to the developer after its investigation, when Codex raises it a third time.
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
     config: { maxIdleRounds: 5 },
   });
@@ -156,14 +157,18 @@ test("(c1) a decision on a second clarification, asked after its investigation, 
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
     answers: [{ beside: "this is what I mean" }],
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    // Issue #38: the second clarification has its investigation turn, and is put to the developer when Codex raises it again.
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
     config: { maxIdleRounds: 5 },
   });
   assert.equal(await runTask(layer), 2);
   const round2 = workLog(probe.dir).filter((e) => e.round === 2);
-  assert.deepEqual(round2.map((e) => [e.source, e.action]), [["review", "clarification_requested"], ["user", "decided_by_user"]]);
+  assert.deepEqual(round2.map((e) => [e.source, e.action]), [["review", "clarification_requested"]]);
+  const recorded = round2[0] as unknown as { investigations: readonly { pause: string }[] };
+  assert.ok(recorded.investigations.some((i) => i.pause === "secondClarification"));
+  assert.ok(workLog(probe.dir).some((e) => e.round === 3 && e.source === "user" && e.action === "decided_by_user"));
   assert.equal((await capture.verify())?.stage, "decided");
 });
 
@@ -361,7 +366,8 @@ test("(d, #26) changes.diff edited during the exhaustion pause, then Retry again
     steps: [planWrite("v1")],
     reviews: [{ issues: [] }, { issues: [], fault }, { issues: [], fault }, { issues: [] }],
     execs: [finished],
-    answers: [{ text: prompts.TRANSPORT_ANSWERS.retry, before: () => fs.appendFileSync(path.join(repo, "plan-review", TEST_ROOT, "work-review-1", "changes.diff"), "forged\n") }],
+    // Issue #243: the exhaustion's question is beside further tries; Retry again answered there after the edit.
+    answers: [{ beside: prompts.TRANSPORT_ANSWERS.retry, when: async () => fs.appendFileSync(path.join(repo, "plan-review", TEST_ROOT, "work-review-1", "changes.diff"), "forged\n") }],
     config: quick,
   });
   await runFails(layer, "ReviewedFileChanged");
@@ -379,18 +385,18 @@ test("(g, #26) a read-only work response that faults is retried and succeeds, th
   assert.deepEqual(probe.planner.capabilities, ["records", "readOnly", "readOnly"]);
 });
 
-test("(h, #26) a read-only work response whose retries are exhausted, then Help me decide, then Retry again: it succeeds", async () => {
-  const columns = [prompts.TRANSPORT_RETRY_AGAIN, prompts.TRANSPORT_STOP].map((option) => ({ kind: "argued", option, advantages: [], disadvantages: [] }));
+test("(h, #26) a read-only work response whose retries are exhausted, then Retry again answered beside further tries: it succeeds", async () => {
+  // Issue #243: the exhaustion's question is beside further tries, without Help me decide.
   const { layer, probe } = testLayer(tempRepo(), {
-    steps: [planWrite("v1"), rejectingResponse({ fault }), rejectingResponse({ fault }), { output: { decision: "d", columns, recommendation: { option: "", reason: "" } } }, rejectingResponse()],
+    steps: [planWrite("v1"), rejectingResponse({ fault }), rejectingResponse({ fault }), rejectingResponse()],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    answers: ["/decide", prompts.TRANSPORT_ANSWERS.retry],
+    answers: [{ beside: prompts.TRANSPORT_ANSWERS.retry }],
     config: quick,
   });
   assert.equal(await runTask(layer), 1);
-  assert.ok(fs.existsSync(path.join(probe.dir, "decision-1", "analysis.json")));
-  assert.ok(probe.ui.notified.some((e) => e._tag === "DecisionAnalyzed"));
+  assert.ok(!fs.existsSync(path.join(probe.dir, "decision-1")));
+  assert.ok(probe.ui.notified.some((e) => e._tag === "QuestionPresented" && e.question.origin.kind === "transport"));
 });
 
 test("(i, #26) an external edit of conversation.md during the backoff, after the retry line: RecordsChanged", async () => {
@@ -412,7 +418,8 @@ test("(j, #26) an external edit of conversation.md during the exhaustion pause, 
     steps: [planWrite("v1"), rejectingResponse({ fault }), rejectingResponse({ fault }), rejectingResponse()],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }],
     execs: [finished],
-    answers: [{ text: prompts.TRANSPORT_ANSWERS.retry, before: () => fs.appendFileSync(conversation(repo), "an outside edit\n") }],
+    // Issue #243: the exhaustion's question is beside further tries; Retry again answered there after the edit.
+    answers: [{ beside: prompts.TRANSPORT_ANSWERS.retry, when: async () => fs.appendFileSync(conversation(repo), "an outside edit\n") }],
     config: quick,
   });
   await runFails(layer, "RecordsChanged", /conversation\.md/);

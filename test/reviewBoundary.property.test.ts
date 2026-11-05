@@ -10,16 +10,18 @@ import { validateReview } from "../src/round.ts";
 import type { Action, Review } from "../src/schema.ts";
 import { issue, respond } from "./helpers.ts";
 
-const PRODUCING = new Set(["AwaitBoundary", "CallCorrective", "AskDecision", "CallReviewer", "CallPlanner", "ApplyDecisions", "Amend", "ObserveFile", "Halt", "Finish"]);
+const PRODUCING = new Set(["AwaitBoundary", "CallCorrective", "CallInvestigation", "AskDecision", "CallReviewer", "CallPlanner", "ApplyDecisions", "Amend", "ObserveFile", "Halt", "Finish"]);
 const ACTIONS: readonly Action[] = ["accepted", "partially_accepted", "rejected", "no_change_needed", "clarification_requested"];
 
-type Round = Readonly<{ fresh: number; reraise: boolean; actions: readonly Action[]; selfReject: boolean; changed: boolean }>;
+/** `resolution` (issue #38): the resolution each disposition not accepted in full carries, none, an agreed one, or one only the developer may authorize. */
+type Round = Readonly<{ fresh: number; reraise: boolean; actions: readonly Action[]; selfReject: boolean; changed: boolean; resolution: "none" | "agreed" | "authority" }>;
 const arbRound: fc.Arbitrary<Round> = fc.record({
   fresh: fc.integer({ min: 1, max: 2 }),
   reraise: fc.boolean(),
   actions: fc.array(fc.constantFrom(...ACTIONS), { minLength: 3, maxLength: 3 }),
   selfReject: fc.boolean(),
   changed: fc.boolean(),
+  resolution: fc.constantFrom("none" as const, "agreed" as const, "authority" as const),
 });
 const arbSetup: fc.Arbitrary<ReviewSetup> = fc
   .record({
@@ -105,18 +107,21 @@ const drive = (setup: ReviewSetup, rounds: readonly Round[], answers: readonly A
         break;
       }
       case "CallPlanner":
-      case "CallCorrective": {
+      case "CallCorrective":
+      case "CallInvestigation": {
         const r = rounds[t.state.round - 1]!;
         const ids = t.state.current.review!.issues.map((i) => i.id);
         const selfId = t.state.log.find((e) => e.source === "review" && e.action === "accepted")?.id;
-        const response = respond(
+        const resolution = r.resolution === "none" ? null : { text: "meet both concerns", changes: r.resolution === "authority" ? ["requirement 1"] : [] };
+        const base = respond(
           ids.map((id, i) => [id, r.actions[i % 3]!] as [string, Action]),
-          r.selfReject && selfId !== undefined ? { self_corrections: [{ id: selfId, new_action: "rejected" as const, explanation: "e", concern: "", remedy: "", resolution: null }] } : {},
+          r.selfReject && selfId !== undefined ? { self_corrections: [{ id: selfId, new_action: "rejected" as const, explanation: "e", concern: "c", remedy: "m", resolution }] } : {},
         );
+        const response = { ...base, dispositions: base.dispositions.map((d) => (d.action === "accepted" ? d : { ...d, concern: "c", remedy: "m", resolution })) };
         const round = roundCheckOf(t.state)(response);
         fc.pre(Result.isSuccess(round));
         if (Result.isFailure(round)) throw new Error("unreachable");
-        event = { kind: command.kind === "CallPlanner" ? "ResponseDecoded" : "CorrectionDecoded", response, round: round.success, resultText: "", costUsd: null };
+        event = { kind: command.kind === "CallPlanner" ? "ResponseDecoded" : command.kind === "CallCorrective" ? "CorrectionDecoded" : "InvestigationDecoded", response, round: round.success, resultText: "", costUsd: null };
         break;
       }
       case "AskDecision":

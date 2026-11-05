@@ -84,7 +84,7 @@ test("(c) an abandonment whose parking fails is abandoned with the parking's fai
 test("(d) a run that finished its work and failed its final tracker step is halted with that reason, code 1", async () => {
   const tracker = fakeTrackerOf([scriptedItem]);
   for (let i = 0; i < 10; i++) Effect.runSync(tracker.failNext("setState", unreachable(), "implemented"));
-  const { code, ending, probe } = await ended({ ...finishing, tracker, config: quickTracker, answers: ["s"] });
+  const { code, ending, probe } = await ended({ ...finishing, tracker, config: quickTracker, answers: [{ beside: "s" }] });
   assert.equal(code, 1);
   assert.equal(ending._tag, "Halted");
   if (ending._tag !== "Halted") return;

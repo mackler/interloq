@@ -39,6 +39,8 @@ const observed = (hash: string): TestEvent => ({ kind: "FileObserved", hash, tex
 const last = (t: Transition): ReviewCommand => t.commands[t.commands.length - 1];
 /** Issue #243: the disputes opened beside the review, where issue #38 asked them in the foreground. */
 const asks = (t: Transition) => t.commands.flatMap((c) => (c.kind === "OpenBeside" && c.beside.question.kind === "dispute" ? [{ key: c.beside.key, asks: c.beside.question.dispute.asks, options: c.beside.question.dispute.options }] : []));
+/** Issue #243: a boundary reached with no answer given, where the loop reads one before its next round. */
+const drained = (t: Transition): Transition => (last(t)?.kind === "AwaitBoundary" ? advance(t.state, { kind: "BoundaryReached", answers: [] }) : t);
 const says = (t: Transition): string => t.commands.flatMap((c) => (c.kind === "Say" ? [c.text] : [])).join("\n");
 const text = (s: string) => s as S.PositionText;
 const resolutionReply = (t: string, changes: string[] = []): S.ResolutionReply => ({ text: t, changes });
@@ -165,10 +167,27 @@ test("an agreed resolution is said and asks nothing; one only the developer may 
   assert.equal(question?.asks.kind === "pause" ? question.asks.facts.pause : "", "authorityResolution");
   assert.equal(question?.options.length, 3);
   assert.ok(question?.options[2].description.includes("requirement 2"));
-  const kept = advance(authority.state, { kind: "DecisionGiven", text: prompts.PLANNER_POSITION });
+  // Issue #243: opened beside the run; the loop drains its boundary before it ends.
+  assert.equal(last(authority).kind, "AwaitBoundary");
+  const key = question!.key;
+  const none = advance(authority.state, { kind: "BoundaryReached", answers: [] });
+  assert.deepEqual(last(none), { kind: "Finish", result: "converged" });
+  const kept = advance(authority.state, { kind: "BoundaryReached", answers: [{ key, text: prompts.PLANNER_POSITION }] });
+  assert.ok(kinds(kept).includes("RecordDecision") && kinds(kept).includes("AcknowledgeDisputes"));
   assert.deepEqual(last(kept), { kind: "Finish", result: "converged" });
-  const chosen = advance(authority.state, { kind: "DecisionGiven", text: prompts.RESOLUTION_POSITION });
-  assert.equal(last(chosen).kind, "CallPlanner");
+  const chosen = advance(authority.state, { kind: "BoundaryReached", answers: [{ key, text: prompts.RESOLUTION_POSITION }] });
+  assert.ok(kinds(chosen).includes("RecordDecision") && kinds(chosen).includes("AcknowledgeDisputes"));
+  assert.equal(last(chosen).kind, "ApplyDecisions");
+  // In a subject that leaves on a decision, the resolution chosen makes the loop leave for a revision.
+  const work = run(begin(resolved(["requirement 2"]), { subject: { work: 1 }, leaveOnDecision: true, leaveOnAcceptance: true, proceed: null }), { kind: "ReviewDecoded", review: { issues: [] } });
+  const [w] = asks(work);
+  const left = advance(work.state, { kind: "BoundaryReached", answers: [{ key: w!.key, text: prompts.RESOLUTION_POSITION }] });
+  assert.ok(kinds(left).includes("RecordDecision"));
+  assert.deepEqual(last(left), { kind: "Finish", result: "revise" });
+  // With a counted issue, the authority question is opened beside and the round goes on to the response.
+  const going = run(begin(resolved(["requirement 2"])), reviewed("B"));
+  assert.equal(asks(going)[0]?.asks.facts.pause, "authorityResolution");
+  assert.equal(last(going).kind, "CallPlanner");
 });
 
 test("the investigated disputes are seeded from the log at Begin, and settles is false for an authority resolution", () => {
@@ -204,8 +223,7 @@ test("property: a re-raised point is asked only after its investigation and a re
           assert.equal(investigatedAt, null, `review ${k}: an investigated open point was dropped`);
           investigatedAt = k;
         }
-        if (asked) t = advance(t.state, { kind: "DecisionGiven", text: "" });
-        t = run(t, responded(respond([["A", actions[k]]])), observed(`h${k + 1}`));
+        t = drained(run(t, responded(respond([["A", actions[k]]])), observed(`h${k + 1}`)));
       }
     }),
   );
@@ -232,9 +250,13 @@ const kinds = (t: Transition) => t.commands.map((c) => c.kind);
 const noIssues: TestEvent = { kind: "ReviewDecoded", review: { issues: [] } };
 
 test("a decision on a review with no counted issue is logged before the loop converges, so the next loop does not ask it again (W1-R1-2)", () => {
+  // Issue #243: the questions of a review with no counted issue are opened beside, and their answers read at the
+  // boundary the loop drains before it ends.
   // (a) an authority resolution kept with Claude Code's position.
   const resolved = [reviewEntry("A", "partially_accepted", { phase: 0, resolution: { text: text("both"), changes: [text("requirement 2")] } })];
-  const kept = advance(run(begin(resolved), noIssues).state, { kind: "DecisionGiven", text: prompts.PLANNER_POSITION });
+  const authority = run(begin(resolved), noIssues);
+  const [authorityAsk] = asks(authority);
+  const kept = advance(authority.state, { kind: "BoundaryReached", answers: [{ key: authorityAsk!.key, text: prompts.PLANNER_POSITION }] });
   const k = kinds(kept);
   assert.ok(k.indexOf("RecordDecision") >= 0 && k.indexOf("SaveLog") > k.indexOf("RecordDecision") && k.indexOf("SaveLog") < k.indexOf("Finish"), k.join(","));
   const [logged] = savedLogs(kept);
@@ -244,19 +266,19 @@ test("a decision on a review with no counted issue is logged before the loop con
   assert.deepEqual(last(next), { kind: "Finish", result: "converged" });
   // (b) a standing disputed self-correction kept with Claude Code's position.
   const disputing = { ...respond([["A", "accepted"]]), self_corrections: [{ id: "X", new_action: "rejected" as const, explanation: "wrong", concern: "c", remedy: "m", resolution: null }] };
-  const t1 = run(begin([reviewEntry("X", "accepted")]), reviewed("A"), responded(disputing), responded(disputing, "InvestigationDecoded"), observed("h1"));
+  const t1 = drained(run(begin([reviewEntry("X", "accepted")]), reviewed("A"), responded(disputing), responded(disputing, "InvestigationDecoded"), observed("h1")));
   const standing = run(t1, noIssues);
   const [selfAsk] = asks(standing);
   assert.equal(selfAsk?.asks.kind === "pause" ? selfAsk.asks.facts.pause : "", "disputedSelfCorrection");
-  const keptSelf = advance(standing.state, { kind: "DecisionGiven", text: prompts.PLANNER_POSITION });
+  const keptSelf = advance(standing.state, { kind: "BoundaryReached", answers: [{ key: selfAsk!.key, text: prompts.PLANNER_POSITION }] });
   const [loggedSelf] = savedLogs(keptSelf);
   assert.ok(loggedSelf?.some((e) => e.id === "X" && e.source === "user"), kinds(keptSelf).join(","));
   assert.deepEqual(asks(run(begin(loggedSelf!, { phase: 2 }), noIssues)), []);
-  // (c) an empty answer records nothing and saves no log.
-  const empty = advance(run(begin(resolved), noIssues).state, { kind: "DecisionGiven", text: "" });
+  // (c) no answer records nothing and saves no log.
+  const empty = advance(authority.state, { kind: "BoundaryReached", answers: [] });
   assert.deepEqual(savedLogs(empty), []);
   assert.ok(!kinds(empty).includes("RecordDecision"));
-});
+});;
 
 // The second property of S6 (W1-R1-4): over generated rounds, a raised id whose current review entry is not accepted in
 // full and that was investigated in an earlier round is, at that review, asked or settled, never absent from both.
@@ -287,14 +309,12 @@ test("property: an investigated open point raised again is asked or settled at t
         const settledText: string[] = [];
         const collect = (x: Transition) => {
           for (const c of x.commands) if (c.kind === "Converse") settledText.push(c.markdown);
-          const id = ownIdOf(last(x));
-          if (id !== null) asked.add(id);
+          for (const c of x.commands) {
+            const id = ownIdOf(c);
+            if (id !== null) asked.add(id);
+          }
         };
         collect(t);
-        while (last(t).kind === "AskDecision") {
-          t = advance(t.state, { kind: "DecisionGiven", text: "" });
-          collect(t);
-        }
         for (const id of due) assert.ok(asked.has(id) || settledText.some((m) => m.includes(id)), `review raising [${r.raised}]: ${id} neither asked nor settled`);
         if (last(t).kind !== "CallPlanner") return;
         const plain = respond(r.raised.map((id, i) => [id, r.actions[i]!] as [string, S.Action]));
@@ -305,12 +325,12 @@ test("property: an investigated open point raised again is asked or settled at t
         };
         const response = Result.isSuccess(roundCheckOf(t.state)(withExtras)) ? withExtras : plain;
         t = advance(t.state, { kind: "ResponseDecoded", response, resultText: "", costUsd: 0.1 });
-        for (let guard = 0; guard < 20 && !["CallReviewer", "Finish", "Halt", "AskLimit", "AskUnchanged"].includes(last(t).kind); guard++) {
+        for (let guard = 0; guard < 20 && !["CallReviewer", "Finish", "Halt"].includes(last(t).kind); guard++) {
           const k = last(t).kind;
           if (k === "ObserveFile") t = advance(t.state, observed(`g${++hash}`));
           else if (k === "CallInvestigation") t = advance(t.state, responded(response, "InvestigationDecoded"));
           else if (k === "CallCorrective") t = advance(t.state, responded(response, "CorrectionDecoded"));
-          else if (k === "AskDecision") t = advance(t.state, { kind: "DecisionGiven", text: "" });
+          else if (k === "AwaitBoundary") t = advance(t.state, { kind: "BoundaryReached", answers: [] });
           else return;
         }
       }

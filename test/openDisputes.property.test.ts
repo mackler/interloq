@@ -139,3 +139,19 @@ test("W7-R1-1: isRegistered holds exactly for a key opened and not withdrawn", (
     }),
   );
 });
+
+// Issue #38 under issue #243 (S48): a three-option dispute's resolution of both concerns applies like Codex's position,
+// and only Claude Code's position applies nothing.
+test("property: an answer applies exactly where it is not Claude Code's position, the resolution of a three-option dispute included", () => {
+  const three = [...options, { label: prompts.RESOLUTION_POSITION, description: "meet both concerns" }];
+  fc.assert(
+    fc.property(fc.constantFrom(prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION, prompts.RESOLUTION_POSITION), (text) => {
+      const [, r0] = R.opened(R.EMPTY_REGISTRY, { ...dispute(0), options: three });
+      const [, r1] = R.answered(r0, keyOf(0), text);
+      const [answers] = R.peeked(r1, [keyOf(0)]);
+      assert.equal(answers.length, 1);
+      assert.equal(answers[0]!.applies, text !== prompts.PLANNER_POSITION);
+      assert.equal(answers[0]!.applies, !keepsPlannerPosition(three, text));
+    }),
+  );
+});

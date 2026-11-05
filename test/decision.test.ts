@@ -116,10 +116,13 @@ test("a disputed issue is opened beside the decision's review, which goes on; Co
     steps: [
       { output: analysis() },
       { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
+      // Issue #38: the response that investigates the point raised again, before it is opened beside the review.
+      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
       { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
       { output: { analysis: analysis() } },
     ],
-    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [], onCall: () => third() }, { issues: [] }],
+    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [], onCall: () => third() }, { issues: [] }],
+    config: { maxIdleRounds: 5 },
   });
   const end = await Effect.runPromise(loop(layer));
   assert.equal(end.result, "converged");
@@ -309,10 +312,12 @@ test("a disputed pause is put to the developer beside the review without Help me
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["P1-R1-1", "rejected"]]) },
+      // Issue #38: the response that investigates the point raised again.
+      { output: respond([["P1-R1-1", "rejected"]]) },
       { output: respond([["P1-R1-1", "rejected"]]) },
       { output: noQuestions, plan: "v2" },
     ],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finishedExec],
     config: { maxIdleRounds: 5 },
   });
@@ -668,21 +673,24 @@ test("issue #142: a question with fewer than two options takes the request too",
   assert.deepEqual(tagsOf(probe).map((e) => e._tag), ["QuestionPresented", "QuestionExplained", "QuestionPresented"]);
 });
 
-// Issue #38 (requirements Q2): a question with the third choice, a resolution of both concerns, is analyzed in three columns.
-test("Help me decide on a disputed pause with a resolution analyzes the three choices in three columns", async () => {
-  const labels = prompts.positionLabels("authorityResolution", "review");
-  const threeColumns: DecisionAnalysis = { ...analysis(), decision: "d", columns: [labels.reviewer, labels.planner, labels.resolution].map((option, i) => ({ kind: "argued" as const, option, advantages: [entry(`E${i + 1}`)], disadvantages: [] })) };
+// Issue #38 (requirements Q2) under issue #243: the third choice, a resolution only the developer may authorize, is offered
+// beside the review without Help me decide; answered, it is recorded and carried out by Claude Code, then reviewed.
+test("a disputed pause with a resolution offers the three choices beside the review, and the resolution answered is carried out and reviewed", async () => {
   const resolved = { ...respond([["P1-R1-1", "rejected"]]), dispositions: respond([["P1-R1-1", "rejected"]]).dispositions.map((d) => ({ ...d, concern: "c", remedy: "m", resolution: { text: "drop the step", changes: ["requirement 2"] } })) };
   const { probe } = await runTaskWith({
-    answers: ["/decide", "3"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: resolved }, { output: threeColumns }, { output: respond([]), plan: "v2" }],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    answers: [{ beside: "3" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: resolved }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finishedExec],
     config: { maxIdleRounds: 5 },
   });
-  assert.equal(json(probe.dir, "decision-1/analysis.json").analysis.columns.length, 3);
-  assert.equal(json(probe.dir, "decision-1/chosen.json").option, prompts.RESOLUTION_POSITION);
+  const presented = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" && e.question.origin.kind === "pause" ? [e.question] : []));
+  assert.equal(presented[0]?.options.length, 3);
+  assert.ok(!fs.existsSync(path.join(probe.dir, "decision-1")));
+  assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), new RegExp(`Decision: ${prompts.RESOLUTION_POSITION.replace(/[()]/g, "\\$&")}`));
+  assert.ok(probe.planner.prompts.some((p) => p.includes("user-decisions.md has new entries")), "the resolution was carried out");
 });
+
 
 // Issue #243 (Q1): a disputed question inside a decision's analysis review is withdrawn when the question that decision
 // serves is answered, with its line; the analysis was shown with Claude Code's position standing.
@@ -693,9 +701,11 @@ test("a decision whose review raises a dispute goes on, its analysis is shown, a
     steps: [
       { output: analysis() },
       { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
+      // Issue #38: the response that investigates the point raised again.
+      { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
       { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
     ],
-    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }],
+    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }],
     config: { maxIdleRounds: 5 },
   });
   const answer = await Effect.runPromise(Effect.gen(function* () {

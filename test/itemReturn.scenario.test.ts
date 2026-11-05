@@ -92,7 +92,7 @@ test("(d) a halt after an execution that committed keeps the item implementing a
 test("(e) a halt before the baseline relabels nothing", async () => {
   const tracker = fakeTrackerOf([scriptedItem]);
   for (let i = 0; i < 10; i++) Effect.runSync(tracker.failNext("setState", unreachable(), "implementing"));
-  const { wiring, probe } = testWiring(tempRepo(), { ...haltsAtPlanning, tracker, config: quickTracker, answers: ["s"] });
+  const { wiring, probe } = testWiring(tempRepo(), { ...haltsAtPlanning, tracker, config: quickTracker, answers: [{ beside: "s" }] });
   assert.equal(await runWith(wiring, probe), 1);
   assert.equal(await stateOf(probe), "refined");
   assert.ok(!said(probe).includes(itemReturnedLine(item)));
