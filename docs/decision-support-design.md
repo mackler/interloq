@@ -24,7 +24,7 @@ Applying the rule to the prompt catalog in `src/userPrompts.ts` as it stands tod
 |---|---|---|
 | A clarification question | its numbered answers | yes |
 | A question Claude raises mid-implementation | the options it supplies | yes |
-| A decision at a review-loop pause | the reviewer's and the planner's positions | yes |
+| A decision at a review-loop pause | the reviewer's and the planner's positions, and since issue #38 a third, a resolution of both concerns, where one stands | yes |
 | A permission request | Allow, Deny | yes |
 | The cycle limit | Proceed, Stop | yes |
 | Start planning | Start planning | no — one action |
@@ -157,6 +157,9 @@ should see one before judging whether it is useful.
 
 `docs/decision-making.md` specifies one column per option ("Layout and wording"). That is straightforward on a wide
 window and impossible at 390 px, where the page already shows one panel at a time.
+
+Since issue #38 a disputed pause where a resolution of both agents' concerns stands offers it as a third choice, so its
+analysis has a third column: one column per offered choice, the resolution's included.
 
 **Decided, 28 Sep 2026:**
 
