@@ -8,7 +8,7 @@ import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote, Sk
 import type { ChainSource } from "./chainQueue.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import type { CompletedWork, Ending, ItemReturn } from "./ending.ts";
-import { CORRECTION_PASSAGES_FIELD, FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { CORRECTION_PASSAGES_FIELD, KEPT_PASSAGES_FIELD, FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -46,6 +46,7 @@ Every entry has id, phase, round, source, problem, action, rationale and superse
 An entry with source 'review' is an issue you raised: it also has severity, location, evidence, the planner's action ('accepted', 'partially_accepted', 'rejected', 'no_change_needed' or 'clarification_requested'), and duplicate_of and reverses, each the id of an earlier issue or null. ${TASK_DISPUTE_FIELD} is true where the planner marked its disagreement with the issue as about what the task requires, not about how a question is worded; false otherwise. work_effects holds your and the planner's statements of the issue's effect on the work in that round (reviewer and planner, each ${WORK_EFFECT_FIELD} as you and the planner gave it); null where the review carries none or the planner accepted the issue.
 An entry with source 'self_correction' records a correction that the planner made to its own earlier work (action 'accepted', 'plan_error' or 'correction_disputed').
 Every entry with source 'review' or 'self_correction' also has ${FILE_CHANGE_FIELD}: what the program measured in the reviewed file during the planner's response in that round, for all of that round's entries together: changed (true or false), and the numbers of lines added and removed; null where nothing was measured. It is the program's measurement, not the planner's claim. If an 'accepted' or 'partially_accepted' entry's rationale describes amendments that ${FILE_CHANGE_FIELD} does not bear out, raise it as an issue.
+Every entry with source 'review' or 'self_correction' also has ${KEPT_PASSAGES_FIELD}: the passages of the reviewed file that carry its correction, as the planner named them; the program requires every later response of this review to keep them, so a correction recorded there is still in the file.
 An entry with source 'user' (action 'decided_by_user') contains a decision of the user on that issue, which must be followed.
 The rationale of every entry is addressed to you; read it irrespective of the action.
 ${runDir(root)}/reviewer-feedback.md contains feedback from the planner that concerns no single issue; take it into account.
@@ -777,6 +778,7 @@ ${WORDING_DISPUTES}`);
 export function questionRespondPrompt(root: RunRoot, round: number): string {
   return `${runDir(root)}/question-review/review-${round}.json contains a review of the question list in ${runDir(root)}/questions.json.
 ${respondRules(root, "you amend the question list for it")}
+${keepCorrectionsRule(root, pathOf({ kind: "log", subject: "questions" }))}
 ${WORDING_DISPUTES}
 ${TASK_DISPUTE_RULE}
 Return in 'questions' the complete question list after your amendments, including the entries that did not change. Do not modify any file.`;
@@ -831,6 +833,7 @@ ${WORDING_DISPUTES}`);
 export function termsRespondPrompt(root: RunRoot, round: number): string {
   return `${recordPath(root, { kind: "review", subject: "terms", round })} contains a review of the explanations of terms in ${runDir(root)}/terms.json.
 ${respondRules(root, "you amend the explanations for it")}
+${keepCorrectionsRule(root, pathOf({ kind: "log", subject: "terms" }))}
 ${WORDING_DISPUTES}
 ${TASK_DISPUTE_RULE}
 ${TWO_SENSES}
@@ -839,10 +842,12 @@ ${KEEP_WORDING} ${KEEP_FIGURES}`;
 }
 export const termsApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
 Return in 'entries' the complete explanations of ${runDir(root)}/terms.json, amended where a decision requires it, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
+${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject: "terms" }))}
 ${KEEP_WORDING} ${KEEP_FIGURES}`;
 
 export const questionApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
-Return in 'questions' the complete question list of ${runDir(root)}/questions.json, amended where a decision requires it. Do not modify any file.`;
+Return in 'questions' the complete question list of ${runDir(root)}/questions.json, amended where a decision requires it. Do not modify any file.
+${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject: "questions" }))}`;
 
 // ---- interview ----------------------------------------------------------------------------------
 
@@ -1091,13 +1096,14 @@ ${NOT_REFINED_RULE}
 Task: ${task}`;
 }
 
-export const planApplyDecisionsPrompt = (root: RunRoot, checks: StepChecks): string => `${runDir(root)}/user-decisions.md has new entries. Read the file and amend the plan in ${runDir(root)}/plan.json where a decision requires it.
+/** `phase` (issue #232): the planning phase whose plan review the decisions apply to, whose log keeps its corrections; null for the work review and a verdict. */
+export const planApplyDecisionsPrompt = (root: RunRoot, checks: StepChecks, phase: number | null = null): string => `${runDir(root)}/user-decisions.md has new entries. Read the file and amend the plan in ${runDir(root)}/plan.json where a decision requires it.
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
-Do not modify any file.
+${phase === null ? "" : `${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject: { plan: phase } }))}\n`}Do not modify any file.
 Return an empty questions_for_user array.`;
 
 /** `parkedBranch` (issue #186): the branch of a parked earlier run that the phase's plan starts from, or null. */
@@ -1141,6 +1147,7 @@ export const WORK_EFFECT_RESPONSE_RULE = `Every disposition has ${WORK_EFFECT_FI
 export function planRespondPrompt(root: RunRoot, phase: number, round: number, checks: StepChecks): string {
   return `${runDir(root)}/planning-${phase}/review-${round}.json contains a review of the plan in ${runDir(root)}/plan.json.
 ${respondRules(root, "you amend the plan for it")}
+${keepCorrectionsRule(root, pathOf({ kind: "log", subject: { plan: phase } }))}
 ${WORK_EFFECT_RESPONSE_RULE}
 ${PLAN_QUESTIONS_RULE}
 ${planFormat(root)}
@@ -1307,6 +1314,7 @@ export function correctivePrompt(root: RunRoot, fileLabel: string, round: number
 Either apply the amendments you described, or change the action of those dispositions and give the reason in the rationale; where your response carries ${TASK_DISPUTE_FIELD} and the disagreement is about what the task requires, set it on them; where your response carries ${WORK_EFFECT_FIELD}, state it on each disposition you no longer accept in full.
 Return the complete response again in the same form as before; where your response carries the plan, the question list or the analysis, return it whole, with the amendments applied.
 Only the action, the rationale and, where your response carries them, ${TASK_DISPUTE_FIELD} and ${WORK_EFFECT_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response. Return every other disposition, every duplicate_of and reverses, the self_corrections, the reviewer_feedback and the questions_for_user exactly as before.
+Where your response carries ${CORRECTION_PASSAGES_FIELD}, it may differ too: give it as the file you now return requires, and keep every passage the log lists in ${KEPT_PASSAGES_FIELD} under the same rule as in your response.
 Do not modify any file.`;
 }
 /** What a corrective reply changed that it may not (CorrectionInvalid), as the halt describes it. */
@@ -2797,13 +2805,15 @@ ${logRules(root, log, prefix, round)}`);
 export function decisionRespondPrompt(root: RunRoot, k: number, round: number): string {
   return `${runDir(root)}/${pathOf({ kind: "review", subject: { decision: k }, round })} contains a review of the representation in ${runDir(root)}/${pathOf({ kind: "analysis", decision: k })}, which you produced under the instructions of docs/decision-making.md given earlier in this session.
 ${respondRules(root, "you amend the analysis for it")}
+${keepCorrectionsRule(root, pathOf({ kind: "log", subject: { decision: k } }))}
 Return in 'analysis' the complete analysis after your amendments, including the parts that did not change; the program writes it. Do not modify any file.`;
 }
 
 /** The call that applies the user's decisions at a pause of decision k's review. */
 export function decisionApplyDecisionsPrompt(root: RunRoot, k: number): string {
   return `${runDir(root)}/user-decisions.md has new entries. Read the file.
-Return in 'analysis' the complete analysis of ${runDir(root)}/${pathOf({ kind: "analysis", decision: k })}, amended where a decision requires it; the program writes it. Do not modify any file.`;
+Return in 'analysis' the complete analysis of ${runDir(root)}/${pathOf({ kind: "analysis", decision: k })}, amended where a decision requires it; the program writes it. Do not modify any file.
+${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject: { decision: k } }))}`;
 }
 
 /**
@@ -4790,11 +4800,35 @@ export function keptCorrectionProblemText(p: KeptCorrectionProblem): string {
       return `the passage ${JSON.stringify(p.passage)}, which carries the correction you accepted for ${p.id}, is no longer in the file you return`;
   }
 }
+/**
+ * The rule that keeps the corrections accepted earlier in a review loop (issue #232), one sentence per problem the check
+ * of src/keptCorrections.ts reports, so the prompt and the check have one source: the repair prompt of a problem repeats
+ * the sentence of its kind.
+ */
+export const KEEP_CORRECTIONS_SENTENCES: Readonly<Record<(typeof KEPT_CORRECTION_PROBLEM_KINDS)[number], string>> = {
+  entryMissing: `In ${CORRECTION_PASSAGES_FIELD}, give one entry for every issue you accept in full or in part in this response: its id, and in passages the passages of the file you return that carry the correction, each verbatim from one field.`,
+  entryDuplicate: "Give at most one entry per issue id.",
+  entryNotAccepted: `Give an entry only for an issue you accept in full or in part in this response, or to restate a correction you made for an issue accepted earlier in this review: where an amendment you make now rewords a passage of such a correction that still stands, give an entry with that earlier issue's id and its passages as they now read.`,
+  passageBlank: "Every passage has a character other than whitespace; give an empty list of passages only where the correction removed text and added none.",
+  passageNotInReply: "Every passage you name stands in the file you return, verbatim except for whitespace, within one field (a step's text, a question's context, a sense, an argument).",
+  correctionMissing: `Every correction you made for an issue you accepted earlier in this review stands: return each passage the log lists in ${KEPT_PASSAGES_FIELD} in the file, verbatim except for whitespace, within one field, unless a disposition of this response sets reverses to that issue's id (a reversal, which the user then decides; a reverses naming the disposition's own id or an issue that is not an accepted correction does not count). A self-correction of yours does not withdraw it.`,
+};
+/** The rule in the four responses that rewrite their reviewed file whole, the log named by its path. */
+export function keepCorrectionsRule(root: RunRoot, logFile: string): string {
+  return `${runDir(root)}/${logFile} lists, in each entry's ${KEPT_PASSAGES_FIELD}, the passages that carry the correction you made for that issue earlier in this review.
+${KEPT_CORRECTION_PROBLEM_KINDS.map((k) => KEEP_CORRECTIONS_SENTENCES[k]).join("\n")}
+Before returning, check your revision against every entry of the log with ${KEPT_PASSAGES_FIELD}. The program refuses a response that drops a recorded passage or misnames one, and gives you one turn to correct it.`;
+}
+/** The rule in the application of the user's decisions, which has no field to restate a passage (issue #232). */
+export function keepCorrectionsApplyRule(root: RunRoot, logFile: string): string {
+  return `${runDir(root)}/${logFile} lists, in each entry's ${KEPT_PASSAGES_FIELD}, the passages that carry the corrections you made for issues accepted earlier in this review. Keep every such passage verbatim in the file you return unless a decision of the user requires changing it.`;
+}
 /** The halt's text where a response was refused twice for dropping an accepted correction (issue #232). */
 export const correctionDroppedText = (problems: readonly KeptCorrectionProblem[]): string =>
   `Claude Code's response was refused twice for its accepted corrections: ${problems.map(keptCorrectionProblemText).join("; ")}.`;
 /** The validation repair turn of a response refused for its accepted corrections (issue #232); S4 of its plan words the rule. */
-export const keptCorrectionsRepairPrompt = (problems: readonly KeptCorrectionProblem[]): string => validationRepairPrompt(problems.map(keptCorrectionProblemText), []);
+export const keptCorrectionsRepairPrompt = (problems: readonly KeptCorrectionProblem[]): string =>
+  validationRepairPrompt(problems.map(keptCorrectionProblemText), KEPT_CORRECTION_PROBLEM_KINDS.filter((k) => problems.some((p) => p.kind === k)).map((k) => KEEP_CORRECTIONS_SENTENCES[k]));
 
 export const ISSUE_TEXT_PROBLEM_KINDS = ["invalidText", "blankReason", "blankPassage", "passageNotInReply", "notTheDevelopers", "protectedMissing", "decidedBeforeMissing", "decidedAfterMissing"] as const;
 export type IssueTextProblem = Readonly<{ kind: (typeof ISSUE_TEXT_PROBLEM_KINDS)[number]; subject: string }>;

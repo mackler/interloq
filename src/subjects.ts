@@ -257,7 +257,7 @@ export function planSubject(root: RunRoot, phase: number, withRequirements: bool
     fileLabel: prompts.PLAN_FILE_LABEL,
     reviewPrompt: (root, round, thread) => prompts.planReviewPrompt(root, phase, round, withRequirements, checks, thread, parkedBranch),
     respond: { prompt: (root, round) => prompts.planRespondPrompt(root, phase, round, checks), schema: S.PlanResponse, after: (output) => savePlan(phase, output.plan, previous), capability: "records", validate: bothValidations(planField<PlanResponse>(validate), userQuestionsValidation<PlanResponse>()) },
-    applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, checks), schema: S.PlanWrite, after: (output) => savePlan(phase, output.plan, previous), validate: bothValidations(planField<PlanWrite>(validate), userQuestionsValidation<PlanWrite>()) },
+    applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, checks, phase), schema: S.PlanWrite, after: (output) => savePlan(phase, output.plan, previous), validate: bothValidations(planField<PlanWrite>(validate), userQuestionsValidation<PlanWrite>()) },
     amend: null,
     proceed: prompts.PROCEED_TO_IMPLEMENTATION,
     leaveOnAcceptance: false,
