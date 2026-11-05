@@ -1124,7 +1124,9 @@ test.describe("the tests of the chainAdopt server, in order", () => {
     const first = await startFromTab(page, url("chainAdopt"), "implementation");
     await expect(asking(page, DATABASE)).toBeVisible();
     const control = page.getByRole("region", { name: CHAIN_SWITCH_LABEL });
-    await expect(control.getByRole("status")).toContainText("Off. No run starts by itself.");
+    // Issue #253: with the switch off and no chain the control shows the switch alone.
+    await expect(control.getByRole("status")).toHaveCount(0);
+    await expect(control.locator("input[name=chain-runs]")).toHaveCount(0);
     await control.locator("label.switch").click();
     await expect(control.getByRole("status")).toContainText(`Run 1 of the chain: item #${first}`);
     await pane(page).locator("input[name=answer], textarea[name=answer]").fill("PostgreSQL");

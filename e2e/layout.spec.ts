@@ -406,6 +406,14 @@ const widestBounds = async (page: Page) => {
   await settled(page);
 };
 
+/** Issue #253: turns the chain's switch to `on` where it is not, waiting until the control shows it. */
+const chainSwitched = async (control: Locator, on: boolean): Promise<void> => {
+  const input = control.locator("input[name=chain]");
+  if ((await input.isChecked()) !== on) await control.locator("label.switch").click();
+  await expect(input).toBeChecked({ checked: on });
+  await expect(control.locator("input[name=chain-runs]")).toHaveCount(on ? 1 : 0);
+};
+
 test.describe("the tests of the tabs server, in order", () => {
   test.describe.configure({ mode: "default" });
 
@@ -506,6 +514,8 @@ test.describe("the tests of the tabs server, in order", () => {
       await expect(page.getByText("connected", { exact: true })).toBeVisible();
       await toTheList(page, "implementation");
       const control = page.getByRole("region", { name: CHAIN_SWITCH_LABEL });
+      // Issue #253: the choice of source and the queue are hidden while the switch is off, which the tabs server starts with.
+      await chainSwitched(control, true);
       await control.getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.queue, { exact: true }).click();
       const editor = page.getByRole("region", { name: QUEUE_HEADING });
       await expect(editor).toBeVisible();
@@ -557,6 +567,7 @@ test.describe("the tests of the tabs server, in order", () => {
       await expect(queued).toHaveCount(0);
       await control.getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
       await expect(editor).toHaveCount(0);
+      await chainSwitched(control, false);
     });
   }
 
@@ -1198,6 +1209,9 @@ test.describe("the tests of the planSteps server, in order", () => {
       const item = await startTask(page, layoutUrl("planSteps"));
       await expect(railSeparator(page)).toHaveAttribute("aria-valuenow", "14");
       await expect(page.locator("div.rail-column .chain")).toBeVisible();
+      // Issue #253: the fields are rendered only while the switch is on; turning it on adopts this run (issue #249),
+      // which waits, and the switch is turned off again at the end.
+      await chainSwitched(page.locator("div.rail-column .chain"), true);
       const runs = page.locator('div.rail-column input[name="chain-runs"]');
       await runs.fill("10");
       await runs.press("Enter");
@@ -1238,6 +1252,7 @@ test.describe("the tests of the planSteps server, in order", () => {
       await expect(editor.getByText(QUEUE_EMPTY)).toBeVisible();
       await page.getByRole("region", { name: CHAIN_SWITCH_LABEL }).getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
       await expect(editor).toHaveCount(0);
+      await chainSwitched(page.getByRole("region", { name: CHAIN_SWITCH_LABEL }), false);
       await noSidewaysScroll(page);
     });
   }
