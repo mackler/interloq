@@ -9,7 +9,7 @@ import { planningCall, reviewLoop, showDocument } from "./review.ts";
 import { renderQuestions, renderTerms } from "./render.ts";
 import * as S from "./schema.ts";
 import { Planner, type Services, Store, Ui } from "./services.ts";
-import { questionListValidation, questionSubject, requirementsSubject, saveTerms, termsSubject, termsValidation, writeQuestions } from "./subjects.ts";
+import { questionListValidation, questionReadingSubject, questionSubject, requirementsSubject, saveTerms, termsSubject, termsValidation, writeQuestions } from "./subjects.ts";
 import type { QuestionsFile, TermsMode } from "./schema.ts";
 
 /**
@@ -61,7 +61,14 @@ export const prepareQuestionList = (task: string, terms: TermsMode): Effect.Effe
     yield* saveOptionFigures(generated.output.questions.flatMap((q) => q.proposed_answers), "the question list");
     yield* store.converse(`## Question list proposed by Claude Code\n\n${renderQuestions(generated.output, "link")}\n`);
 
-    yield* reviewLoop(questionSubject(task));
+    const reviewed = yield* reviewLoop(questionSubject(task));
+    // Issue #166 (requirements Q2): once the review ended with no counted issue, Codex reads each question's last
+    // sentence on its own, once, before the list is recorded as agreed and its terms are written.
+    if (reviewed.result === "converged" && (yield* store.loadQuestions()).questions.length > 0) {
+      yield* ui.say(prompts.questionReadingLine);
+      yield* store.converse(`${prompts.questionReadingLine}\n\n`);
+      yield* reviewLoop(questionReadingSubject(task));
+    }
 
     const agreed = (yield* store.loadQuestions()).questions;
     yield* saveOptionFigures(agreed.flatMap((q) => q.proposed_answers), "the agreed question list");

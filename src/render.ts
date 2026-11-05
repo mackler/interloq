@@ -27,6 +27,8 @@ export const subjectHeading = (subject: SubjectId): string =>
     ? "Bring Up to Date"
     : subject === "questions"
     ? "Question review"
+    : subject === "questionReading"
+    ? "Question reading"
     : subject === "terms"
       ? "Terms review"
       : subject === "requirements"

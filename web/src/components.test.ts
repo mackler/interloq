@@ -1691,23 +1691,25 @@ describe("App and the draft", () => {
   });
 
   // Issue #137: which sections of the question pane are open is the tab's own state, not the run's shared state of
-  // issue #87, and a new pending prompt starts with them closed.
-  test("the question pane's sections start closed for each new prompt and send no ui frame", async () => {
+  // issue #87; issue #166: a new pending prompt starts with Technical Context open.
+  test("Technical Context opens for each new prompt, a click closes it, and the question pane's sections send no ui frame", async () => {
     const { root, ws } = await openPage();
     const presented = (n: number) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: n, origin: { kind: "relayed" }, context: { blocks: plainBlocks(`context ${n}`), by: "agent" }, history: [], explanations: [], question: plainPieces(`Q${n}?`), options: [], attached: null, decision: null } } });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, presented(1), asked(1)]) }] });
     ws.onopen?.({});
     const sent = ws.sent.length;
+    expect(sectionToggle(root, prompts.CONTEXT_HEADING)!.getAttribute("aria-expanded")).toBe("true");
+    expect(one(root, ".pane").textContent).toContain("context 1");
     sectionToggle(root, prompts.CONTEXT_HEADING)!.click();
     flushSync();
-    expect(sectionToggle(root, prompts.CONTEXT_HEADING)!.getAttribute("aria-expanded")).toBe("true");
+    expect(sectionToggle(root, prompts.CONTEXT_HEADING)!.getAttribute("aria-expanded")).toBe("false");
     expect(ws.sent.length).toBe(sent);
     ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: { _tag: "Answered", prompt: 1, text: "x" } });
     ws.receive({ type: "event", run: 1, seq: 4, time: TIME, event: presented(2) });
     ws.receive({ type: "event", run: 1, seq: 5, time: TIME, event: asked(2) });
     expect(one(root, ".pane h2").textContent).toContain("Q2?");
-    expect(sectionToggle(root, prompts.CONTEXT_HEADING)!.getAttribute("aria-expanded")).toBe("false");
-    expect(root.querySelector(".pane .context")).toBe(null);
+    expect(sectionToggle(root, prompts.CONTEXT_HEADING)!.getAttribute("aria-expanded")).toBe("true");
+    expect(one(root, ".pane").textContent).toContain("context 2");
   });
 
   // S27 with decision support: beside an analysis, which shows the question, the pane keeps only its answers; the
@@ -2382,6 +2384,21 @@ describe("DecisionView", () => {
     expect(headingsOf(agreed)).toContain(prompts.attachedHeading("reason"));
     expect(headingsOf(agreed)).not.toContain(prompts.attachedHeading("request"));
     expect(headingsOf(full)).not.toContain(prompts.attachedHeading("reason"));
+  });
+
+  // Issue #166 (requirements Q1): the run's shared state, untouched, opens Technical Context when the page first appears.
+  test("Technical Context is open when the decision page first appears, and opening Recommendation closes it", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const { emptyUiState, openSectionOf, withFlag } = await import("../../src/uiState.ts");
+    const first = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps, openSection: openSectionOf(emptyUiState, 2) });
+    const [context] = sectionButtons(first);
+    expect(context.getAttribute("aria-expanded")).toBe("true");
+    expect(first.textContent).toContain("The service keeps its data in a database.");
+    const later = withFlag(emptyUiState, { scope: { _tag: "DecisionSection", decision: 2, section: "recommendation" }, open: true });
+    const after = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps, openSection: openSectionOf(later, 2) });
+    const buttons = sectionButtons(after);
+    expect(buttons.map((b) => b.getAttribute("aria-expanded"))).toEqual(["false", "true"]);
+    expect(after.textContent).not.toContain("The service keeps its data in a database.");
   });
 
   test("every heading starts closed and fits its content; a click asks to open it; only the open section's body is rendered", async () => {
@@ -3091,19 +3108,19 @@ describe("QuestionPane's order", () => {
     expect(one(root, ".numeric").textContent).toContain(prompts.NUMERIC_OPTION_NOTE);
   });
 
-  test("the context and the attached material start closed and each expands to show its text", () => {
+  // Issue #166 (requirements Q1): Technical Context is open when the question first appears; the others start closed.
+  test("Technical Context starts open with its text, the attached material closed, and each toggles", () => {
     const root = show(QuestionPane, { widget: withQuestion(), onAnswer: () => undefined });
     const context = sectionToggle(root, prompts.CONTEXT_HEADING)!;
     const attached = sectionToggle(root, prompts.attachedHeading("reviewFacts"))!;
-    for (const b of [context, attached]) {
-      expect(b.getAttribute("aria-expanded")).toBe("false");
-      expect(document.getElementById(b.getAttribute("aria-controls")!)).toBe(null);
-    }
-    expect(root.textContent).not.toContain("keeps its data in a database");
-    context.click();
-    flushSync();
     expect(context.getAttribute("aria-expanded")).toBe("true");
     expect(document.getElementById(context.getAttribute("aria-controls")!)?.textContent).toContain("The service keeps its data in a database.");
+    expect(attached.getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById(attached.getAttribute("aria-controls")!)).toBe(null);
+    context.click();
+    flushSync();
+    expect(context.getAttribute("aria-expanded")).toBe("false");
+    expect(root.textContent).not.toContain("keeps its data in a database");
     attached.click();
     flushSync();
     expect(document.getElementById(attached.getAttribute("aria-controls")!)?.innerHTML).toContain("<strong>The facts</strong>");

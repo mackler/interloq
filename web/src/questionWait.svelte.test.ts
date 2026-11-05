@@ -89,11 +89,13 @@ const enter = (root: ParentNode) => {
 const answers = (ws: FakeWebSocket) => ws.sent.map((s) => JSON.parse(s)).filter((m) => m.type === "answer");
 
 describe("the question while its analysis is prepared", () => {
-  test("nothing is reset, submission is inert while starting, and live, without Help me decide, once preparing", async () => {
+  test("nothing is reset (Technical Context closed by the developer stays closed), submission is inert while starting, and live, without Help me decide, once preparing", async () => {
     seq = 3;
     const { root, ws } = await openPage();
     begin(ws, prompts.optionOrTextPrompt);
     const before = pane(root)!;
+    // Issue #166: Technical Context opens with the question; the developer closes it, and that choice is kept.
+    expect(contextToggle(root).getAttribute("aria-expanded")).toBe("true");
     contextToggle(root).click();
     flushSync();
     before.scrollTop = 40;
@@ -105,7 +107,7 @@ describe("the question while its analysis is prepared", () => {
     event(ws, { _tag: "Answered", prompt: 1, text: "/decide" });
     // Starting: the same pane, its section open and its scroll kept; the choices inert; Enter sends nothing.
     expect(pane(root)).toBe(before);
-    expect(contextToggle(root).getAttribute("aria-expanded")).toBe("true");
+    expect(contextToggle(root).getAttribute("aria-expanded")).toBe("false");
     expect(before.scrollTop).toBe(40);
     expect(cards(root).every((c) => c.disabled)).toBe(true);
     const sent = ws.sent.length;
@@ -118,7 +120,7 @@ describe("the question while its analysis is prepared", () => {
     // Preparing: live, no Help me decide, the term still a focusable word, the text kept.
     event(ws, frame(prompts.optionOrTextPrompt));
     expect(pane(root)).toBe(before);
-    expect(contextToggle(root).getAttribute("aria-expanded")).toBe("true");
+    expect(contextToggle(root).getAttribute("aria-expanded")).toBe("false");
     expect(before.scrollTop).toBe(40);
     expect(helpMeDecide(root)).toBe(undefined);
     expect(root.querySelector(".pane .term[data-ref=t]")).not.toBe(null);

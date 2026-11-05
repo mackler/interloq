@@ -71,9 +71,11 @@ export const newer = (a: RunUiState, b: RunUiState): RunUiState => (b.version > 
  * The one open heading of a decision's page (issue #133, the open point "one heading at a time"): the section of the
  * decision's most recently touched section flag if that flag opened it, and null otherwise. Since withFlag appends the
  * latest flag last, opening a heading closes the one open before it with no second frame, and closing it leaves none open.
+ * Issue #166 (requirements Q1): while no section flag of the decision exists, Technical Context is the one open, so
+ * every tab of the run shows it open when the decision page first appears.
  */
 export const openSectionOf = (state: RunUiState, decision: number): DecisionSection | null => {
   const own = state.choices.flatMap((c) => (c.scope._tag === "DecisionSection" && c.scope.decision === decision ? [{ section: c.scope.section, open: c.open }] : []));
   const last = own[own.length - 1];
-  return last !== undefined && last.open ? last.section : null;
+  return last === undefined ? "context" : last.open ? last.section : null;
 };

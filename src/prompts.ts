@@ -23,6 +23,7 @@ import type { ManifestProblem } from "./manifestCheck.ts";
 import type { CommandReport, Fall } from "./testCounts.ts";
 import { checksByStep } from "./stepChecks.ts";
 import { FIGURE_SVG_LIMIT_BYTES } from "./figure.ts";
+import { programWordsText } from "./vocabulary.ts";
 import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome, type SuiteStop, type WorkFailure } from "./suite.ts";
 import type { ProcessStatus } from "./liveOutput.ts";
 import type { ReviewThread } from "./reviewThread.ts";
@@ -198,13 +199,20 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
   },
   {
     id: "noInternalTerms",
-    rule: "Do not use a term of the program's internals (a report, a refusal, a disposition, a cycle, a phase, a session, a call) as though it were ordinary English. Where the program's behavior is the subject, state it in ordinary words.",
-    criterion: "a question uses a term of the program's internals (a report, a refusal, a disposition, a cycle, a phase, a session, a call) as though it were ordinary English.",
+    // Issue #166: the program's verbs beside its nouns ("raise a step", 14 Oct 2026).
+    rule: "Do not use a term of the program's internals, a noun (a report, a refusal, a disposition, a cycle, a phase, a session, a call) or a verb (raise, accept, dispose, revise, or any verb other than agree for two agents ceasing to disagree), as though it were ordinary English. Where the program's behavior is the subject, state it in ordinary words: Codex objects to a step, not Codex raises a step.",
+    criterion: "a question uses a term of the program's internals, a noun (a report, a refusal, a disposition, a cycle, a phase, a session, a call) or a verb (raise, accept, dispose, revise, or a verb other than agree for two agents ceasing to disagree), as though it were ordinary English.",
   },
   {
     id: "questionLast",
     rule: "Put what the reader needs first and the question last: the interrogative sentence is the last sentence, the one the reader reaches immediately before the options, and it ends with a question mark.",
     criterion: "the interrogative sentence of a question is not its last sentence, immediately before the options.",
+  },
+  {
+    // Issue #166 (requirements Q1): the page shows the last sentence alone, as the question's heading.
+    id: "headingAlone",
+    rule: "Write the interrogative sentence, the last one, so that it makes sense read alone, without the context or anything else in the question: the page shows it as the question's heading before the reader opens anything else. Name in it what it asks about, in words the reader knows, and point at nothing it does not itself state.",
+    criterion: "the question's last sentence, read alone, does not make sense: it names a thing only the context identifies, uses a term only the context defines, or points at material outside itself.",
   },
   {
     id: "context",
@@ -292,6 +300,18 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     id: "namedActor",
     rule: "Where a sentence says that something happens to the reader, to the program or to a record, and the reader needs to know who does it (who shows, who writes, who decides, who refuses), name the actor. The passive is allowed where the actor does not matter to the reader. Not 'its text is shown to you before it is written', which hides three actors in nine words.",
     criterion: "a sentence leaves out who acts where the reader needs to know it: who shows, who writes, who decides or who refuses.",
+  },
+  {
+    // Issue #166, the developer's instruction of 19 Oct 2026: no made-up terms; the table is PROGRAM_WORDS of src/vocabulary.ts.
+    id: "programWords",
+    rule: `Where Interloq has a name for the thing, use that name and no other word for it. ${programWordsText()} Where Interloq has no name for it, write out an action in plain words and coin no label for it: 'stop waiting for an answer, end the run and move its work to a branch', never 'give up'. A thing Interloq has no name for may be named only after the question itself introduces it, in its text or its explanations, at its first use.`,
+    criterion: "a question writes another word for something Interloq names, coins a label for an action instead of stating the action in plain words, or names a thing Interloq has no name for before the question introduces it.",
+  },
+  {
+    // Issue #166, the developer's words of 19 Oct 2026: "A question whose grammar I have to untangle before I can read it is as useless to me as one using a word I do not know."
+    id: "oneReading",
+    rule: "Use each word in a sense the reader knows. Give no verb to something that cannot perform it: a field does not say anything, and a rule does nothing. Write every sentence so that it reads one way the first time: no stack of nouns that a first reading parses wrongly ('relabel an abandoned item refined'), no causative verb the reader takes for the main verb ('what do you want to make Interloq try again'); write the reading meant ('what event should cause Interloq to try again').",
+    criterion: "a word is used in a sense the reader does not know, a verb is given to something that cannot perform it, or a sentence's first reading is not its meaning (quote the sentence and give the reading meant).",
   },
   {
     id: "terms",
@@ -455,6 +475,7 @@ export const QUESTION_PROBLEM_KINDS = [
   "figureTooLarge",
   "figureNotSvg",
   "figureChanged",
+  "programWord",
 ] as const;
 export type QuestionProblemKind = (typeof QUESTION_PROBLEM_KINDS)[number];
 export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>> = {
@@ -482,16 +503,21 @@ export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>
   figureTooLarge: "figure",
   figureNotSvg: "figure",
   figureChanged: "keepFigures",
+  programWord: "programWords",
 };
-/** The kinds of problem that carry nothing beyond their subject: every kind but a picture too large. */
-export const SUBJECT_PROBLEM_KINDS = QUESTION_PROBLEM_KINDS.filter((k): k is Exclude<QuestionProblemKind, "figureTooLarge"> => k !== "figureTooLarge");
+/** The kinds of problem that carry more than their subject: a picture too large, and a substitute for Interloq's word. */
+type ProblemWithData = "figureTooLarge" | "programWord";
+/** The kinds of problem that carry nothing beyond their subject: every kind but those of ProblemWithData. */
+export const SUBJECT_PROBLEM_KINDS = QUESTION_PROBLEM_KINDS.filter((k): k is Exclude<QuestionProblemKind, ProblemWithData> => k !== "figureTooLarge" && k !== "programWord");
 /**
  * One problem of a question: its kind and what it concerns (an explanation, a field, the bare reference, an option), or
- * "". A picture too large also carries its size in UTF-8 bytes (issue #98).
+ * "". A picture too large also carries its size in UTF-8 bytes (issue #98); a substitute for one of Interloq's own words,
+ * the words it stands in for (issue #166).
  */
 export type QuestionProblem =
-  | Readonly<{ kind: Exclude<QuestionProblemKind, "figureTooLarge">; subject: string }>
-  | Readonly<{ kind: "figureTooLarge"; subject: string; bytes: number }>;
+  | Readonly<{ kind: Exclude<QuestionProblemKind, ProblemWithData>; subject: string }>
+  | Readonly<{ kind: "figureTooLarge"; subject: string; bytes: number }>
+  | Readonly<{ kind: "programWord"; subject: string; instead: readonly [string, ...string[]] }>;
 /** The problems of the questions of one reply, each question named by where it is ("questions_for_user 1", "Q3"). */
 export type QuestionProblems = readonly Readonly<{ where: string; problems: readonly QuestionProblem[] }>[];
 /** One problem in one sentence. */
@@ -546,6 +572,8 @@ export function questionProblemText(problem: QuestionProblem): string {
       return `the picture of ${problem.subject} is not one SVG image whose root element is svg`;
     case "figureChanged":
       return `the picture of ${problem.subject} was added, changed, removed or moved`;
+    case "programWord":
+      return `the word ${subject} is not Interloq's word for this: Interloq says ${problem.instead.join(" or ")}; use its word, or write out in plain words what happens`;
   }
 }
 const questionProblemLines = (questions: QuestionProblems): readonly string[] => questions.map((q) => `${q.where}: ${q.problems.map(questionProblemText).join("; ")}.`);
@@ -775,13 +803,48 @@ ${logRules(root, log, "Q", round)}
 ${WORDING_DISPUTES}`);
 }
 
-export function questionRespondPrompt(root: RunRoot, round: number): string {
-  return `${runDir(root)}/question-review/review-${round}.json contains a review of the question list in ${runDir(root)}/questions.json.
+/** Issue #166: the two review loops over the question list: its review, and the reading of its questions' last sentences. */
+export type QuestionListSubject = "questions" | "questionReading";
+/** What the review file of a loop over the question list contains, by its subject (issue #166). */
+const questionReviewOf = (subject: QuestionListSubject): string =>
+  subject === "questions" ? "a review of the question list" : "Codex's reading of the last sentence of each question of the question list, read on its own";
+
+export function questionRespondPrompt(root: RunRoot, round: number, subject: QuestionListSubject = "questions"): string {
+  return `${runDir(root)}/${pathOf({ kind: "review", subject, round })} contains ${questionReviewOf(subject)} in ${runDir(root)}/questions.json.
 ${respondRules(root, "you amend the question list for it")}
-${keepCorrectionsRule(root, pathOf({ kind: "log", subject: "questions" }))}
+${keepCorrectionsRule(root, pathOf({ kind: "log", subject }))}
 ${WORDING_DISPUTES}
 ${TASK_DISPUTE_RULE}
 Return in 'questions' the complete question list after your amendments, including the entries that did not change. Do not modify any file.`;
+}
+
+/**
+ * Issue #166 (requirements Q2): the sentence only the reading's prompt carries, by which a scripted reviewer recognizes
+ * it, as it recognizes Bring Up to Date by UPDATE_MARKER.
+ */
+export const QUESTION_READING_MARKER = "This reading is of each agreed question's last sentence alone, as the developer first sees it.";
+/** The rules a last sentence read alone is held to (issue #166), by their ids in QUESTION_RULES. */
+const READING_RULES = ["headingAlone", "oneReading", "programWords", "noInternalTerms", "nameThings"] as const;
+const readingCriteria = (): string => READING_RULES.map((id) => `- ${QUESTION_RULES.find((r) => r.id === id)?.criterion ?? ""}`).join("\n");
+/**
+ * Issue #166 (requirements Q2): once the question review has ended with no counted issue, Codex reads each agreed
+ * question's last sentence on its own, as the page shows it as the heading of the question page and the decision page.
+ */
+export function questionReadingPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
+  const log = pathOf({ kind: "log", subject: "questionReading" });
+  return byThread(
+    round,
+    thread,
+    log,
+    root,
+    () => `${QUESTION_READING_MARKER}\n${laterRound(root, pathOf({ kind: "questions" }), log, "H", round)}\n${WORDING_DISPUTES}`,
+    () => `${QUESTION_READING_MARKER} The question list in ${runDir(root)}/questions.json is agreed. Do not modify any file.
+Read the last sentence of each question, its interrogative sentence, on its own: the developer sees it first as the heading of the question page and of the decision page, before he opens anything else of the question. Raise an issue against each last sentence that cannot be read one way, or that does not make sense without the rest of the question: quote the sentence and say what a reader would take it to mean. Raise nothing about anything else of the question. The criteria:
+${readingCriteria()}
+Put the question id in the location field.
+${logRules(root, log, "H", round)}
+${WORDING_DISPUTES}`,
+  );
 }
 
 // ---- the explanations of the terms (S17, issue #36) --------------------------------------------------------------------
@@ -845,9 +908,12 @@ Return in 'entries' the complete explanations of ${runDir(root)}/terms.json, ame
 ${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject: "terms" }))}
 ${KEEP_WORDING} ${KEEP_FIGURES}`;
 
-export const questionApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
+export const questionApplyDecisionsPrompt = (root: RunRoot, subject: QuestionListSubject = "questions"): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
 Return in 'questions' the complete question list of ${runDir(root)}/questions.json, amended where a decision requires it. Do not modify any file.
-${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject: "questions" }))}`;
+${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject }))}`;
+
+/** Issue #166: the line said and written before Codex reads the agreed questions' last sentences. */
+export const questionReadingLine = "Gather Requirements: Codex reads the last sentence of each agreed question on its own.";
 
 // ---- interview ----------------------------------------------------------------------------------
 
@@ -4666,7 +4732,7 @@ export const PREPARED_TERMS_NOTE = "Its terms were explained and reviewed when i
 export const documentLabel = (subject: SubjectId): string =>
   subject === "update"
     ? "Issue brought up to date"
-    : subject === "questions"
+    : subject === "questions" || subject === "questionReading"
     ? "Question list"
     : subject === "terms"
       ? "Terms"

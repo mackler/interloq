@@ -124,7 +124,7 @@ test("every problem kind names a rule or clause, and the repair prompt cites its
   for (const kind of prompts.QUESTION_PROBLEM_KINDS) {
     const rule = textOf(prompts.QUESTION_PROBLEM_RULE[kind]);
     assert.ok(rule !== undefined && rule !== "", kind);
-    const problem: prompts.QuestionProblem = kind === "figureTooLarge" ? { kind, subject: "zod", bytes: 70_000 } : { kind, subject: "zod" };
+    const problem: prompts.QuestionProblem = kind === "figureTooLarge" ? { kind, subject: "zod", bytes: 70_000 } : kind === "programWord" ? { kind, subject: "built", instead: ["implemented"] } : { kind, subject: "zod" };
     const repair = prompts.questionRepairPrompt([{ where: "questions_for_user 1", problems: [problem] }]);
     assert.ok(repair.includes(rule), kind);
     assert.ok(repair.includes(prompts.questionProblemText(problem)), kind);

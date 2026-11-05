@@ -168,3 +168,22 @@ test("readerConsequence carries OPTION_TIME_COST in its rule and its criterion",
   assert.match(consequence.criterion, /states no time cost/);
   assert.match(consequence.criterion, /cannot be measured/);
 });
+
+// Issue #166: the heading rule, the program's words, one reading, and the program's verbs beside its nouns.
+test("headingAlone, programWords and oneReading reach the writers and the reviewers, and noInternalTerms names the verbs", async () => {
+  const { programWordsText } = await import("../src/vocabulary.ts");
+  const rule = (id: string) => prompts.QUESTION_RULES.find((r) => r.id === id)!;
+  for (const id of ["headingAlone", "programWords", "oneReading"]) {
+    assert.ok(prompts.questionWritingRules().includes(rule(id).rule), id);
+    assert.ok(prompts.questionReviewCriteria().includes(rule(id).criterion), id);
+  }
+  assert.match(rule("headingAlone").rule, /read alone/);
+  assert.ok(rule("programWords").rule.includes(programWordsText()));
+  assert.match(rule("programWords").rule, /coin no label/);
+  assert.match(rule("oneReading").rule, /reads one way the first time/);
+  for (const verb of ["raise", "accept", "dispose", "revise"]) {
+    assert.match(rule("noInternalTerms").rule, new RegExp(`\\b${verb}\\b`));
+    assert.match(rule("noInternalTerms").criterion, new RegExp(`\\b${verb}\\b`));
+  }
+  for (const r of ["headingAlone", "programWords", "oneReading", "noInternalTerms"].map(rule)) assert.doesNotMatch(`${r.rule} ${r.criterion}`, /converg|\bworth\b|honest/i);
+});

@@ -10,7 +10,7 @@ import { RUN_MODES } from "../src/runMode.ts";
 const RUNS = { numRuns: 300, seed: 20261009 };
 const n = fc.integer({ min: 1, max: 30 });
 const subject: fc.Arbitrary<SubjectId> = fc.oneof(
-  fc.constantFrom<SubjectId>("questions", "terms", "requirements"),
+  fc.constantFrom<SubjectId>("questions", "questionReading", "terms", "requirements"),
   n.map((k) => ({ plan: k })),
   n.map((k) => ({ work: k })),
   n.map((k) => ({ decision: k })),

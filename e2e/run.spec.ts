@@ -551,14 +551,19 @@ test.describe("the tests of the decide server, in order", () => {
     // tab is open in the other and after a reload, and opening a second closes the first in both.
     const contextOf = (p: Page) => decisionSection(analysisOf(p), CONTEXT_HEADING);
     const recommendation = (p: Page) => decisionSection(analysisOf(p), RECOMMENDATION_HEADING);
-    await contextOf(page).click();
-    await expect(contextOf(other)).toHaveAttribute("aria-expanded", "true");
-    await other.reload();
-    await expect(contextOf(other)).toHaveAttribute("aria-expanded", "true");
-    await recommendation(other).click();
+    // Issue #166 (requirements Q1): both tabs show Technical Context open when the page first appears.
+    for (const p of [page, other]) await expect(contextOf(p)).toHaveAttribute("aria-expanded", "true");
+    await recommendation(page).click();
     for (const p of [page, other]) {
       await expect(recommendation(p)).toHaveAttribute("aria-expanded", "true");
       await expect(contextOf(p)).toHaveAttribute("aria-expanded", "false");
+    }
+    await other.reload();
+    await expect(recommendation(other)).toHaveAttribute("aria-expanded", "true");
+    await contextOf(other).click();
+    for (const p of [page, other]) {
+      await expect(contextOf(p)).toHaveAttribute("aria-expanded", "true");
+      await expect(recommendation(p)).toHaveAttribute("aria-expanded", "false");
     }
     await other.close();
     await option(page, /PostgreSQL/).click();

@@ -8,7 +8,7 @@ import type { RunMode } from "./runMode.ts";
  * A reviewed subject: the question list, the requirements, the plan of one planning phase, the work of one execution
  * phase (the work review), or the analysis of decision k (decision support, numbered across the run).
  */
-export type SubjectId = "update" | "questions" | "terms" | "requirements" | Readonly<{ plan: number }> | Readonly<{ work: number }> | Readonly<{ decision: number }> | Readonly<{ verdict: number }>;
+export type SubjectId = "update" | "questions" | "questionReading" | "terms" | "requirements" | Readonly<{ plan: number }> | Readonly<{ work: number }> | Readonly<{ decision: number }> | Readonly<{ verdict: number }>;
 /**
  * A subject whose phase follows from its identity; a decision's phase is where it took place, which its identity does
  * not say, and so is a verdict's (issue #186: numbered across the run, given at a planning phase or an execution phase).
@@ -94,6 +94,8 @@ export const subjectDir = (subject: SubjectId): string =>
     ? "update-check"
     : subject === "questions"
     ? "question-review"
+    : subject === "questionReading"
+    ? "question-reading"
     : subject === "terms"
       ? "terms-review"
       : subject === "requirements"
@@ -113,6 +115,7 @@ const DECISION_DIR = /^decision-([1-9][0-9]*)$/;
 export const subjectOf = (dirName: string): SubjectId | null => {
   if (dirName === "update-check") return "update";
   if (dirName === "question-review") return "questions";
+  if (dirName === "question-reading") return "questionReading";
   if (dirName === "terms-review") return "terms";
   if (dirName === "requirements-review") return "requirements";
   const planning = PLANNING_DIR.exec(dirName);
@@ -130,6 +133,8 @@ export const reviewedFile = (subject: SubjectId): Artifact =>
     ? { kind: "issue" }
     : subject === "questions" || subject === "terms" || subject === "requirements"
     ? { kind: subject }
+    : subject === "questionReading"
+    ? { kind: "questions" }
     : "plan" in subject
       ? { kind: "planFile" }
       : "work" in subject
@@ -170,6 +175,8 @@ export const pathOf = (artifact: Artifact): string => {
         ? "update-log.json"
         : artifact.subject === "questions"
         ? "questions-log.json"
+        : artifact.subject === "questionReading"
+        ? "question-reading-log.json"
         : artifact.subject === "terms"
           ? "terms-log.json"
           : artifact.subject === "requirements"
@@ -220,8 +227,8 @@ export const pathOf = (artifact: Artifact): string => {
       return FIXED[artifact.kind];
   }
 };
-/** The eight issue logs (one subject of each; issue #186 adds the verdicts', issue #216 the update's). */
-export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "update", "questions", "terms", "requirements", { work: 1 }, { decision: 1 }, { verdict: 1 }];
+/** The nine issue logs (one subject of each; issue #186 adds the verdicts', issue #216 the update's, issue #166 the question reading's). */
+export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "update", "questions", "questionReading", "terms", "requirements", { work: 1 }, { decision: 1 }, { verdict: 1 }];
 
 /**
  * Whether a path relative to a run's records directory is a record that a read-only call must leave unchanged (finding

@@ -241,7 +241,7 @@ export const initialState = (setup: ReviewSetup, config: Pick<Config, "maxRounds
 const say = (text: string): ReviewCommand => ({ kind: "Say", text });
 const status = (text: string): ReviewCommand => ({ kind: "Say", text, status: true });
 /** The prefix of a subject's issue ids, as its review prompt names them (plan 2.5). */
-export const idPrefixOf = (subject: SubjectId): string => (subject === "update" ? "U" : subject === "questions" ? "Q" : subject === "terms" ? "T" : subject === "requirements" ? "G" : "plan" in subject ? "P" : "work" in subject ? "W" : "verdict" in subject ? "V" : "D");
+export const idPrefixOf = (subject: SubjectId): string => (subject === "update" ? "U" : subject === "questions" ? "Q" : subject === "questionReading" ? "H" : subject === "terms" ? "T" : subject === "requirements" ? "G" : "plan" in subject ? "P" : "work" in subject ? "W" : "verdict" in subject ? "V" : "D");
 const notify = (event: UiEvent): ReviewCommand => ({ kind: "Notify", event });
 /** The log entries of one id: the history a pause's facts show as prose (S11). */
 const entriesOf = (history: readonly LogEntry[], id: string): readonly LogEntry[] => history.filter((e) => e.id === id);

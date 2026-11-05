@@ -57,30 +57,44 @@ export const skipConditionValidation =
     return problems.length === 0 ? Result.succeed({ value: output, notes: [] }) : Result.fail({ error: new SkipConditionInvalid({ problems }), repair: prompts.skipConditionRepairPrompt(problems) });
   };
 
+/**
+ * A review loop over the question list (issue #166): its review, and Codex's reading of its questions' last sentences.
+ * Claude Code returns the amended list, and the program writes it to questions.json; only the subject's id, its heading,
+ * its review prompt and the prompts naming its own records differ.
+ */
+const questionListLoop = (task: string, id: prompts.QuestionListSubject, reviewPrompt: Subject<QuestionListResponse, QuestionList>["reviewPrompt"]): Subject<QuestionListResponse, QuestionList> => ({
+  id,
+  phase: phaseOf(id),
+  heading: subjectHeading(id),
+  fileLabel: "questions.json",
+  reviewPrompt,
+  respond: { prompt: (root, round) => prompts.questionRespondPrompt(root, round, id), schema: S.QuestionListResponse, after: (output) => writeQuestions(task, output), capability: "records", validate: bothValidations(questionListValidation<QuestionListResponse>(), userQuestionsValidation<QuestionListResponse>()) },
+  applyDecisions: { prompt: (root) => prompts.questionApplyDecisionsPrompt(root, id), schema: S.QuestionList, after: (output) => writeQuestions(task, output), validate: questionListValidation() },
+  amend: null,
+  proceed: prompts.PROCEED_TO_CLARIFICATION,
+  leaveOnAcceptance: false,
+  leaveOnDecision: false,
+  onUnchanged: "corrective",
+  // Issue #112: a disagreement here about how a question to the user is worded is settled by the agents; one Claude
+  // Code marks as about what the task requires is still the user's (issue #156).
+  disputesSettledBy: "agents",
+  reviewSchema: S.Review,
+  prepare: null,
+  keepsCorrections: { textsOf: (r) => questionListTexts(r.questions), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
+  document: Effect.map(Effect.flatMap(Store, (store) => store.loadQuestions()), (file): ShownDocument => ({ _tag: "Markdown", text: renderQuestions(file, "alt") })),
+});
+
 /** The question list. Claude Code returns the amended list, and the program writes it to questions.json. */
 export function questionSubject(task: string): Subject<QuestionListResponse, QuestionList> {
-  const id = "questions" as const;
-  return {
-    id,
-    phase: phaseOf(id),
-    heading: subjectHeading(id),
-    fileLabel: "questions.json",
-    reviewPrompt: prompts.questionReviewPrompt,
-    respond: { prompt: prompts.questionRespondPrompt, schema: S.QuestionListResponse, after: (output) => writeQuestions(task, output), capability: "records", validate: bothValidations(questionListValidation<QuestionListResponse>(), userQuestionsValidation<QuestionListResponse>()) },
-    applyDecisions: { prompt: prompts.questionApplyDecisionsPrompt, schema: S.QuestionList, after: (output) => writeQuestions(task, output), validate: questionListValidation() },
-    amend: null,
-    proceed: prompts.PROCEED_TO_CLARIFICATION,
-    leaveOnAcceptance: false,
-    leaveOnDecision: false,
-    onUnchanged: "corrective",
-    // Issue #112: a disagreement here about how a question to the user is worded is settled by the agents; one Claude
-    // Code marks as about what the task requires is still the user's (issue #156).
-    disputesSettledBy: "agents",
-    reviewSchema: S.Review,
-    prepare: null,
-    keepsCorrections: { textsOf: (r) => questionListTexts(r.questions), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
-    document: Effect.map(Effect.flatMap(Store, (store) => store.loadQuestions()), (file): ShownDocument => ({ _tag: "Markdown", text: renderQuestions(file, "alt") })),
-  };
+  return questionListLoop(task, "questions", prompts.questionReviewPrompt);
+}
+
+/**
+ * Issue #166 (requirements Q2): Codex's reading of each agreed question's last sentence on its own, once the question
+ * review has ended with no counted issue; its rounds follow behavior 7 as the question list's do.
+ */
+export function questionReadingSubject(task: string): Subject<QuestionListResponse, QuestionList> {
+  return questionListLoop(task, "questionReading", prompts.questionReadingPrompt);
 }
 
 /**

@@ -128,14 +128,15 @@ test("scopeKey is injective over every variant", () => {
   assert.notEqual(scopeKey({ _tag: "RailBranch", phase: "a:b", branch: "c" }), scopeKey({ _tag: "RailBranch", phase: "a", branch: "b:c" }));
 });
 
-// Issue #133 (the open point "one heading at a time"): which heading of a decision's page is open.
-test("openSectionOf is the section of the decision's last section flag if it opened it, and null otherwise", () => {
+// Issue #133 (the open point "one heading at a time"): which heading of a decision's page is open; issue #166 (Q1):
+// Technical Context while the decision's headings are untouched.
+test("openSectionOf is context while the decision's sections are untouched, else its last section flag's section if it opened it, and null otherwise", () => {
   fc.assert(
     fc.property(fc.array(flag, { maxLength: 12 }), fc.nat({ max: 3 }), (flags, decision) => {
       const state = flags.reduce(withFlag, emptyUiState);
       const own = flags.filter((f): f is UiFlag & { scope: { _tag: "DecisionSection"; decision: number; section: DecisionSection } } => f.scope._tag === "DecisionSection" && f.scope.decision === decision);
       const last = own[own.length - 1];
-      assert.equal(openSectionOf(state, decision), last !== undefined && last.open ? last.scope.section : null);
+      assert.equal(openSectionOf(state, decision), last === undefined ? "context" : last.open ? last.scope.section : null);
     }),
     RUNS,
   );
@@ -152,6 +153,9 @@ test("flags of another decision and of entries never change the open section", (
   const opened = withFlag(withFlag(emptyUiState, { scope: { _tag: "DecisionSection", decision: 1, section: "history" }, open: true }), { scope: { _tag: "DecisionSection", decision: 1, section: "context" }, open: true });
   assert.equal(openSectionOf(opened, 1), "context", "opening a second heading closes the first");
   assert.equal(openSectionOf(withFlag(opened, { scope: { _tag: "DecisionSection", decision: 1, section: "context" }, open: false }), 1), null, "closing it reopens none");
+  assert.equal(openSectionOf(emptyUiState, 1), "context", "untouched, Technical Context is open (issue #166)");
+  assert.equal(openSectionOf(withFlag(emptyUiState, { scope: { _tag: "DecisionSection", decision: 1, section: "context" }, open: false }), 1), null, "closed, it stays closed");
+  assert.equal(openSectionOf(withFlag(emptyUiState, { scope: { _tag: "DecisionSection", decision: 1, section: "recommendation" }, open: true }), 1), "recommendation", "opening another closes it");
 });
 
 test("scopeKey stays injective with the decision's sections", () => {

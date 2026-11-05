@@ -114,3 +114,14 @@ test("the terms subject: directory, phase, log, reviewed file, and the inverse o
   assert.ok(LOG_SUBJECTS.includes("terms"), "LOG_SUBJECTS lacks the terms log");
   assert.equal(guardedRecord(pathOf({ kind: "terms" })), true);
 });
+
+// Issue #166: the extra reading of the agreed questions' last sentences is a subject of its own.
+test("the question reading's records: its round files, its log and the question list as its reviewed file", () => {
+  assert.equal(subjectDir("questionReading"), "question-reading");
+  assert.equal(subjectOf("question-reading"), "questionReading");
+  assert.equal(pathOf({ kind: "review", subject: "questionReading", round: 1 }), "question-reading/review-1.json");
+  assert.equal(pathOf({ kind: "log", subject: "questionReading" }), "question-reading-log.json");
+  assert.deepEqual(reviewedFile("questionReading"), { kind: "questions" });
+  assert.equal(phaseOf("questionReading"), 0);
+  assert.ok(LOG_SUBJECTS.includes("questionReading"));
+});

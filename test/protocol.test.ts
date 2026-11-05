@@ -30,7 +30,7 @@ import type { ItemId } from "../src/tracker.ts";
 // Plan step 3.1: both sides decode with the same schemas; every variant survives the JSON round trip.
 const nat = fc.nat({ max: 10_000 });
 const text = fc.string({ maxLength: 20 });
-const subject = fc.oneof(fc.constant("questions" as const), fc.constant("requirements" as const), nat.map((plan) => ({ plan })), nat.map((work) => ({ work })), nat.map((decision) => ({ decision })));
+const subject = fc.oneof(fc.constant("questions" as const), fc.constant("questionReading" as const), fc.constant("requirements" as const), nat.map((plan) => ({ plan })), nat.map((work) => ({ work })), nat.map((decision) => ({ decision })));
 const phase = fc.oneof(fc.constant({ kind: "questions" as const }), fc.record({ kind: fc.constantFrom("planning" as const, "execution" as const, "work" as const), n: nat }));
 const agent = fc.constantFrom("claude" as const, "codex" as const);
 const reviewIssue = fc.record({ id: fc.string({ minLength: 1, maxLength: 8 }), severity: fc.constantFrom("blocking" as const, "major" as const, "minor" as const), location: text, problem: text, evidence: text });

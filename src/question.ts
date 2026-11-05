@@ -6,6 +6,7 @@ import { type Brand, Result, Schema } from "effect";
 import { QuestionInvalid } from "./errors.ts";
 import { blockPieces, blocksText, piecesText, plainRuns, type ShownBlock } from "./pieces.ts";
 import { type QuestionProblem, sensesNumbered } from "./prompts.ts";
+import { substitutesIn } from "./vocabulary.ts";
 import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption, StoredOption, type WorkEffects } from "./schema.ts";
 
 export type { QuestionOption };
@@ -151,7 +152,7 @@ const refsBeyondSupplied = (q: Question, supplied: readonly SuppliedRef[]): read
 /**
  * The problems of one question; none when it keeps every mechanically checkable rule (S3 of the task of issue #36): every
  * ref names an explanation, every explanation is referred to, ids unique, terms and referring pieces not blank, every
- * explanation with one or more senses and none blank (issue #112), no ref added to a literal value, the question ending with its question mark, a context, and no bare number.
+ * explanation with one or more senses and none blank (issue #112), no ref added to a literal value, the question ending with its question mark, a context, no bare number, and no substitute for one of Interloq's own words in its plain words or its explanations (issue #166, `PROGRAM_WORDS` of src/vocabulary.ts; a code piece is a literal value and is not read).
  * `supplied`: the code pieces with a ref that the program itself supplied (the names of a tool's settings it explains, S9),
  * each with its part, the one exception to "no ref on a code piece", in that part and as often as supplied (P5-R1-1);
  * none for a question an agent wrote.
@@ -161,6 +162,13 @@ export const questionProblems = (q: Question, supplied: readonly SuppliedRef[] =
   const ids = q.explanations.map((e) => e.id);
   const refs = new Set(pieces.filter((p) => p.ref !== "").map((p) => p.ref));
   const plainWords = [...blockPartsOf(q).flatMap((p) => blockRuns(p.blocks)), ...piecePartsOf(q).flatMap((p) => plainRuns(p.pieces))];
+  // Issue #166: the agent's own words, a document block (the program's Markdown) left out, and every explanation's term
+  // and senses, since explaining an invented word does not license it.
+  const ownWords = [
+    ...blockPartsOf(q).flatMap((p) => blockRuns(p.blocks.filter((b) => b.kind !== "document"))),
+    ...piecePartsOf(q).flatMap((p) => plainRuns(p.pieces)),
+    ...q.explanations.flatMap((e) => [e.term, ...e.senses]),
+  ];
   return [
     ...(blocksText(q.context).join("").trim() === "" ? [{ kind: "blankContext" as const, subject: "" }] : []),
     ...(/\?["'”’)\]]*$/u.test(piecesText(q.question).trim()) ? [] : [{ kind: "notLast" as const, subject: "" }]),
@@ -179,6 +187,7 @@ export const questionProblems = (q: Question, supplied: readonly SuppliedRef[] =
     ]),
     ...plainWords.flatMap(bareNumbers).map((subject) => ({ kind: "bareNumber" as const, subject })),
     ...q.options.flatMap((o, i) => optionFigureProblems(o.figure, `option ${i + 1}`)),
+    ...substitutesIn(ownWords.join("\n")).map(({ found, names }) => ({ kind: "programWord" as const, subject: found, instead: names })),
   ];
 };
 

@@ -557,14 +557,14 @@ test("a relayed question in the shape gives the analysis its context paragraph, 
     context: [{ kind: "paragraph", pieces: [...plain("The "), term("service", "s"), ...plain(" keeps its data in a database, which Interloq, the orchestrator, starts with it.")] }],
     history: para("You chose SQLite for the prototype on 9 Oct 2026."),
     question: plain("Which database should the service use?"),
-    explanations: [{ id: "s", term: "service", senses: ["The program this task builds."] }],
+    explanations: [{ id: "s", term: "service", senses: ["The program this task implements."] }],
     options: question.options.map((o) => opt(o.label, o.description)),
   });
   const parsed = parseRelayedQuestion(text, question.options);
   assert.ok(parsed !== null);
   const { prompt, probe } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: parsed.context, by: "agent" }, history: parsed.history, explanations: parsed.explanations, question: parsed.question, options: offered, decision: null });
   assert.ok(prompt.includes("The service keeps its data in a database"), prompt.slice(-1500));
-  assert.ok(prompt.includes("service: The program this task builds."));
+  assert.ok(prompt.includes("service: The program this task implements."));
   // Issue #133 (S4): the history the user was shown reaches the analysis under its own name.
   assert.ok(prompt.includes("The history:\nYou chose SQLite for the prototype on 9 Oct 2026."), prompt.slice(-1500));
   const { shown: _shown, ...recorded } = json(probe.dir, "decision-1/question.json");
@@ -621,7 +621,7 @@ test("S10: after a context call rephrases a permission question, the analysis ar
 test("W1-R1-2: the analysis prompt carries the terms as the items of the record's Terms block", async () => {
   const { termItem } = await import("../src/render.ts");
   const { shownExplanations } = await import("../src/question.ts");
-  const explanations = [{ id: "s", term: "service", senses: ["The program this task builds.\n\nIt runs as a server.", "In this task, the web server."] }];
+  const explanations = [{ id: "s", term: "service", senses: ["The program this task implements.\n\nIt runs as a server.", "In this task, the web server."] }];
   const offered = numberedOptions(question.options);
   const { prompt } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: para("The service keeps its data."), by: "agent" }, history: [], explanations, question: [...plain("Which database should the "), term("service", "s"), ...plain(" use?")], options: offered, decision: null });
   const shown = shownExplanations(explanations);

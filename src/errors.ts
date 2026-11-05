@@ -453,7 +453,7 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("PlanInvalid"), duplicateIds: Strings, emptyIds: Schema.Number, removedDone: Strings, changedDone: Strings }),
   Schema.Struct({
     _tag: Schema.Literal("QuestionInvalid"),
-    questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Union([Schema.Struct({ kind: Schema.Literals(SUBJECT_PROBLEM_KINDS), subject: Schema.String }), Schema.Struct({ kind: Schema.Literal("figureTooLarge"), subject: Schema.String, bytes: Schema.Int })])) })),
+    questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Union([Schema.Struct({ kind: Schema.Literals(SUBJECT_PROBLEM_KINDS), subject: Schema.String }), Schema.Struct({ kind: Schema.Literal("figureTooLarge"), subject: Schema.String, bytes: Schema.Int }), Schema.Struct({ kind: Schema.Literal("programWord"), subject: Schema.String, instead: Schema.NonEmptyArray(Schema.String) })])) })),
   }),
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("CorrectionDropped"), problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(KEPT_CORRECTION_PROBLEM_KINDS), id: Schema.String, passage: Schema.String })) }),

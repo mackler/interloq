@@ -26,6 +26,7 @@
   import QuestionText from "./QuestionText.svelte";
   import Disclosure from "./Disclosure.svelte";
   import type { Snippet } from "svelte";
+  import { type OpenSections, openOf, type PaneSection, withSection } from "../sections.ts";
 
   // The typed text is the page's draft of this prompt (../draft.ts, finding 5): App keeps it per (incarnation, run,
   // prompt) and withdraws it with a notice when another tab answers first [error prevention].
@@ -129,12 +130,12 @@
    * buttons sit under the question; four or more keep the grid that fills the row with columns at least 14rem wide.
    */
   const besideColumns = (count: number): string | null => (answersOnly && count >= 2 && count <= 3 ? `repeat(${count}, minmax(0, 1fr))` : null);
-  type Section = "context" | "history" | "attached";
-  let opened = $state<Readonly<{ key: string | null; open: readonly Section[] }>>({ key: null, open: [] });
-  const isOpen = (section: Section): boolean => opened.key === viewIdentity && opened.open.includes(section);
+  // Issue #166 (requirements Q1): a question first shown opens Technical Context (web/src/sections.ts).
+  type Section = PaneSection;
+  let opened = $state<OpenSections>({ key: null, open: [] });
+  const isOpen = (section: Section): boolean => openOf(opened, viewIdentity).includes(section);
   const setOpen = (section: Section, open: boolean) => {
-    const others = (opened.key === viewIdentity ? opened.open : []).filter((s) => s !== section);
-    opened = { key: viewIdentity, open: open ? [...others, section] : others };
+    opened = withSection(opened, viewIdentity, section, open);
   };
   // The bodies' ids, unique per prompt, so that two panes of the page never share one.
   const sectionId = (section: Section): string => `question-${(viewIdentity ?? "none").replace(/[^A-Za-z0-9_-]+/g, "-")}-${section}`;

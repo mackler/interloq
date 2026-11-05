@@ -24,11 +24,10 @@ const continueWithoutDeciding = (page: Page) => pane(page).getByRole("button", {
 const sectionToggle = (page: Page, heading: string) => pane(page).getByRole("button", { name: heading, exact: true });
 /** The body a section's toggle controls, rendered only while it is open. */
 const sectionBody = async (page: Page, heading: string) => page.locator(`#${await sectionToggle(page, heading).getAttribute("aria-controls")}`);
-/** Issue #137: the section starts closed and expands on a click; returns its body. */
+/** Issue #137: the section is opened, by a click where it is closed (issue #166: Technical Context starts open); returns its body. */
 const expandSection = async (page: Page, heading: string) => {
   const toggle = sectionToggle(page, heading);
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await toggle.click();
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   const body = await sectionBody(page, heading);
   await expect(body).toBeVisible();
@@ -174,7 +173,7 @@ const everyPart = (analysis: Locator) => analysis.locator(".answers button:visib
 /**
  * The decision page's order (issue #133) as the developer's decision of 12 Oct 2026 keeps it: the heading is the
  * question, both choice cards are in the window side by side with nothing scrolled, no "Help me decide" is offered,
- * every heading is closed, the columns keep their floor, and nothing is clipped: every part is reached by scrolling the
+ * Technical Context is open and every other heading closed (issue #166), the columns keep their floor, and nothing is clipped: every part is reached by scrolling the
  * run. At 1280 × 800 (`roomy`) the run does not scroll, the columns are the tallest region and every heading is in view;
  * at 640 px and wider the headings share one row (`oneRow`).
  */
@@ -194,7 +193,7 @@ const theOrder = async (page: Page, analysis: Locator, options: Readonly<{ quest
   await expect(page.getByRole("button", { name: HELP_ME_DECIDE })).toHaveCount(0);
   const buttons = sectionButtons(analysis);
   expect(await buttons.count()).toBeGreaterThan(0);
-  for (const button of await buttons.all()) await expect(button).toHaveAttribute("aria-expanded", "false");
+  for (const button of await buttons.all()) await expect(button).toHaveAttribute("aria-expanded", (await button.textContent())?.trim() === CONTEXT_HEADING ? "true" : "false");
   expect(await heightOf(analysis.locator(".sideways")), "the columns are lower than their floor").toBeGreaterThanOrEqual((await floorOf(page)) - 1);
   if (options.oneRow) {
     const tops = await Promise.all((await buttons.all()).map(async (button) => (await box(button)).y));
@@ -218,7 +217,7 @@ const theOrder = async (page: Page, analysis: Locator, options: Readonly<{ quest
  */
 const openedText = async (page: Page, analysis: Locator, heading: string, roomy: boolean) => {
   const button = sectionButton(analysis, heading);
-  await button.click();
+  if ((await button.getAttribute("aria-expanded")) === "false") await button.click();
   await expect(button).toHaveAttribute("aria-expanded", "true");
   await settled(page);
   const body = await bodyOf(page, button);
@@ -776,7 +775,7 @@ test.describe("the tests of the decide server, in order", () => {
   // the closed headings, at the three sizes the task names; the developer's decision of 12 Oct 2026: every part is
   // reached by scrolling the run, which does not scroll at 1280 × 800 alone. L10 once asserted the columns alone side by side.
   for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
-    test(`(L10) the decision page at ${width} × ${height}: the question, both choices in view side by side, the columns at their floor or more, the headings closed, nothing clipped`, async ({ page }) => {
+    test(`(L10) the decision page at ${width} × ${height}: the question, both choices in view side by side, the columns at their floor or more, Technical Context open and the other headings closed, nothing clipped`, async ({ page }) => {
       const analysis = await openAnalysis(page, width, height);
       const roomy = width === 1280;
       await theOrder(page, analysis, { question: FIRST, oneRow: width >= 640, roomy });
@@ -1256,7 +1255,7 @@ test.describe("the tests of the longQuestion server, in order", () => {
       await expect(panel(page, LEFT)).toBeHidden();
       await expect(pane(page).locator(".top, .bottom")).toHaveCount(0);
       expect(await pane(page).evaluate((el) => getComputedStyle(el).overflowY), "the pane is the scrolling region").toBe("auto");
-      await expect(sectionToggle(page, CONTEXT_HEADING)).toHaveAttribute("aria-expanded", "false");
+      await expect(sectionToggle(page, CONTEXT_HEADING)).toHaveAttribute("aria-expanded", "true");
       await expect(await expandSection(page, CONTEXT_HEADING)).toContainText("Databases");
       for (const name of ["[name=answer]", "button[name=send]"]) {
         await page.locator(name).scrollIntoViewIfNeeded();
