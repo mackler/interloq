@@ -4813,15 +4813,20 @@ export const KEEP_CORRECTIONS_SENTENCES: Readonly<Record<(typeof KEPT_CORRECTION
   passageNotInReply: "Every passage you name stands in the file you return, verbatim except for whitespace, within one field (a step's text, a question's context, a sense, an argument).",
   correctionMissing: `Every correction you made for an issue you accepted earlier in this review stands: return each passage the log lists in ${KEPT_PASSAGES_FIELD} in the file, verbatim except for whitespace, within one field, unless a disposition of this response sets reverses to that issue's id (a reversal, which the user then decides; a reverses naming the disposition's own id or an issue that is not an accepted correction does not count). A self-correction of yours does not withdraw it.`,
 };
+/**
+ * Which entries of the log carry passages to keep (work review 1 of issue #232, W1-R1-1): the entries keptBaselineOf of
+ * src/keptCorrections.ts reads, so the rules state exactly the rule the check applies.
+ */
+export const KEPT_CORRECTIONS_SCOPE_SENTENCE = `Only the current entries of this review count: an entry marked superseded carries nothing to keep, a decision of the user on an issue ends the protection of its correction, and an entry of an earlier review in the same log file, one whose phase is not this review's (such as an earlier planning phase), does not count.`;
 /** The rule in the four responses that rewrite their reviewed file whole, the log named by its path. */
 export function keepCorrectionsRule(root: RunRoot, logFile: string): string {
-  return `${runDir(root)}/${logFile} lists, in each entry's ${KEPT_PASSAGES_FIELD}, the passages that carry the correction you made for that issue earlier in this review.
+  return `${runDir(root)}/${logFile} lists, in each entry's ${KEPT_PASSAGES_FIELD}, the passages that carry the correction you made for that issue earlier in this review. ${KEPT_CORRECTIONS_SCOPE_SENTENCE}
 ${KEPT_CORRECTION_PROBLEM_KINDS.map((k) => KEEP_CORRECTIONS_SENTENCES[k]).join("\n")}
-Before returning, check your revision against every entry of the log with ${KEPT_PASSAGES_FIELD}. The program refuses a response that drops a recorded passage or misnames one, and gives you one turn to correct it.`;
+Before returning, check your revision against every such entry with ${KEPT_PASSAGES_FIELD}. The program refuses a response that drops a recorded passage or misnames one, and gives you one turn to correct it.`;
 }
 /** The rule in the application of the user's decisions, which has no field to restate a passage (issue #232). */
 export function keepCorrectionsApplyRule(root: RunRoot, logFile: string): string {
-  return `${runDir(root)}/${logFile} lists, in each entry's ${KEPT_PASSAGES_FIELD}, the passages that carry the corrections you made for issues accepted earlier in this review. Keep every such passage verbatim in the file you return unless a decision of the user requires changing it.`;
+  return `${runDir(root)}/${logFile} lists, in each entry's ${KEPT_PASSAGES_FIELD}, the passages that carry the corrections you made for issues accepted earlier in this review. Keep the passages of those entries verbatim in the file you return unless a decision of the user requires changing it. ${KEPT_CORRECTIONS_SCOPE_SENTENCE}`;
 }
 /** The halt's text where a response was refused twice for dropping an accepted correction (issue #232). */
 export const correctionDroppedText = (problems: readonly KeptCorrectionProblem[]): string =>

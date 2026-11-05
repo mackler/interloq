@@ -4,10 +4,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { pathOf, recordPath } from "../src/artifacts.ts";
 import { describe } from "../src/errors.ts";
+import { appendUserDecision } from "../src/issueLog.ts";
 import { CorrectionDropped } from "../src/errors.ts";
 import * as K from "../src/keptCorrections.ts";
 import * as prompts from "../src/prompts.ts";
 import * as S from "../src/schema.ts";
+import type { LogEntry } from "../src/schema.ts";
 import { TEST_ROOT } from "./helpers.ts";
 
 const logs = {
@@ -76,4 +78,25 @@ test("for every kind, the repair prompt and the halt name the problem's id and p
     }
     assert.ok(repair.includes(prompts.KEEP_CORRECTIONS_SENTENCES[kind]), kind);
   }
+});
+
+// Work review 1 of issue #232 (W1-R1-1): the rules name only the entries the check reads, the current entries of this review.
+test("both rules state the scope the check reads, once each, and never ask for every entry of the log", () => {
+  for (const rule of [prompts.keepCorrectionsRule(TEST_ROOT, logs.plan), prompts.keepCorrectionsApplyRule(TEST_ROOT, logs.plan)]) {
+    assert.equal(count(rule, prompts.KEPT_CORRECTIONS_SCOPE_SENTENCE), 1, rule);
+    assert.ok(!rule.includes("every entry of the log"), rule);
+  }
+});
+
+const kept = (phase: number) =>
+  ({ id: "P1-R1-1" as S.IssueId, phase, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: ["retry twice"] }) as LogEntry;
+const missingOf = (log: readonly LogEntry[], phase: number) =>
+  K.keptCorrectionProblems({ baseline: K.keptBaselineOf(log, phase), restatable: K.restatable(log, phase), dispositions: [], entries: [], texts: ["rewritten"] }).filter((p) => p.kind === "correctionMissing");
+
+test("the scope the sentence states is the check's: a user's decision and an earlier review end the protection", () => {
+  const decided = appendUserDecision([kept(1)], "P1-R1-1" as S.IssueId, "do it another way", 1, 2);
+  assert.deepEqual(K.keptBaselineOf(decided, 1), []);
+  assert.deepEqual(missingOf(decided, 1), []);
+  assert.deepEqual(missingOf([kept(1)], 2), []);
+  assert.equal(missingOf([kept(1)], 1).length, 1);
 });

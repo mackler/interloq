@@ -33,6 +33,7 @@ const passagesOf = (e: LogEntry): readonly string[] => (e.source === "user" ? []
  * The corrections a response of the loop of `phase` must keep: the current entries of source review or self_correction
  * that carry passages. A self-correction's entry is read since appendRound supersedes an accepted review entry with it and
  * carries its passages forward; the phase, since the plan's issue-log.json holds every planning phase's entries.
+ * KEPT_CORRECTIONS_SCOPE_SENTENCE of src/prompts.ts states this scope to Claude Code: a change of one needs the other.
  */
 export const keptBaselineOf = (log: readonly LogEntry[], phase: number): readonly KeptCorrection[] =>
   current(log, phase).flatMap((e) => (passagesOf(e).length > 0 ? [{ id: e.id, passages: passagesOf(e) }] : []));
