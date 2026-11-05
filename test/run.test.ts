@@ -38,19 +38,22 @@ test("one accepted issue, then convergence, then finished", async () => {
 test("a rejected issue raised again produces one prompt", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["keep the rejection"],
+    // Issue #38: B is asked after its investigation, when Codex raises it a third time.
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" },
       { output: respond([["B", "rejected"]]) },
+      { output: respond([["B", "rejected"]]) },
     ],
-    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 5 },
     execs: [finished],
   });
   await runTask(layer);
   assert.equal(probe.ui.asked.length, 1);
   assert.match(presentedSubjects(probe.ui)[0], /issue B, raised again/);
   const entries = (await probe.loadLog()).filter((e) => e.id === "B");
-  assert.deepEqual(entries.map((e) => e.superseded === true), [true, true, false]);
+  assert.deepEqual(entries.map((e) => e.superseded === true), [true, true, true, false]);
   // Finding 15: the decision on the reraised issue is one typed decision, so it is in the issue log too.
   assert.equal(entries.at(-1)?.action, "decided_by_user");
   assert.equal(entries.at(-1)?.rationale, "keep the rejection");
@@ -60,12 +63,15 @@ test("a rejected issue raised again produces one prompt", async () => {
 test("a pause shows the log entries without file_change, while issue-log.json keeps it", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["keep the rejection"],
+    // Issue #38: B is asked after its investigation, when Codex raises it a third time.
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" },
       { output: respond([["B", "rejected"]]) },
+      { output: respond([["B", "rejected"]]) },
     ],
-    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 5 },
     execs: [finished],
   });
   await runTask(layer);
@@ -215,13 +221,16 @@ test("a reversal and a disputed self-correction each produce a prompt and a deci
   };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["keep A", "keep A again"],
+    // Issue #38: both disputes have their investigation turn, and are asked at the next review, which raises C again.
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"]]), plan: "v2" },
       { output: reversal, plan: "v3" },
-      { output: noQuestions, plan: "v4" },
+      { output: reversal, plan: "v3" },
+      { output: respond([["C", "rejected"]]), plan: "v4" },
     ],
-    reviews: [{ issues: [issue("A")] }, { issues: [issue("C")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("C")] }, { issues: [issue("C")] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 5 },
     execs: [finished],
   });
   await runTask(layer);
@@ -255,8 +264,8 @@ test("q at the round limit stops with UserStopped", async () => {
 test("q at a decision prompt stops with UserStopped", async () => {
   const { layer } = testLayer(tempRepo(), {
     answers: ["q"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" }],
-    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" }, { output: respond([["B", "rejected"]]) }],
+    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }],
   });
   await runFails(layer, "UserStopped", /stopped by the user/);
 });
@@ -668,8 +677,10 @@ test("issue #112: on the plan, an issue raised again after a partial acceptance 
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "partially_accepted"]]), plan: "v2" },
       { output: respond([["A", "rejected"]]) },
+      { output: respond([["A", "rejected"]]) },
     ],
-    reviews: [{ issues: [issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 5 },
     execs: [finished],
   });
   await runTask(layer);

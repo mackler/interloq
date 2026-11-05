@@ -78,8 +78,11 @@ test("(d) a response whose rejection validly reverses the correction takes no re
       { output: { ...noQuestions, plan: plan("The call fails at once.", "Nothing is logged.") } },
       { output: round1 },
       { output: answer([["P1-R2-1", "rejected"]], [], plan("The call fails at once.", "Nothing is logged."), [["P1-R2-1", "P1-R1-1"]]) },
+      // Issue #38: the investigation turn, then the response to the review that raises the reversal again.
+      { output: answer([["P1-R2-1", "rejected"]], [], plan("The call fails at once.", "Nothing is logged."), [["P1-R2-1", "P1-R1-1"]]) },
+      { output: answer([["P1-R2-1", "rejected"]], [], plan("The call fails at once.", "Nothing is logged."), [["P1-R2-1", "P1-R1-1"]]) },
     ],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R2-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R2-1")] }, { issues: [issue("P1-R2-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
   await runTask(layer);

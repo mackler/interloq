@@ -158,10 +158,12 @@ test("(i) a disputed fact is settled by the agents and recorded; a marked one ra
   const marked = await phase(
     [
       { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) },
+      // Issue #38: the response that investigates the marked dispute raised again, before the developer is asked.
+      { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) },
       { output: { issue: kept, outcome: { kind: "current" }, developer_passages: [QUOTE], decided: [], questions_for_user: [] } },
       { output: updateResponse([["U-R1-1", "rejected", true]], kept, [QUOTE]) },
     ],
-    [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [] }],
+    [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [] }],
     { answers: ["2"] },
   );
   outcomeOf(marked.exit);

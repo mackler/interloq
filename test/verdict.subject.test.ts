@@ -42,7 +42,8 @@ test("an objection Claude Code accepts withdraws the verdict, the round's record
 });
 
 test("a rejection Codex raises again is put to the developer: Codex's position withdraws the verdict", async () => {
-  const { end, probe } = await loop({ answers: ["1"], reviews: [raised("V1-R1-1"), raised("V1-R1-1")], steps: [{ output: verdictResponse([["V1-R1-1", "rejected"]]) }] });
+  // Issue #38: asked after its investigation, when Codex raises it a third time.
+  const { end, probe } = await loop({ answers: ["1"], config: { maxIdleRounds: 5 }, reviews: [raised("V1-R1-1"), raised("V1-R1-1"), raised("V1-R1-1")], steps: [{ output: verdictResponse([["V1-R1-1", "rejected"]]) }, { output: verdictResponse([["V1-R1-1", "rejected"]]) }] });
   assert.equal(presentedQuestions(probe.ui).length, 1);
   assert.equal(end.result, "revise");
 });
@@ -50,9 +51,9 @@ test("a rejection Codex raises again is put to the developer: Codex's position w
 test("a rejection Codex raises again, answered with Claude Code's position, is recorded and the review goes on until it converges", async () => {
   const { end, probe } = await loop({
     answers: ["2"],
-    config: { maxIdleRounds: 3 },
-    reviews: [raised("V1-R1-1"), raised("V1-R1-1"), { issues: [] }],
-    steps: [{ output: verdictResponse([["V1-R1-1", "rejected"]]) }, { output: verdictResponse([["V1-R1-1", "rejected"]]) }],
+    config: { maxIdleRounds: 5 },
+    reviews: [raised("V1-R1-1"), raised("V1-R1-1"), raised("V1-R1-1"), { issues: [] }],
+    steps: [{ output: verdictResponse([["V1-R1-1", "rejected"]]) }, { output: verdictResponse([["V1-R1-1", "rejected"]]) }, { output: verdictResponse([["V1-R1-1", "rejected"]]) }],
   });
   assert.equal(presentedQuestions(probe.ui).length, 1);
   assert.equal(end.result, "converged");

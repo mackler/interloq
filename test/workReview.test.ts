@@ -137,9 +137,11 @@ test("(c) exit (iii): a decision on a reraised work issue leaves for planning 2 
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
     answers: ["act on it"],
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    // Issue #38: the point is asked after its investigation, when Codex raises it a third time.
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
+    config: { maxIdleRounds: 5 },
   });
   assert.equal(await runTask(layer), 2);
   assert.match(presentedSubjects(probe.ui)[0], /issue W1-R1-1, raised again/);
@@ -148,19 +150,25 @@ test("(c) exit (iii): a decision on a reraised work issue leaves for planning 2 
   assert.equal((await capture.verify())?.stage, "decided");
 });
 
-test("(c1) exit (i): a decision on a second clarification logs the round once with the decision and a valid logged checkpoint", async () => {
+// Issue #38: a second clarification first has its investigation turn; logged with its record, it is asked when Codex
+// raises the point again, and the decision leaves as at a point raised again (exit iii).
+test("(c1) a decision on a second clarification, asked after its investigation, leaves with the round logged and a valid decided checkpoint", async () => {
   const repo = tempRepo();
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
     answers: ["this is what I mean"],
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
+    config: { maxIdleRounds: 5 },
   });
   assert.equal(await runTask(layer), 2);
   const round2 = workLog(probe.dir).filter((e) => e.round === 2);
-  assert.deepEqual(round2.map((e) => [e.source, e.action]), [["review", "clarification_requested"], ["user", "decided_by_user"]]);
-  assert.equal((await capture.verify())?.stage, "logged");
+  assert.deepEqual(round2.map((e) => [e.source, e.action]), [["review", "clarification_requested"]]);
+  const recorded = round2[0] as unknown as { investigations: readonly { pause: string }[] };
+  assert.ok(recorded.investigations.some((i) => i.pause === "secondClarification"));
+  assert.deepEqual(workLog(probe.dir).filter((e) => e.round === 3).map((e) => [e.source, e.action]), [["user", "decided_by_user"]]);
+  assert.equal((await capture.verify())?.stage, "decided");
 });
 
 test("(c4) exit (ii), idle rounds: the decision leaves for planning 2; the log holds the round once and the decided checkpoint is valid", async () => {

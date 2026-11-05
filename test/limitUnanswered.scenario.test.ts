@@ -52,8 +52,10 @@ test("an unanswered idle limit extends the plan review without recording a decis
 test("a disputed pause that goes unanswered ends the run with NoAnswer", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: [{ noAnswer: true }],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" }, { output: respond([["B", "rejected"]]) }],
-    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }],
+    // Issue #38: B is asked after its investigation, when Codex raises it a third time.
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"], ["B", "rejected"]]), plan: "v2" }, { output: respond([["B", "rejected"]]) }, { output: respond([["B", "rejected"]]) }],
+    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [issue("B")] }, { issues: [issue("B")] }],
+    config: { maxIdleRounds: 5 },
   });
   const error = await runFails(layer, "NoAnswer", /no answer came within 2:00/);
   assert.equal(error._tag === "NoAnswer" && error.then, "abandon");

@@ -153,7 +153,8 @@ test("(a) a stale statement amended unattended: one writeText, then the question
 
 test("(b) a marked dispute raised again sets the item aside as Paused and writes no text", async () => {
   const marked = { ...respond([["U-R1-1", "rejected", true]]), issue: { title: ITEM.title, text: ITEM.body }, outcome: { kind: "current" }, developer_passages: [] };
-  const s = setup({ steps: [{ output: marked }, { output: marked }], updateChecks: [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }], config: { maxIdleRounds: 5 } });
+  // Issue #38: the marked dispute stops the check after its investigation, at the third check.
+  const s = setup({ steps: [{ output: marked }, { output: marked }, { output: marked }], updateChecks: [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }], config: { maxIdleRounds: 5 } });
   const outcome = await Effect.runPromise(s.prepare());
   assert.equal(outcome._tag, "SetAside");
   assert.ok(outcome._tag === "SetAside" && outcome.cause._tag === "Paused");

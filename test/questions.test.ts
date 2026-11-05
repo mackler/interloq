@@ -428,10 +428,13 @@ test("issue #156: a marked rejection of a request to drop a question, raised aga
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
+      // Issue #38: the response that investigates the marked dispute raised again, before the developer is asked.
+      { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [] } },
     ],
-    reviews: [{ issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [] }, { issues: [] }],
     contexts: failedContext,
+    config: { maxIdleRounds: 5 },
     execs: [finished],
   });
   await runRefinement(layer);
@@ -481,10 +484,14 @@ test("issue #156: a reversal settled unmarked is put to the developer when the c
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [amended] } },
       { output: reversal("partially_accepted", false) },
       { output: reversal("rejected", true) },
+      // Issue #38: the investigation turn of the marked reversal, and the response to the review that raises it again.
+      { output: reversal("rejected", true) },
+      { output: reversal("rejected", true) },
       { output: { questions: [amended] } },
     ],
     closings: closing("# Requirements\n\nQ1: A"),
-    reviews: [{ issues: [issue("Q-R1-1", "Q1 is unclear.")] }, { issues: [issue("Q-R2-1", DROP_Q1)] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [issue("Q-R1-1", "Q1 is unclear.")] }, { issues: [issue("Q-R2-1", DROP_Q1)] }, { issues: [issue("Q-R2-1", DROP_Q1)] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    config: { maxIdleRounds: 5 },
     contexts: failedContext,
     execs: [finished],
   });

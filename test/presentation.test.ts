@@ -49,8 +49,9 @@ const implementationScenario = () =>
     // Claude Code's question in its response to the first plan review (issue #186: the first plan asks none), the pause
     // on issue A raised again.
     answers: ["1", ""],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]], { questions_for_user: [plannerQuestion] }) }, { output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
+    // Issue #38: the pause is asked after its investigation, at the third review.
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]], { questions_for_user: [plannerQuestion] }) }, { output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: { maxIdleRounds: 5 },
   });

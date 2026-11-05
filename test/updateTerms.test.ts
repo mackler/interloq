@@ -127,8 +127,9 @@ test("the program's own labels of a marked dispute raised again in Bring Up to D
   const marked = { ...respond([["U-R1-1", "rejected", true]]), issue: { title: BEFORE.title, text: BEFORE.text }, outcome: { kind: "current" }, developer_passages: [] } as S.UpdateResponse;
   const refused = { output: { nonsense: true } };
   const { layer, probe } = testLayer(tempRepo(), {
-    steps: [{ output: marked }, { output: marked }],
-    updateChecks: [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }],
+    // Issue #38: the marked dispute is asked after its investigation, at the third check.
+    steps: [{ output: marked }, { output: marked }, { output: marked }],
+    updateChecks: [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }],
     contexts: [refused, refused],
     answers: ["2"],
     tracker: updateTracker(),

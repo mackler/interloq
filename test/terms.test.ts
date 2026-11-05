@@ -446,8 +446,10 @@ test("issue #156: a marked rejection of the terms raised again is put to the dev
     answers: ["1", "1"],
     steps: [{ output: { questions: [entry] } }],
     closings: interviewClosings(),
-    terms: [{ output: terms("A library.") }, { output: markedResponse }, { output: { ...respond([["T-R1-1", "accepted"]]), ...terms() } }],
-    termsReviews: [{ issues: [issue("T-R1-1", objection)] }, { issues: [issue("T-R1-1", objection)] }, { issues: [] }],
+    // Issue #38: the marked dispute is asked after its investigation, at the third review of the terms.
+    terms: [{ output: terms("A library.") }, { output: markedResponse }, { output: markedResponse }, { output: { ...respond([["T-R1-1", "accepted"]]), ...terms() } }],
+    termsReviews: [{ issues: [issue("T-R1-1", objection)] }, { issues: [issue("T-R1-1", objection)] }, { issues: [issue("T-R1-1", objection)] }, { issues: [] }],
+    config: { maxIdleRounds: 5 },
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     // Two context replies that do not match the schema: the context call falls back (W1-R1-1).
     contexts: [{ output: {} }, { output: {} }],
