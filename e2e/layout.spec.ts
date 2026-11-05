@@ -1963,6 +1963,7 @@ test.describe("the tests of the figureChoices server, in order", () => {
   };
   const enlargedChoosesNothing = async (page: Page, size: string) => {
     const lastAnswers = await page.locator("[data-last-answer]").count();
+    await pointerToMargin(page);
     const control = page.locator("[data-choice]").nth(0).locator("[data-figure-enlarge]");
     const onCard = await box(control.locator("[data-option-figure] svg"));
     const useOnCard = await box(control.locator("[data-option-figure] use"));
