@@ -29,7 +29,7 @@ import type { OutputEvent } from "./liveOutput.ts";
 import type { WaitHandle } from "./waits.ts";
 
 /** Which reply of a round a raw save holds: the review, the response, or corrective turn k (issue #151). */
-export type RawReplyKind = "review" | "response" | Readonly<{ corrective: number }>;
+export type RawReplyKind = "review" | "response" | Readonly<{ corrective: number }> | Readonly<{ investigation: number }>;
 export type StoreError = FileSystemError | StateFileInvalid | GitError;
 /** The question a decision analyzes (decision support): its text and options, the phase in which it was asked and that phase's label (W1-R1-2). */
 /**
@@ -296,6 +296,8 @@ export interface StoreShape {
   saveResponse(subject: SubjectId, round: number, response: PlannerResponse): Effect.Effect<void, StoreError>;
   /** The raw reply of corrective turn `attempt` of a round (issue #30): `<subject dir>/cc-<round>-corrective-<attempt>.json`. */
   saveCorrection(subject: SubjectId, round: number, attempt: number, reply: unknown): Effect.Effect<void, StoreError>;
+  /** Issue #38: the accepted reply of investigation turn `attempt` of a round, `cc-<n>-investigation-<k>.json`. */
+  saveInvestigation(subject: SubjectId, round: number, attempt: number, reply: unknown): Effect.Effect<void, StoreError>;
   /**
    * An agent's reply of a round as it arrived, before it is decoded or validated (issue #151): written to the file the
    * accepted value later replaces, `review-<n>.json`, `cc-<n>.json` or `cc-<n>-corrective-<k>.json`; a text as it is,

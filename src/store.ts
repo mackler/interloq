@@ -136,7 +136,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
     const noteWaiting = (note: WaitingNote | null) => Ref.set(waiting, note).pipe(Effect.andThen(writeCheckpoint));
     /** The file of a reply of a round: the raw save before validation and the accepted value after it are one file (issue #151). */
     const replyArtifact = (subject: SubjectId, round: number, kind: RawReplyKind): Artifact =>
-      kind === "review" ? { kind: "review", subject, round } : kind === "response" ? { kind: "response", subject, round } : { kind: "correction", subject, round, attempt: kind.corrective };
+      kind === "review" ? { kind: "review", subject, round } : kind === "response" ? { kind: "response", subject, round } : "corrective" in kind ? { kind: "correction", subject, round, attempt: kind.corrective } : { kind: "investigation", subject, round, attempt: kind.investigation };
     /** One record of the catalog, as JSON. */
     const saveRecord = (artifact: Artifact, value: unknown) => writeJson(at(artifact), value);
     /** The entries of a log file; none when it does not exist. */
@@ -458,6 +458,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       saveReview: (subject, round, review) => saveRecord(replyArtifact(subject, round, "review"), review),
       saveResponse: (subject, round, response) => saveRecord(replyArtifact(subject, round, "response"), response),
       saveCorrection: (subject, round, attempt, reply) => saveRecord(replyArtifact(subject, round, { corrective: attempt }), reply),
+      saveInvestigation: (subject, round, attempt, reply) => saveRecord(replyArtifact(subject, round, { investigation: attempt }), reply),
       saveRawReply: (subject, round, kind, raw) => {
         const file = at(replyArtifact(subject, round, kind));
         // serializeReply's text, as invalid-replies/ keeps it: a reply that arrived as text (Codex's) as it is, and a value

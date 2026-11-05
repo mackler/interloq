@@ -13,7 +13,7 @@ import { pauseProse } from "./render.ts";
 import { serializeReply } from "./records.ts";
 import * as prompts from "./prompts.ts";
 import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportWhat, repairReplyPrompt, type RespondContext } from "./prompts.ts";
-import { correctiveValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
+import { correctiveValidation, investigationValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
 import { agentContext, askOffering, byLine, decisionAnswerOf, limitOptions, numberedOptions, positionOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
 import { parseUnchangedAnswer } from "./input.ts";
 import { advance, type Asks, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
@@ -153,7 +153,7 @@ const AGENT_LABEL = { claude: "Claude Code", codex: "Codex" } as const;
  * unchanged). Each kind has its own budget, and its prompt comes from src/prompts.ts. A dropped connection is not a
  * Repair: it repeats a call that produced no reply (src/retry.ts).
  */
-export type Repair = Readonly<{ kind: "schema" | "validation" | "corrective"; prompt: string }>;
+export type Repair = Readonly<{ kind: "schema" | "validation" | "corrective" | "investigation"; prompt: string }>;
 
 /**
  * Decodes an agent's reply with its schema. A reply that does not match is kept on disk and the agent
@@ -559,7 +559,9 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
                 : null;
             const context: RespondContext = { review: state.current.review!, log: state.log, records };
             const round = roundOf(state);
-            const call = yield* planningCall(subject.respond.prompt(store.root, command.round, context), subject.respond.schema, "planning", subject.respond.capability, round.after(yield* resolveValidation(subject.respond.validate)), rawSave(command.round, "response"));
+            // Issue #38: a round whose review raised a disputed point again asks first for a resolution of both concerns.
+            const respondPrompt = subject.respond.prompt(store.root, command.round, context);
+            const call = yield* planningCall(command.investigating.length === 0 ? respondPrompt : `${respondPrompt}\n\n${prompts.investigationNote(command.investigating)}`, subject.respond.schema, "planning", subject.respond.capability, round.after(yield* resolveValidation(subject.respond.validate)), rawSave(command.round, "response"));
             return { kind: "ResponseDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
           }
           case "CallCorrective": {
@@ -575,6 +577,19 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             if (subject.respond.after !== null) yield* subject.respond.after(call.output);
             yield* publishDocument;
             return { kind: "CorrectionDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
+          }
+          case "CallInvestigation": {
+            // Issue #38: the investigation turn, built as the corrective turn is: validated against the reply it follows,
+            // then by the subject's own validation and the round's, its raw reply kept and its output written.
+            const previous = state.current.response!;
+            const round = roundOf(state);
+            const validate = round.after(bothValidations(investigationValidation<R>(previous, command.ids), yield* resolveValidation(subject.respond.validate)));
+            const repair: Repair = { kind: "investigation", prompt: prompts.investigationPrompt(store.root, fileLabel, command.round, command.ids) };
+            const call = yield* repairTurn(repair, subject.respond.schema, subject.respond.capability, validate, rawSave(command.round, { investigation: command.attempt }));
+            yield* store.saveInvestigation(id, command.round, command.attempt, call.reply);
+            if (subject.respond.after !== null) yield* subject.respond.after(call.output);
+            yield* publishDocument;
+            return { kind: "InvestigationDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
           }
           case "ApplyDecisions":
             yield* applyDecisions(subject as Subject<PlannerResponse, D>);

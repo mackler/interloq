@@ -6,7 +6,7 @@ import { pauseProse } from "../src/render.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
 import { Result } from "effect";
 import fc from "fast-check";
-import { advance as advanceState, initialState, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, roundCheckOf, settles, subjectOf, type Transition } from "../src/reviewState.ts";
+import { advance as advanceState, initialState as freshState, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, roundCheckOf, settles, subjectOf, type Transition } from "../src/reviewState.ts";
 import { validateReview, type ValidatedRound } from "../src/round.ts";
 import type { Action, LogEntry, PlannerResponse, Review } from "../src/schema.ts";
 import { issue, respond, questionOf } from "./helpers.ts";
@@ -20,6 +20,13 @@ const askedSubject = (c: ReviewCommand, state: ReviewState): string => {
   assert.equal(c.kind, "AskDecision");
   return c.kind === "AskDecision" ? subjectOf(state.setup.heading, c.asks) : "";
 };
+
+/**
+ * Issue #38: these examples pin each disputed pause as it is asked once its dispute had its investigation, so every
+ * id they use starts investigated; test/investigation.state.test.ts pins the investigation itself.
+ */
+const INVESTIGATED: ReadonlySet<string> = new Set(["A", "B", "C", "N", "O", "X", "Z", "D2-R1-1", "W1-R0-1", "Q-R1-1", "T-R1-1"]);
+const initialState = (...args: Parameters<typeof freshState>): ReviewState => ({ ...freshState(...args), investigated: INVESTIGATED });
 
 // Finding 13 (and 14, 15) of docs/functional-design-review.md; decision Q7: the review loop as a pure
 // state machine. The scenario tests of test/run.test.ts remain the behavioural specification; these
@@ -105,10 +112,10 @@ test("a counted review saves the review, reports the count, and asks about each 
   assert.equal(askedSubject(last(t), t.state), "issue A, raised again after Claude Code did not accept it in full");
   const kept = advance(t.state, { kind: "DecisionGiven", text: "keep the rejection" });
   assert.equal(kept.commands[0].kind, "RecordDecision");
-  assert.deepEqual(last(kept), { kind: "CallPlanner", round: 1 });
+  assert.deepEqual(last(kept), { kind: "CallPlanner", round: 1, investigating: [] });
   const silent = advance(t.state, { kind: "DecisionGiven", text: "" });
   assert.ok(!kinds(silent).includes("RecordDecision"));
-  assert.deepEqual(last(silent), { kind: "CallPlanner", round: 1 });
+  assert.deepEqual(last(silent), { kind: "CallPlanner", round: 1, investigating: [] });
 });
 
 const afterReview = (log: LogEntry[] = [], issues = [issue("A")]): Transition => run(start({}, log), { kind: "ReviewDecoded", review: { issues } });
@@ -649,7 +656,7 @@ const settled = (t: Transition): string[] => t.commands.flatMap((c) => (c.kind =
 test("issue #112: an issue raised again is not asked when the agents settle disputes; it goes to Claude Code's response", () => {
   const t = run(startAgents([entry("A", "partially_accepted")]), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B")] } });
   assert.ok(!kinds(t).includes("AskDecision"));
-  assert.deepEqual(last(t), { kind: "CallPlanner", round: 1 });
+  assert.deepEqual(last(t), { kind: "CallPlanner", round: 1, investigating: [] });
   assert.equal(settled(t).length, 1);
   assert.match(settled(t)[0], /issue A, raised again/);
   assert.match(says(t), /issue A, raised again/);
@@ -828,7 +835,7 @@ test("issue #183: an issue raised again on which both agents state no effect is 
   const log = [withEffects({ ...entry("A", "rejected"), rationale: "It took 0 s and changed nothing." } as LogEntry, { reviewer: NONE, planner: NONE })];
   const t = run(startWith(workEffects, log), { kind: "ReviewDecoded", review: { issues: [{ ...effectIssue("A", NONE), problem: "S22 ran an unnamed command." }] } });
   assert.ok(!kinds(t).includes("AskDecision"), kinds(t).join(","));
-  assert.deepEqual(last(t), { kind: "CallPlanner", round: 1 });
+  assert.deepEqual(last(t), { kind: "CallPlanner", round: 1, investigating: [] });
   assert.equal(noEffectLines(t).length, 1);
   assert.equal(noEffectSays(t).length, 1);
   for (const text of [noEffectLines(t)[0], noEffectSays(t)[0]]) {
@@ -932,7 +939,7 @@ test("issue #183: in the work review, Claude Code's position keeps the loop in t
     assert.ok(!t.commands.some((c) => c.kind === "Finish"), `${text}: ${kinds(t).join(",")}`);
     assert.ok(!kinds(t).includes("ApplyDecisions"));
     assert.ok(kinds(t).includes("RecordDecision"));
-    assert.deepEqual(last(t), { kind: "CallPlanner", round: 1 });
+    assert.deepEqual(last(t), { kind: "CallPlanner", round: 1, investigating: [] });
   }
   for (const text of [optionText(reviewerOption(last(asked))), "do something else"]) {
     const t = advance(asked.state, { kind: "DecisionGiven", text });
