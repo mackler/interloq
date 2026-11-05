@@ -1200,6 +1200,32 @@ test.describe("the tests of the planSteps server, in order", () => {
     await expect(split).toHaveAttribute("aria-valuenow", String(left));
   });
 
+  // Issue #253: with the chain's switch off the control renders the switch alone, so the progress rail begins directly
+  // under it. Placed before L41, which turns the switch on and off, so the server's chain is still untouched and off.
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L48) with the chain's switch off, the rail begins directly under it at ${width} × ${height}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await startTask(page, layoutUrl("planSteps"));
+      if (width < 840) {
+        await page.locator("details.progress > summary, details.progress summary").first().click();
+        await expect(page.locator("details.progress")).toHaveAttribute("open", "");
+      }
+      const holder = page.locator(width < 840 ? "details.progress" : "div.rail-column");
+      const control = holder.getByRole("region", { name: CHAIN_SWITCH_LABEL });
+      await expect(control).toBeVisible();
+      for (const hidden of ["input[name=chain-runs]", "input[name=chain-cutoff]", "[role=radiogroup]", "[role=status]", "[data-chain-runs]"]) {
+        await expect(control.locator(hidden)).toHaveCount(0);
+      }
+      const controls = await control.locator("input[name=chain]").getAttribute("aria-controls");
+      expect(controls).toBeTruthy();
+      await expect(page.locator(`[id="${controls}"]`)).toHaveCount(0);
+      const label = await box(control.locator("label.switch"));
+      const rail = await box(holder.getByRole("navigation", { name: "Progress of the run" }));
+      expect(rail.y - (label.y + label.height)).toBeLessThanOrEqual(2 * (await rootPx(page)));
+      await noSidewaysScroll(page);
+    });
+  }
+
   // Issue #203: m3-svelte's outlined fields held a 15rem minimum inside the 14rem rail and drew over the dashboard. At
   // every width where the rail is a column, during a run, every part of the chain's control lies inside the column, the
   // runs field with a limit of 10 and in its error state included.
