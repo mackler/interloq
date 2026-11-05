@@ -32,3 +32,6 @@ export const LIVE_TICK_MS = 300;
 
 /** Issue #41: the sentence that ends the timing statement of the argumentStructure scenario, which L47 looks for last. */
 export const ARGUMENT_TIMING_MARKER = "This is the last sentence of the timing statement.";
+
+/** Issue #243 (suite run 2): Claude Code's own question the "long" scenario ends waiting on, which L4–L6 assert. */
+export const LONG_RUN_QUESTION = "Which database should the service use?";

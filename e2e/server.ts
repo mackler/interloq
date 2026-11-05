@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { platformLayer } from "../src/platform.ts";
 import { makeRunManager } from "../src/runManager.ts";
 import { makeWebServer } from "../src/webServer.ts";
-import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LIVE_TICK_MS, LONG_ANSWERS, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
+import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LIVE_TICK_MS, LONG_ANSWERS, LONG_RUN_QUESTION, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
 import type { OutputEvent, ProcessKey } from "../src/liveOutput.ts";
 import { E2E_ITEMS, PREPARED_ITEM } from "./ports.ts";
 import { NoTracker } from "../src/errors.ts";
@@ -303,16 +303,17 @@ export const SCENARIOS: Record<string, TestOptions> = {
     reviews: [{ issues: [issue("D1-R1-1", "The advantage of SQLite states no extent.")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   }),
-  // A long transcript: 60 accepted rounds, then two rounds without an acceptance, whose idle question is open beside the
-  // review (issue #243: it no longer waits), then a round whose response carries Claude Code's own question, which waits.
+  // A long transcript: 60 accepted rounds, then rounds without an acceptance, then a round whose response carries Claude
+  // Code's own question, which waits. No limit is reached (both above the scenario's 63 rounds), so no question opens
+  // beside the review (issue #243) and the run waits on exactly one question.
   long: {
-    config: { maxRounds: 100, maxIdleRounds: 2 },
+    config: { maxRounds: 100, maxIdleRounds: 100 },
     steps: [
       { output: noQuestions, plan: "v0\n" },
       ...Array.from({ length: LONG }, (_, i) => ({ output: respond([[`P1-R${i + 1}-1`, "accepted"]]), plan: `v${i + 1}\n`, resultText: `Round ${i + 1}: the plan now covers point ${i + 1} in detail. `.repeat(4) })),
       { output: respond([[`P1-R${LONG + 1}-1`, "rejected"]]) },
       { output: respond([[`P1-R${LONG + 2}-1`, "rejected"]]) },
-      { output: respond([[`P1-R${LONG + 3}-1`, "rejected"]], { questions_for_user: [questionOf({ context: "c", question: "Which database should the service use?", terms: [], options: [] })] }) },
+      { output: respond([[`P1-R${LONG + 3}-1`, "rejected"]], { questions_for_user: [questionOf({ context: "c", question: LONG_RUN_QUESTION, terms: [], options: [] })] }) },
     ],
     reviews: [
       ...Array.from({ length: LONG + 3 }, (_, i) => ({ issues: [issue(`P1-R${i + 1}-1`, `Point ${i + 1} of the plan is not specific enough to implement without guessing.`)] })),

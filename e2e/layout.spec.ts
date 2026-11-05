@@ -2,7 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList, LONG_FIRST_PROMPT_MS, LONG_TEST_TIMEOUT_MS } from "./fixtures.ts";
 import { ELEMENT_GROUP_NAMES, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, CLOSE_PICTURE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
 import { markedTabName } from "../web/src/notify.ts";
-import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
+import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_RUN_QUESTION, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 import { FIGURE_NARROW } from "./figures.ts";
@@ -88,11 +88,15 @@ const toTop = (l: Locator) =>
     el.dispatchEvent(new Event("scroll"));
   });
 const showPanel = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(`^${name}`) }).click();
-/** The long run at its idle pause, with the conversation shown instead of the question (S27). */
+/**
+ * The long run at Claude Code's own question, with the conversation shown instead of the question (S27). Issue #243
+ * (suite run 2): the question it waits on is asserted before acting, so a second question can never turn into a hang.
+ */
 const longRunAtItsPrompt = async (page: Page) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await startTask(page, LONG_URL);
   await expect(continueWithoutDeciding(page)).toBeVisible({ timeout: LONG_FIRST_PROMPT_MS });
+  await expect(pane(page).locator("h2")).toContainText(LONG_RUN_QUESTION);
   await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
 };
 /** Back to the question from the conversation, and the answer that continues the run. */
