@@ -795,3 +795,70 @@ test("W6-R1-1: the call interrupted while the exhaustion question's record is wr
   assert.equal(await Effect.runPromise(web.pending), null);
   assert.deepEqual(afterRelease, []);
 });
+
+// ---- Work review 1 of the run of 5 Nov 2026 (W1-R1-1): every wait of the loop observes the open transport question ----
+
+/** Three faults use up the retries and open the question; the fourth attempt fails as `later` says; then `rest`. */
+const openThen = (later: UsageLimited | TransportFault, rest: ReadonlyArray<"ok" | "fault"> = []) => {
+  const calls: number[] = [];
+  const attempt = (n: number): Effect.Effect<string, TransportFault | UsageLimited> =>
+    Effect.suspend((): Effect.Effect<string, TransportFault | UsageLimited> => {
+      calls.push(n);
+      const k = calls.length;
+      if (k <= 3) return Effect.fail(fault());
+      if (k === 4) return Effect.fail(later);
+      return (rest[k - 5] ?? "ok") === "ok" ? Effect.succeed(`reply ${n}`) : Effect.fail(fault());
+    });
+  return { calls, attempt };
+};
+/** A clock whose sleep `held` selects never returns, resolving `reached` when it begins. */
+const holdingClock = (held: (ms: number) => boolean) => {
+  const reached = resolvable();
+  const stepping = steppingClock(START, (ms) => (held(ms) ? Effect.sync(() => reached.resolve()).pipe(Effect.andThen(Effect.never)) : Effect.void));
+  return { ...stepping, reached };
+};
+/** The usage-limit wait, an hour away: the only sleep of these scripts longer than ten minutes. */
+const LONG_SLEEP = (ms: number) => ms > 600_000;
+
+test("W1-R1-1: Stop answered during a usage-limit wait after the question opened: AgentUnreachable at once, no further attempt, the wait recorded interrupted", { timeout: 5_000 }, async () => {
+  const { clock, reached } = holdingClock(LONG_SLEEP);
+  const { layer, conversation, usage } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop, when: () => reached.promise }]);
+  const { calls, attempt } = openThen(limited(START + 3_600_000));
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer));
+  assert.equal(error._tag, "AgentUnreachable");
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  const line = prompts.transportDecisionLine("stop", "codex", "the review");
+  assert.equal(conversation().split(line).length - 1, 1);
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => l.outcome), ["interrupted"]);
+});
+
+test("W1-R1-1: Stop answered during a network wait after the question opened: AgentUnreachable at once, no further attempt", { timeout: 5_000 }, async () => {
+  const { clock, reached } = holdingClock((ms) => ms === networkMs(1));
+  const { layer } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop, when: () => reached.promise }]);
+  const { calls, attempt } = openThen(fault("read ECONNRESET", "ECONNRESET"));
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer));
+  assert.equal(error._tag, "AgentUnreachable");
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+});
+
+test("W1-R1-1: q answered during a usage-limit wait after the question opened: UserStopped at once", { timeout: 5_000 }, async () => {
+  const { clock, reached } = holdingClock(LONG_SLEEP);
+  const { layer } = await setup([{ beside: "q", when: () => reached.promise }]);
+  const { calls, attempt } = openThen(limited(START + 3_600_000));
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer));
+  assert.equal(error._tag, "UserStopped");
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+});
+
+test("W1-R1-1: Retry again answered during a usage-limit wait: the question closed, the counters reset, the next attempt at once", { timeout: 5_000 }, async () => {
+  const { clock, reached } = holdingClock(LONG_SLEEP);
+  const { layer, ui, conversation } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.retry, when: () => reached.promise }]);
+  const { calls, attempt } = openThen(limited(START + 3_600_000), ["fault", "ok"]);
+  const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 6"));
+  assert.deepEqual(calls, [1, 2, 3, 4, 5, 6]);
+  assert.ok(conversation().includes(prompts.transportDecisionLine("retry", "codex", "the review")));
+  // The fault after Retry again gets the first retry of a fresh set, not the question.
+  assert.deepEqual(ui.notified.flatMap((e) => (e._tag === "TransportRetrying" ? [e.attempt] : [])), [1, 2, 1]);
+  assert.equal(ui.notified.filter((e) => e._tag === "QuestionPresented").length, 1);
+});

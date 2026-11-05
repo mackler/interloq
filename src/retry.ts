@@ -41,6 +41,10 @@ export type Exhaustion =
 export const ASK: Exhaustion = { kind: "ask" };
 export const FAIL: Exhaustion = { kind: "fail" };
 
+/** How a wait of the loop ended: by itself, or by the open exhaustion question's answer (W1-R1-1). */
+type WaitOutcome<W> = Readonly<{ _tag: "Waited"; value: W }> | Readonly<{ _tag: "Answered" }>;
+const ANSWERED: Readonly<{ _tag: "Answered" }> = { _tag: "Answered" };
+
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
 const isUserStopped = (e: unknown): e is UserStopped => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "UserStopped";
 const isProcessEnded = (e: unknown): e is ProcessEnded => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "ProcessEnded";
@@ -143,6 +147,18 @@ const retrying = <A, E, R>(
         networkTries = 0;
         return "retry" as const;
       });
+    /**
+     * W1-R1-1 (work review 1 of the run of 5 Nov 2026): runs a wait; while the exhaustion question is open, the wait also
+     * ends when the question is answered (`Answered`), and fails with UserStopped when it is answered q. Every wait of
+     * the loop goes through it, so the answer is read before the next attempt however long the wait would have lasted.
+     */
+    const observedWait = <W, WE>(wait: Effect.Effect<W, WE>): Effect.Effect<WaitOutcome<W>, WE | UserStopped> => {
+      const open = slotQuestion(cell.slot);
+      const waited = Effect.map(wait, (value): WaitOutcome<W> => ({ _tag: "Waited", value }));
+      if (open === null) return waited;
+      const answered = Effect.as(Deferred.await(open.answered), ANSWERED as WaitOutcome<W>);
+      return Effect.raceFirst(waited, Effect.raceFirst(answered, quitWatch(open)));
+    };
     let lastFault = "";
     for (let n = 1; ; n++) {
       const open = slotQuestion(cell.slot);
@@ -169,7 +185,7 @@ const retrying = <A, E, R>(
         const began: LimitWaitBegan = { agent: error.agent, limitType: error.limitType, basis: basis.kind, fromMs, untilMs };
         const record = (outcome: LimitWait["outcome"]) => Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ ...began, endedMs, outcome })));
         // Issue #215: the developer may end the wait early; it is recorded as `ended`, and nothing says the limit lifted.
-        const end = yield* Effect.scoped(
+        const observed = yield* observedWait(Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* ui.openWait;
             // Issue #233: the failure Codex recorded is said and written, so the real cause is seen, not only the wait.
@@ -184,7 +200,15 @@ const retrying = <A, E, R>(
             if (end === "endedEarly") yield* reportEarlyEnd(handle.id, { kind: "usageLimit", agent: error.agent, limitType: error.limitType });
             return end;
           }),
-        );
+        ));
+        // An answer that ended the wait interrupted its sleep, which the finalizer recorded as interrupted; nothing says
+        // the limit lifted, and the answer is read before the next attempt.
+        if (observed._tag === "Answered") {
+          yield* answeredNow(n, lastFault);
+          yield* beforeRetry;
+          continue;
+        }
+        const end = observed.value;
         // A wait the developer ended was said above, and never said to lift the limit; a refusal after it is planned
         // from `limitState`, as any refusal is.
         if (end === "ranOut" && basis.kind === "reset") {
@@ -192,6 +216,7 @@ const retrying = <A, E, R>(
           yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });
           yield* say(prompts.usageLimitLiftedLine(error.agent, waitedMs));
         } else if (end === "ranOut") yield* say(prompts.usageLimitTryingAgainLine(error.agent, error.limitType));
+        yield* answeredNow(n, lastFault);
         yield* beforeRetry;
         continue;
       }
@@ -208,9 +233,12 @@ const retrying = <A, E, R>(
         // down and its countdown ends when the wait does.
         const fromMs = yield* Clock.currentTimeMillis;
         const untilMs = fromMs + delay * 1000;
-        yield* endableWait(untilMs, { kind: "retry", agent }, (wait) =>
-          ui.notify({ _tag: "TransportRetrying", agent, purpose, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs, wait }).pipe(Effect.andThen(say(prompts.transportRetryLine(agent, retried, delays.length, delay, error.message)))),
+        yield* observedWait(
+          endableWait(untilMs, { kind: "retry", agent }, (wait) =>
+            ui.notify({ _tag: "TransportRetrying", agent, purpose, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs, wait }).pipe(Effect.andThen(say(prompts.transportRetryLine(agent, retried, delays.length, delay, error.message)))),
+          ),
         );
+        yield* answeredNow(n, error.message);
         yield* beforeRetry;
         continue;
       }
@@ -228,9 +256,12 @@ const retrying = <A, E, R>(
           const delaySeconds = networkRetryDelaySeconds(config, networkTries);
           const fromMs = yield* Clock.currentTimeMillis;
           const untilMs = fromMs + delaySeconds * 1000;
-          yield* endableWait(untilMs, { kind: "network", agent }, (wait) =>
-            ui.notify({ _tag: "NetworkRetrying", agent, purpose, what, attempt: networkTries, code: step.code, delaySeconds, fault: fault.message, fromMs, untilMs, wait }).pipe(Effect.andThen(say(prompts.networkRetryLine(agent, what, step.code, networkTries, delaySeconds)))),
+          yield* observedWait(
+            endableWait(untilMs, { kind: "network", agent }, (wait) =>
+              ui.notify({ _tag: "NetworkRetrying", agent, purpose, what, attempt: networkTries, code: step.code, delaySeconds, fault: fault.message, fromMs, untilMs, wait }).pipe(Effect.andThen(say(prompts.networkRetryLine(agent, what, step.code, networkTries, delaySeconds)))),
+            ),
           );
+          yield* answeredNow(n, fault.message);
           break;
         }
         case "background": {
@@ -239,7 +270,8 @@ const retrying = <A, E, R>(
           // a bound there is not. The sleep ends at once when the developer comes to wait for Claude Code.
           tries++;
           yield* say(prompts.backgroundRetryLine(agent, what, tries, USAGE_LIMIT_RETRY_SECONDS));
-          if (onExhausted.kind === "background") yield* Effect.raceFirst(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)), onExhausted.untilWaiting);
+          if (onExhausted.kind === "background") yield* observedWait(Effect.raceFirst(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)), onExhausted.untilWaiting));
+          yield* answeredNow(n, fault.message);
           break;
         }
         case "fail":
@@ -259,7 +291,7 @@ const retrying = <A, E, R>(
           }
           tries++;
           yield* say(prompts.transportBesideLine(agent, what, tries, USAGE_LIMIT_RETRY_SECONDS));
-          yield* Effect.raceFirst(Effect.raceFirst(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)), Deferred.await(open.answered)), quitWatch(open));
+          yield* observedWait(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)));
           yield* answeredNow(n, fault.message);
           break;
         }
