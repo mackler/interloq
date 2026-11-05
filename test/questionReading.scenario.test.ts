@@ -13,6 +13,19 @@ const entryWith = (question: string): S.QuestionEntry =>
   entryOf({ id: "Q1", context: "A context.", question, reason: "it is open", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: "A" });
 const UNREADABLE = "What do you want to make Interloq try again?";
 const READABLE = "What event should cause Interloq to try again to prepare a question?";
+/** The agreed question as the terms call returns it, its wording that of the entry, each "Interloq" referring to one explanation. */
+const divided = (pieces: readonly S.Piece[]): readonly S.Piece[] =>
+  pieces.flatMap((p) => p.text.split(/(Interloq)/).filter((t) => t !== "").map((t) => ({ text: t, ref: t === "Interloq" ? "i" : "", code: false })));
+const termsFor = (e: S.QuestionEntry): S.TermsEntry => ({
+  id: e.id,
+  explanations: [{ id: "i", term: "Interloq", senses: ["The program that runs the two coding agents against one project."] }],
+  context: e.context,
+  history: e.history,
+  question: divided(e.question),
+  reason: e.reason,
+  proposed_answers: e.proposed_answers,
+});
+const textOf = (pieces: readonly { text: string }[]) => pieces.map((p) => p.text).join("");
 const closings = [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }];
 
 test("(a) the reading raises an issue against Q1's last sentence, Claude Code amends it, and the agreed list carries the amendment", async () => {
@@ -23,9 +36,17 @@ test("(a) the reading raises an issue against Q1's last sentence, Claude Code am
     closings,
     reviews: [{ issues: [] }, { issues: [] }],
     readings: [{ issues: [issue("H-R1-1", "the last sentence reads as asking what to make")] }, { issues: [] }],
+    // Work review 1 (W1-R1-3): the terms are written before the first question, from questions.json as the reading left it.
+    terms: [{ output: { entries: [termsFor(entryWith(READABLE))] }, onCall: () => { atTerms = fs.readFileSync(path.join(runDirOf(dir), "questions.json"), "utf8"); } }],
   });
-  await runRefinement(layer, "task", "onRequest");
+  let atTerms = "";
+  await runRefinement(layer, "task", "unchecked");
   const records = runDirOf(dir);
+  const stored = (JSON.parse(atTerms) as { questions: { id: string; question: { text: string }[] }[] }).questions;
+  assert.equal(textOf(stored.find((q) => q.id === "Q1")!.question), READABLE);
+  const terms = JSON.parse(fs.readFileSync(path.join(records, "terms.json"), "utf8")) as { entries: { id: string; question: { text: string }[] }[] };
+  assert.equal(probe.planner.termsPrompts.length, 1);
+  assert.equal(textOf(terms.entries.find((e) => e.id === "Q1")!.question), READABLE);
   assert.equal(probe.reviewer.readingPrompts.length, 2);
   for (const file of ["question-reading/review-1.json", "question-reading/round-1.json", "question-reading-log.json"]) assert.ok(fs.existsSync(path.join(records, file)), file);
   const log = JSON.parse(fs.readFileSync(path.join(records, "question-reading-log.json"), "utf8")) as { entries: { id: string }[] };
