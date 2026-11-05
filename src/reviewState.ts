@@ -527,15 +527,12 @@ const onFinishingBoundary = (s0: ReviewState, held: Ending, answers: readonly Bo
     const q = a.beside.question;
     if (q.kind === "dispute") {
       if (held.result !== "converged") continue;
-      const applies = !keepsPlannerPosition(q.dispute.options, a.text);
-      acknowledged.push(a.beside.key);
-      if (!applies) {
-        commands.push(after(a.text));
-        continue;
-      }
+      // Every answer is recorded before it is acknowledged (review P1-R1-1); only its position decides whether it applies.
       const r = recordDispute(s, q.dispute, a.text);
       s = r.state;
       commands.push(...r.commands);
+      acknowledged.push(a.beside.key);
+      if (!r.applies) continue;
       if (s.setup.leaveOnDecision) result = "revise";
       else toApply = true;
     } else if (q.kind === "unchanged" && parseUnchangedAnswer(a.text) === "retry" && held.result === "converged") {

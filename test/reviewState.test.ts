@@ -1068,7 +1068,7 @@ test("#243: a disputed reraised issue opens a dispute beside the review and goes
   const t = disputed(setup);
   assert.equal(opened(t).length, 1);
   assert.equal(opened(t)[0].beside.question.kind, "dispute");
-  assert.deepEqual(last(t), { kind: "CallPlanner", round: 1 });
+  assert.deepEqual(last(t), { kind: "CallPlanner", round: 1, investigating: [] });
 });
 
 /** The disputed round finished with the issue rejected again and the file unchanged, then the boundary. */
@@ -1128,6 +1128,19 @@ test("#243: a Codex-position dispute answer during the final review is applied a
   const left = advance(leaving.state, { kind: "BoundaryReached", answers: [{ key: wkey, text: prompts.REVIEWER_POSITION }] } as TestEvent);
   assert.ok(!kinds(left).includes("RecordDecision") && !kinds(left).includes("AcknowledgeDisputes"));
   assert.deepEqual(last(left), { kind: "Finish", result: "revise" });
+});
+
+test("#243 (review P1-R1-1): a planner-position dispute answer collected at a converged finishing boundary is recorded and logged before it is acknowledged", () => {
+  const t = disputed(setup);
+  const key = keyOf(t, "dispute");
+  const final = run(t, response([["A", "rejected"]]), { kind: "FileObserved", hash: "h1", text: "x" }, { kind: "BoundaryReached", answers: [] } as TestEvent, { kind: "ReviewDecoded", review: { issues: [] } });
+  const kept = advance(final.state, { kind: "BoundaryReached", answers: [{ key, text: prompts.PLANNER_POSITION }] } as TestEvent);
+  const k = kinds(kept);
+  assert.ok(k.indexOf("RecordDecision") >= 0 && k.indexOf("RecordDecision") < k.indexOf("AcknowledgeDisputes"), k.join(","));
+  assert.ok(k.indexOf("SaveLog") >= 0 && k.indexOf("SaveLog") < k.indexOf("AcknowledgeDisputes"), k.join(","));
+  assert.ok(!k.includes("ApplyDecisions"));
+  assert.ok(kept.state.log.some((e) => e.id === "A" && e.source === "user"));
+  assert.deepEqual(last(kept), { kind: "Finish", result: "converged" });
 });
 
 test("#243: initialState continuing from round 4 makes the first review round 5", () => {
