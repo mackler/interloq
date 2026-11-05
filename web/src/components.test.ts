@@ -45,7 +45,7 @@ import { type Mark, markedTabName, markGlyph, type Preferences } from "./notify.
 import { readPreferences, writePreferences } from "./storage.ts";
 import { AudioContextStub, NotificationStub, shownOf } from "./test-setup.ts";
 import { helloChain } from "./testChain.ts";
-import { queueEdited } from "../../src/chain.ts";
+import { DEFAULT_SETTINGS, OFF_SETTINGS, queueEdited } from "../../src/chain.ts";
 const ref = (text: string, id: string) => ({ text, ref: id, code: false });
 
 // Plan step 4.5: the components, mounted in jsdom.
@@ -1122,6 +1122,24 @@ describe("App and the draft", () => {
         flushSync();
         expect(root.querySelectorAll(`[data-queued-mark]`).length).toBe(1);
         expect(root.textContent?.split(prompts.queuedMarkText(1)).length).toBe(2);
+      });
+      // Issue #253 (decision Q2): while the switch is off, no Add to queue, no queued mark and no queue editor; the
+      // queue as it was once the switch is on again.
+      test("the switch off hides Add to queue, the queued marks and the queue editor; on shows them again", async () => {
+        const { root, ws } = await listedImplementation();
+        const other = { ...fixture, id: "99", title: "other" };
+        ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture, other] } });
+        const queued = { ...helloChain, queue: { source: "queue" as const, entries: [{ item: fixture.id as ItemId, title: fixture.title }], applied: [] } };
+        ws.receive({ type: "chain", state: { ...queued, settings: OFF_SETTINGS } });
+        flushSync();
+        expect(root.querySelector("button[name=queue-add]")).toBe(null);
+        expect(root.querySelector("[data-queued-mark]")).toBe(null);
+        expect(root.querySelector(`[aria-label="${prompts.QUEUE_HEADING}"]`)).toBe(null);
+        ws.receive({ type: "chain", state: { ...queued, settings: DEFAULT_SETTINGS } });
+        flushSync();
+        expect(root.querySelector(`button[name=queue-add][data-item="99"]`)).not.toBe(null);
+        expect(root.querySelectorAll("[data-queued-mark]").length).toBe(1);
+        expect(root.querySelector(`section.queue-editor[aria-label="${prompts.QUEUE_HEADING}"]`)).not.toBe(null);
       });
       test("a reconnection's hello sends no edit again", async () => {
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

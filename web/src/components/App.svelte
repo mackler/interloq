@@ -238,6 +238,9 @@
     if (Result.isSuccess(id)) editQueue({ _tag: "Add", item: id.success, title: item.title });
   };
   const queue = $derived(mode === "implementation" ? queueShown(view) : null);
+  // Issue #253 (decision Q2): while the chain's switch is off, the list offers no Add to queue, shows no queued mark and
+  // no queue editor; the queue itself, its source and the edits pending are kept as they are.
+  const queueOn = $derived(chain !== null && chain.effective.enabled);
   const listedIds = $derived(tab.items._tag === "Listed" ? tab.items.items.map((i) => i.id) : null);
   /** Selecting a tab that shows its list asks for its items every time, so a revisited list is current (S15). */
   const selectTab = (value: RunMode) => {
@@ -510,8 +513,8 @@
       <Notices notices={view.notices} onDismiss={dismiss} />
       {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} runsOpen={view.chainRunsOpen} onRunsToggle={toggleChainRuns} />{/if}
       {#if preparation !== null}<PreparationControl view={preparation} onChange={setPreparation} />{/if}
-      {#if queue !== null && queue.source === "queue"}<QueueEditor {queue} listed={listedIds} {offline} onEdit={editQueue} />{/if}
-      <ItemList {mode} queued={queue?.entries.map((e) => e.item) ?? []} onQueue={mode === "implementation" ? addToQueue : null} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} markOf={(item: ListedItem) => preparationMarkOf(view, item)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
+      {#if queueOn && queue !== null && queue.source === "queue"}<QueueEditor {queue} listed={listedIds} {offline} onEdit={editQueue} />{/if}
+      <ItemList {mode} queued={queueOn ? (queue?.entries.map((e) => e.item) ?? []) : []} onQueue={mode === "implementation" && queueOn ? addToQueue : null} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} markOf={(item: ListedItem) => preparationMarkOf(view, item)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
