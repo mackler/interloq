@@ -201,3 +201,144 @@ test("(4, W1-R1-3) the question after an investigation that ends without agreeme
     assert.ok(details.includes(want), `${want} in the details:\n${details}`);
   }
 });
+
+// Scenario 6 of S7 (an analysis of a question with the third choice has three columns) is in test/decision.test.ts,
+// "Help me decide on a disputed pause with a resolution analyzes the three choices in three columns", over testLayer.
+const B = "P1-R2-1";
+const reversing = (action: S.Action, reverses = ID) => ({ ...respond([[B, action]]), dispositions: respond([[B, action]]).dispositions.map((d) => ({ ...d, reverses })) });
+const files = (dir: string): string[] => fs.readdirSync(dir, { recursive: true }).map(String);
+const pauseOf = (q: ReturnType<typeof disputes>[number] | undefined): string => (q !== undefined && q.origin.kind === "pause" ? q.origin.pause : "");
+
+test("(8) a new reversal of an issue that had its investigation gets its own investigation turn before any question", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["2"],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "rejected"]]) }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: reversing("rejected") }, { output: reversing("rejected") }, { output: respond([[B, "rejected"]]) }],
+    reviews: [{ issues: [issue(ID)] }, { issues: [issue(ID)] }, { issues: [issue(B)] }, { issues: [issue(B)] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 9 },
+  });
+  await runTask(layer);
+  assert.ok(files(probe.dir).some((f) => f.endsWith(path.join("planning-1", "cc-3-investigation-1.json"))), files(probe.dir).join(","));
+  const asked = disputes(probe.ui);
+  assert.equal(asked.length, 1);
+  assert.equal(pauseOf(asked[0]), "reversal");
+  const tags = tagsOf(probe.ui.notified);
+  const fourthReview = tags.map((t, i) => (t === "ReviewReceived" ? i : -1)).filter((i) => i >= 0)[3];
+  assert.ok(tags.indexOf("QuestionPresented") > fourthReview, tags.join(","));
+});
+
+test("(9) a re-raised point that the investigating response turns into a reversal is asked as a reversal at the next review", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["2"],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: respond([[B, "rejected"]]) }, { output: reversing("accepted"), plan: "v3" }, { output: respond([[B, "rejected"]]) }],
+    reviews: [{ issues: [issue(ID)] }, { issues: [issue(B)] }, { issues: [issue(B)] }, { issues: [issue(B)] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 9 },
+  });
+  await runTask(layer);
+  assert.ok(probe.planner.prompts.some((p) => p.includes(prompts.investigationNote([B]))));
+  const asked = disputes(probe.ui);
+  assert.equal(asked.length, 1, JSON.stringify(asked.map(pauseOf)));
+  assert.equal(pauseOf(asked[0]), "reversal");
+});
+
+test("(10) a reversal whose investigation reply drops reverses is asked as a re-raised point, its record [reraised]", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["2"],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: reversing("rejected") }, { output: respond([[B, "rejected"]]) }, { output: respond([[B, "rejected"]]) }],
+    reviews: [{ issues: [issue(ID)] }, { issues: [issue(B)] }, { issues: [issue(B)] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 9 },
+  });
+  await runTask(layer);
+  assert.ok(files(probe.dir).some((f) => f.endsWith(path.join("planning-1", "cc-2-investigation-1.json"))));
+  const entry = planLog(probe.dir).filter((e) => e.id === B && e.source === "review" && e.round === 2).at(-1);
+  assert.deepEqual(entry?.source === "review" ? entry.investigations : null, [{ pause: "reraised", other: null }]);
+  const asked = disputes(probe.ui);
+  assert.equal(asked.length, 1);
+  assert.equal(pauseOf(asked[0]), "reraised");
+});
+
+// A corrective reply may change only the action and rationale of an accepted disposition (correctiveValidation), so the
+// dispute it can first raise is a second clarification: an accepted disposition turned into a clarification request.
+test("(12) a second clarification first arising in a corrective reply gets its own investigation turn before any question", async () => {
+  const selfAccepted = { ...respond([[B, "accepted"]]), self_corrections: [{ id: ID, new_action: "accepted" as const, explanation: "the point holds", concern: "", remedy: "", resolution: null }] };
+  const clarifying = respond([[ID, "clarification_requested"]]);
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["2"],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: clarifying }, { output: selfAccepted, plan: "v2" }, { output: respond([[ID, "accepted"]]) }, { output: clarifying }, { output: clarifying }, { output: clarifying }, { output: clarifying }],
+    reviews: [{ issues: [issue(ID)] }, { issues: [issue(B)] }, { issues: [issue(ID)] }, { issues: [issue(ID)] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 9 },
+  });
+  await runTask(layer);
+  const all = files(probe.dir);
+  assert.ok(all.some((f) => f.endsWith(path.join("planning-1", "cc-3-corrective-1.json"))), all.join(","));
+  assert.ok(all.some((f) => f.endsWith(path.join("planning-1", "cc-3-investigation-1.json"))), all.join(","));
+  const asked = disputes(probe.ui);
+  assert.equal(asked.length, 1, JSON.stringify(asked.map(pauseOf)));
+  assert.equal(pauseOf(asked[0]), "secondClarification");
+  const tags = tagsOf(probe.ui.notified);
+  const fourthReview = tags.map((t, i) => (t === "ReviewReceived" ? i : -1)).filter((i) => i >= 0)[3];
+  assert.ok(tags.indexOf("QuestionPresented") > fourthReview, tags.join(","));
+});
+
+test("(14) an unmarked question-list dispute is settled by the agents with no investigation, over testLayer", async () => {
+  const qv = (n: string) => questionEntry("Q1", `question Q1, ${n}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "r", default_answer: "A" });
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["A"],
+    steps: [{ output: { questions: [qv("first")] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [qv("first")] } }, { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [qv("first")] } }],
+    closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Complete.") }],
+    reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 9 },
+  });
+  await runRefinement(layer);
+  assert.deepEqual(disputes(probe.ui), []);
+  const conversation = read(probe.dir, "conversation.md");
+  assert.ok(conversation.includes(prompts.WORDING_DISPUTE_HEADING));
+  assert.ok(!conversation.includes(prompts.INVESTIGATION_HEADING), conversation.slice(-1500));
+  assert.ok(!probe.planner.prompts.some((p) => p.includes(prompts.investigationNote(["Q-R1-1"]))));
+  assert.ok(!files(probe.dir).some((f) => /investigation-\d+\.json$/.test(f)));
+});
+
+const W = "W1-R1-1";
+const WA = "W1-R2-1";
+const workLog = (dir: string): S.LogEntry[] => JSON.parse(read(dir, "work-review-log.json")).entries;
+const workRejects = (resolution: { text: string; changes: string[] } | null) => ({ ...respond([[W, "rejected"]]), dispositions: respond([[W, "rejected"]]).dispositions.map((d) => ({ ...d, resolution })) });
+
+test("(13) an investigated work dispute beside an accepted correction leaves for planning, and the next work review asks it at once", async () => {
+  const round2 = { ...respond([[W, "rejected"], [WA, "accepted"]]), dispositions: [...workRejects({ text: "keep it behind a check", changes: [] }).dispositions, ...respond([[WA, "accepted"]]).dispositions] };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["2"],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: workRejects(null) }, { output: round2 }, { output: noQuestions, plan: "v2" }, { output: workRejects(null) }],
+    reviews: [{ issues: [] }, { issues: [issue(W)] }, { issues: [issue(W), issue(WA)] }, { issues: [] }, { issues: [{ ...issue(W), evidence: "the check does not meet the concern" }] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+    config: { maxIdleRounds: 9 },
+  });
+  await runTask(layer);
+  assert.ok(probe.planner.prompts.some((p) => p.includes(prompts.investigationNote([W]))), "the work response carried the investigation note");
+  const recorded = workLog(probe.dir).find((e) => e.id === W && e.source === "review" && e.round === 2);
+  assert.deepEqual(recorded?.source === "review" ? recorded.investigations : null, [{ pause: "reraised", other: null }]);
+  const asked = disputes(probe.ui);
+  assert.equal(asked.length, 1, "asked once, in work review 2");
+  assert.equal(pauseOf(asked[0]), "reraised");
+  assert.equal(asked[0]!.options.length, 3, "with the third option from the entry's resolution");
+  assert.ok(blocksText(asked[0]!.attached?.blocks ?? []).join("\n").includes("the check does not meet the concern"), "with that review's evidence");
+  assert.ok(fs.existsSync(path.join(probe.dir, "work-review-2")));
+});
+
+test("(13) a work resolution carried out in the revision and not raised again by the next work review is said agreed", async () => {
+  const round2 = { ...respond([[W, "rejected"], [WA, "accepted"]]), dispositions: [...workRejects({ text: "keep it behind a check", changes: [] }).dispositions, ...respond([[WA, "accepted"]]).dispositions] };
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: workRejects(null) }, { output: round2 }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [issue(W)] }, { issues: [issue(W), issue(WA)] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+    config: { maxIdleRounds: 9 },
+  });
+  await runTask(layer);
+  assert.deepEqual(disputes(probe.ui), []);
+  const conversation = read(probe.dir, "conversation.md");
+  assert.ok(conversation.includes(prompts.RESOLUTION_AGREED_HEADING), conversation.slice(-2000));
+  assert.ok(conversation.includes("keep it behind a check"));
+});

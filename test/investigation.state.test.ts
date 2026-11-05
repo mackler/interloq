@@ -256,3 +256,64 @@ test("a decision on a review with no counted issue is logged before the loop con
   assert.deepEqual(savedLogs(empty), []);
   assert.ok(!kinds(empty).includes("RecordDecision"));
 });
+
+// The second property of S6 (W1-R1-4): over generated rounds, a raised id whose current review entry is not accepted in
+// full and that was investigated in an earlier round is, at that review, asked or settled, never absent from both.
+const ownIdOf = (c: ReviewCommand): string | null => (c.kind === "AskDecision" && c.asks.kind === "pause" && "id" in c.asks.facts ? c.asks.facts.id : null);
+test("property: an investigated open point raised again is asked or settled at that review, never absent from both", () => {
+  const IDS = ["A", "B"] as const;
+  const ACTIONS = ["accepted", "rejected", "partially_accepted", "no_change_needed", "clarification_requested"] as const;
+  const roundArb = fc.record({
+    raised: fc.subarray([...IDS], { minLength: 1 }),
+    actions: fc.tuple(fc.constantFrom(...ACTIONS), fc.constantFrom(...ACTIONS)),
+    reverses: fc.boolean(),
+    selfCorrection: fc.option(fc.record({ id: fc.constantFrom(...IDS), action: fc.constantFrom("accepted" as const, "rejected" as const) }), { nil: null }),
+  });
+  fc.assert(
+    fc.property(fc.array(roundArb, { minLength: 1, maxLength: 5 }), fc.constantFrom("user" as const, "agents" as const), (rounds, policy) => {
+      let t = begin([], { disputesSettledBy: policy, subject: policy === "agents" ? "questions" : { plan: 1 } });
+      let hash = 0;
+      for (const r of rounds) {
+        if (last(t).kind !== "CallReviewer") return;
+        const current = (id: string) => t.state.log.filter((e) => e.id === id && !e.superseded).at(-1);
+        const due = r.raised.filter((id) => {
+          const e = current(id);
+          // Not accepted in full as behavior 7 counts it (NOT_ACCEPTED_IN_FULL of src/issueLog.ts): a first clarification request is no dispute.
+          return e !== undefined && e.source === "review" && ["rejected", "partially_accepted", "no_change_needed"].includes(e.action) && t.state.investigated.has(id);
+        });
+        t = run(t, reviewed(...r.raised));
+        const asked = new Set<string>();
+        const settledText: string[] = [];
+        const collect = (x: Transition) => {
+          for (const c of x.commands) if (c.kind === "Converse") settledText.push(c.markdown);
+          const id = ownIdOf(last(x));
+          if (id !== null) asked.add(id);
+        };
+        collect(t);
+        while (last(t).kind === "AskDecision") {
+          t = advance(t.state, { kind: "DecisionGiven", text: "" });
+          collect(t);
+        }
+        for (const id of due) assert.ok(asked.has(id) || settledText.some((m) => m.includes(id)), `review raising [${r.raised}]: ${id} neither asked nor settled`);
+        if (last(t).kind !== "CallPlanner") return;
+        const plain = respond(r.raised.map((id, i) => [id, r.actions[i]!] as [string, S.Action]));
+        const withExtras: S.PlannerResponse = {
+          ...plain,
+          dispositions: plain.dispositions.map((d) => (r.reverses && d.action !== "accepted" ? { ...d, reverses: IDS.find((o) => o !== d.id && current(o)?.action === "accepted") ?? "" } : d)),
+          self_corrections: r.selfCorrection === null || current(r.selfCorrection.id) === undefined || r.raised.includes(r.selfCorrection.id) ? [] : [{ id: r.selfCorrection.id, new_action: r.selfCorrection.action, explanation: "x", concern: "c", remedy: "m", resolution: null }],
+        };
+        const response = Result.isSuccess(roundCheckOf(t.state)(withExtras)) ? withExtras : plain;
+        t = advance(t.state, { kind: "ResponseDecoded", response, resultText: "", costUsd: 0.1 });
+        for (let guard = 0; guard < 20 && !["CallReviewer", "Finish", "Halt", "AskLimit", "AskUnchanged"].includes(last(t).kind); guard++) {
+          const k = last(t).kind;
+          if (k === "ObserveFile") t = advance(t.state, observed(`g${++hash}`));
+          else if (k === "CallInvestigation") t = advance(t.state, responded(response, "InvestigationDecoded"));
+          else if (k === "CallCorrective") t = advance(t.state, responded(response, "CorrectionDecoded"));
+          else if (k === "AskDecision") t = advance(t.state, { kind: "DecisionGiven", text: "" });
+          else return;
+        }
+      }
+    }),
+    { numRuns: 200 },
+  );
+});
