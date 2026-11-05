@@ -8,7 +8,7 @@ import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote, Sk
 import type { ChainSource } from "./chainQueue.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import type { CompletedWork, Ending, ItemReturn } from "./ending.ts";
-import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { CORRECTION_PASSAGES_FIELD, FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -4767,6 +4767,35 @@ ${PASSAGE_RULE}
 Do not modify any file.`;
 
 /** What the program refuses in a reply of the phase (issue #216): each with the passage or the reason it concerns. */
+/**
+ * Issue #232: what a response can do wrong against the corrections accepted earlier in its review loop, in the order
+ * src/keptCorrections.ts reports them. `passage` is "" where the kind names none.
+ */
+export const KEPT_CORRECTION_PROBLEM_KINDS = ["entryMissing", "entryDuplicate", "entryNotAccepted", "passageBlank", "passageNotInReply", "correctionMissing"] as const;
+export type KeptCorrectionProblem = Readonly<{ kind: (typeof KEPT_CORRECTION_PROBLEM_KINDS)[number]; id: string; passage: string }>;
+/** One problem of a response against its accepted corrections, as the repair prompt and the halt name it. */
+export function keptCorrectionProblemText(p: KeptCorrectionProblem): string {
+  switch (p.kind) {
+    case "entryMissing":
+      return `${CORRECTION_PASSAGES_FIELD} has no entry for ${p.id}, which you accept`;
+    case "entryDuplicate":
+      return `${CORRECTION_PASSAGES_FIELD} has two entries for ${p.id}`;
+    case "entryNotAccepted":
+      return `${CORRECTION_PASSAGES_FIELD} has an entry for ${p.id}, which is neither accepted in this response nor a correction accepted earlier in this review`;
+    case "passageBlank":
+      return `${CORRECTION_PASSAGES_FIELD} names a blank passage for ${p.id}`;
+    case "passageNotInReply":
+      return `the passage ${JSON.stringify(p.passage)} named for ${p.id} is not in the file you return`;
+    case "correctionMissing":
+      return `the passage ${JSON.stringify(p.passage)}, which carries the correction you accepted for ${p.id}, is no longer in the file you return`;
+  }
+}
+/** The halt's text where a response was refused twice for dropping an accepted correction (issue #232). */
+export const correctionDroppedText = (problems: readonly KeptCorrectionProblem[]): string =>
+  `Claude Code's response was refused twice for its accepted corrections: ${problems.map(keptCorrectionProblemText).join("; ")}.`;
+/** The validation repair turn of a response refused for its accepted corrections (issue #232); S4 of its plan words the rule. */
+export const keptCorrectionsRepairPrompt = (problems: readonly KeptCorrectionProblem[]): string => validationRepairPrompt(problems.map(keptCorrectionProblemText), []);
+
 export const ISSUE_TEXT_PROBLEM_KINDS = ["invalidText", "blankReason", "blankPassage", "passageNotInReply", "notTheDevelopers", "protectedMissing", "decidedBeforeMissing", "decidedAfterMissing"] as const;
 export type IssueTextProblem = Readonly<{ kind: (typeof ISSUE_TEXT_PROBLEM_KINDS)[number]; subject: string }>;
 const INVALID_TEXT_WORDS: Readonly<Record<string, string>> = {

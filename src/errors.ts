@@ -11,7 +11,7 @@ import { FINDING_PROBLEM_KINDS, type FindingProblem } from "./requirementsFindin
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
 import type { OnExpiry } from "./protocol.ts";
 import type { TrackerError } from "./services.ts";
-import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText, findingsInvalidText } from "./prompts.ts";
+import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText, findingsInvalidText, KEPT_CORRECTION_PROBLEM_KINDS, type KeptCorrectionProblem, correctionDroppedText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -149,6 +149,8 @@ export class SkipConditionInvalid extends Data.TaggedError("SkipConditionInvalid
  * Issue #216: Claude Code's issue brought up to date that dropped or altered a passage of the developer's, or that the
  * program otherwise refused, twice (the validation repair turn of behavior 10 first).
  */
+/** A response of a review loop refused twice for dropping or misnaming the passages of an accepted correction (issue #232). */
+export class CorrectionDropped extends Data.TaggedError("CorrectionDropped")<{ readonly problems: readonly KeptCorrectionProblem[] }> {}
 export class PassageMissing extends Data.TaggedError("PassageMissing")<{ readonly problems: readonly IssueTextProblem[] }> {}
 /**
  * Issue #47: Claude Code's classification of the requirements review's accepted findings that the program refused
@@ -279,6 +281,7 @@ export type RunError =
   | QuestionInvalid
   | SkipConditionInvalid
   | PassageMissing
+  | CorrectionDropped
   | FindingsInvalid
   | InterviewTurnInvalid
   | AgentUnreachable
@@ -367,6 +370,8 @@ export const describe = (error: RunErrorFields): string => {
       return skipConditionInvalidText(error.problems);
     case "PassageMissing":
       return passageMissingText(error.problems);
+    case "CorrectionDropped":
+      return correctionDroppedText(error.problems);
     case "FindingsInvalid":
       return findingsInvalidText(error.problems);
     case "InterviewTurnInvalid":
@@ -451,6 +456,7 @@ const RunErrorData = Schema.Union([
     questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Union([Schema.Struct({ kind: Schema.Literals(SUBJECT_PROBLEM_KINDS), subject: Schema.String }), Schema.Struct({ kind: Schema.Literal("figureTooLarge"), subject: Schema.String, bytes: Schema.Int })])) })),
   }),
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
+  Schema.Struct({ _tag: Schema.Literal("CorrectionDropped"), problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(KEPT_CORRECTION_PROBLEM_KINDS), id: Schema.String, passage: Schema.String })) }),
   Schema.Struct({ _tag: Schema.Literal("PassageMissing"), problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(ISSUE_TEXT_PROBLEM_KINDS), subject: Schema.String })) }),
   Schema.Struct({
     _tag: Schema.Literal("FindingsInvalid"),
