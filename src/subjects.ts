@@ -21,6 +21,7 @@ import { sameBlocks, samePieces } from "./pieces.ts";
 import { questionProblems } from "./question.ts";
 import { validatePlan } from "./plan.ts";
 import { normalizeQuestionList } from "./schemaNormalize.ts";
+import { analysisTexts, planTexts, questionListTexts, termsTexts } from "./keptCorrections.ts";
 import { Store, Ui } from "./services.ts";
 import type { VerdictRecord } from "./records.ts";
 import { verdictResponseValidation, verdictValidation } from "./verdictValidation.ts";
@@ -77,6 +78,7 @@ export function questionSubject(task: string): Subject<QuestionListResponse, Que
     disputesSettledBy: "agents",
     reviewSchema: S.Review,
     prepare: null,
+    keepsCorrections: { textsOf: (r) => questionListTexts(r.questions), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
     document: Effect.map(Effect.flatMap(Store, (store) => store.loadQuestions()), (file): ShownDocument => ({ _tag: "Markdown", text: renderQuestions(file, "alt") })),
   };
 }
@@ -125,6 +127,7 @@ export function updateSubject(): Subject<S.UpdateResponse, S.UpdateWrite> {
     disputesSettledBy: "agents",
     reviewSchema: S.Review,
     prepare: null,
+    keepsCorrections: null,
     document: Effect.gen(function* () {
       const store = yield* Store;
       const file = yield* store.loadIssue();
@@ -165,6 +168,7 @@ export function termsSubject(questions: QuestionsFile["questions"]): Subject<Ter
     disputesSettledBy: "agents",
     reviewSchema: S.Review,
     prepare: null,
+    keepsCorrections: { textsOf: (r) => termsTexts(r.entries), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
     document: Effect.gen(function* () {
       const entries = yield* (yield* Store).loadTerms();
       return { _tag: "Markdown", text: yield* Effect.fromResult(renderTerms(entries, "alt")) } satisfies ShownDocument;
@@ -237,6 +241,7 @@ export function requirementsSubject(): Subject<S.RequirementsResponse, S.Require
     disputesSettledBy: "user",
     reviewSchema: S.Review,
     prepare: null,
+    keepsCorrections: null,
     document: Effect.map(Effect.flatMap(Store, (store) => store.readContext()), ({ requirements }): ShownDocument | null => (requirements === null ? null : { _tag: "Markdown", text: requirements })),
   };
 }
@@ -266,6 +271,7 @@ export function planSubject(root: RunRoot, phase: number, withRequirements: bool
     disputesSettledBy: "noWorkEffect",
     reviewSchema: S.EffectReview,
     prepare: null,
+    keepsCorrections: { textsOf: (r) => planTexts(r.plan), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
     document: Effect.map(Effect.flatMap(Store, (store) => store.readContext()), ({ plan }): ShownDocument | null => (plan === null ? null : { _tag: "Markdown", text: plan })),
   };
 }
@@ -327,6 +333,7 @@ export function decisionSubject(k: number, phase: number, format: string, valida
     disputesSettledBy: "user",
     reviewSchema: S.Review,
     prepare: null,
+    keepsCorrections: { textsOf: (r) => analysisTexts(r.analysis), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
     document: Effect.map(Effect.flatMap(Store, (store) => store.loadAnalysis(k)), (analysis): ShownDocument => ({ _tag: "Analysis", analysis })),
   };
 }
@@ -358,6 +365,7 @@ export function workSubject(task: string, phase: number, withRequirements: boole
       const store = yield* Store;
       yield* store.changeRecord(phase);
     }),
+    keepsCorrections: null,
     document: Effect.map(Effect.flatMap(Store, (store) => store.readChangeRecord(phase)), (text): ShownDocument => ({ _tag: "Diff", text })),
   };
 }
@@ -396,6 +404,7 @@ export function verdictSubject(n: number, phase: number, phaseRecord: VerdictRec
     disputesSettledBy: "user",
     reviewSchema: S.Review,
     prepare: null,
+    keepsCorrections: null,
     document: Effect.map(Effect.flatMap(Store, (store) => store.loadVerdict(n)), (record): ShownDocument => ({ _tag: "Markdown", text: record.missing })),
   };
 }

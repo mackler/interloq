@@ -464,7 +464,7 @@ export class ScriptedPlanner implements PlannerShape {
         const callId = `scripted-${++root.callCount}`;
         const notify = (e: UiEvent) => (root.ui === null ? Effect.void : root.ui.notify(e));
         return notify({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId }).pipe(
-          Effect.andThen(this.gated(step ?? {}, Effect.succeed({ output: step === undefined ? { entries: [] } : step.output, resultText: "", costUsd: 0.01 }))),
+          Effect.andThen(this.gated(step ?? {}, Effect.succeed({ output: step === undefined ? { entries: [] } : withCorrectionPassages(step.output), resultText: "", costUsd: 0.01 }))),
           Effect.onExit((exit) => notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit), callId })),
         );
       });

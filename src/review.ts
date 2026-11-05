@@ -25,6 +25,7 @@ import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { ASK, type Exhaustion, FAIL, withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
 import { sameDocument, type ShownDocument } from "./reviewedDocument.ts";
+import { keptBaselineOf, keptCorrectionsValidation, restatable } from "./keptCorrections.ts";
 
 /** Codex's reply text, decoded as JSON and then as a review; text that is not JSON is a decode failure. */
 
@@ -87,7 +88,14 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   prepare: Effect.Effect<void, RunError, Services> | null;
   /** The document under review as it now stands, which the page shows (issue #86); null where its file is absent. */
   document: Effect.Effect<ShownDocument | null, RunError, Services>;
+  /**
+   * Issue #232: how a response of a subject that rewrites its reviewed file whole is held to the corrections accepted
+   * earlier in its loop (src/keptCorrections.ts): the texts of the file it returns and its correction_passages; null for
+   * a subject whose response is not so held.
+   */
+  keepsCorrections: KeepsCorrections<R> | null;
 }>;
+export type KeepsCorrections<R> = Readonly<{ textsOf: (response: R) => readonly string[]; entriesOf: (response: R) => readonly S.CorrectionPassages[] }>;
 
 /** Notifies the page of a subject's document as it now stands (issue #86), for a document written outside a review loop. */
 export const showDocument = <R extends PlannerResponse, D>(subject: Subject<R, D>): Effect.Effect<void, RunError, Services> =>
@@ -310,6 +318,26 @@ export const bothValidations =
     return Result.map(second(a.success.value), (b) => ({ value: b.value, notes: [...a.success.notes, ...b.notes] }));
   };
 
+/**
+ * Issue #232: a response held to the corrections accepted earlier in its loop, judged against the log as the round began
+ * and the round's validated dispositions, whose reverses validateRound normalized, so that only a reversal the loop will
+ * pause on exempts a dropped passage. It runs after the round's validation; a reply whose round fails gets that failure.
+ */
+const keptCheckOf = <R extends PlannerResponse>(
+  kept: KeepsCorrections<R>,
+  state: ReviewState,
+  check: ReturnType<typeof roundCheckOf>,
+  roundCheck: Validation<R>,
+): Validation<R> => {
+  const log = state.current.startLog;
+  const validation = keptCorrectionsValidation<R>(
+    { baseline: keptBaselineOf(log, state.setup.phase), restatable: restatable(log, state.setup.phase), dispositionsOf: (reply) => Result.getOrElse(Result.map(check(reply), (r) => r.dispositions), () => []) },
+    kept.textsOf,
+    kept.entriesOf,
+  );
+  return (reply) => (Result.isFailure(check(reply)) ? roundCheck(reply) : validation(reply));
+};
+
 export const applyDecisions = <R extends PlannerResponse, D>(subject: Subject<R, D>): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
     const call = yield* planningCall(subject.applyDecisions.prompt((yield* Store).root), subject.applyDecisions.schema, "planning", "records", yield* resolveValidation(subject.applyDecisions.validate));
@@ -427,7 +455,10 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
      */
     const roundOf = (state: ReviewState) => {
       const check = roundCheckOf(state);
-      const validation = roundValidation<R>(check, state.current.review!.issues.map((i) => i.id));
+      const roundCheck = roundValidation<R>(check, state.current.review!.issues.map((i) => i.id));
+      // Issue #232: after the round's validation, the corrections accepted earlier in the loop, judged against the
+      // validated dispositions, whose reverses validateRound normalized; a round that fails is the round's failure.
+      const validation = bothValidations(roundCheck, subject.keepsCorrections === null ? null : keptCheckOf(subject.keepsCorrections, state, check, roundCheck));
       return {
         after: (first: Validation<R> | null): Validation<R> => (first === null ? validation : bothValidations(first, validation)),
         of: (response: PlannerResponse) => Effect.fromResult(check(response)),
