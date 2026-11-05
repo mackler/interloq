@@ -134,6 +134,28 @@ test("(11) a disputed self-correction kept with a resolution naming a change is 
   assert.match(read(probe.dir, "plan.md"), /v4/);
 });
 
+test("(11b) a disputed self-correction that its investigation turns accepted with a resolution is said agreed and asks nothing", async () => {
+  const disputing = { ...respond([["P1-R2-1", "accepted"]]), self_corrections: [{ id: ID, new_action: "rejected" as const, explanation: "the correction was wrong", concern: "the step must stay", remedy: "restore it", resolution: null }] };
+  const resolution = { text: "keep the step behind a flag", changes: [] };
+  const investigated = { ...respond([["P1-R2-1", "accepted"]]), self_corrections: [{ id: ID, new_action: "accepted" as const, explanation: "the correction stands with a flag", concern: "restore the step", remedy: "keep it behind a flag", resolution }] };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: [],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([[ID, "accepted"]]), plan: "v2" }, { output: disputing, plan: "v3" }, { output: investigated, plan: "v4 flagged step" }, { output: respond([]) }],
+    reviews: [{ issues: [issue(ID)] }, { issues: [issue("P1-R2-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 5 },
+  });
+  await runTask(layer);
+  assert.ok(fs.readdirSync(path.join(probe.dir, "planning-1")).some((f) => /^cc-\d+-investigation-\d+\.json$/.test(f)), "the investigation's raw reply is saved");
+  const current = planLog(probe.dir).filter((e) => e.id === ID && e.source === "self_correction" && !e.superseded).at(-1);
+  assert.ok(current !== undefined && current.source === "self_correction", JSON.stringify(planLog(probe.dir)));
+  assert.deepEqual(current.planner_position, { concern: "restore the step", remedy: "keep it behind a flag" });
+  assert.deepEqual(current.resolution, resolution);
+  assert.ok(read(probe.dir, "conversation.md").includes(prompts.resolutionAgreedLine(`**${prompts.RESOLUTION_AGREED_HEADING}**`, ID, resolution.text)), read(probe.dir, "conversation.md").slice(-2000));
+  assert.deepEqual(disputes(probe.ui), []);
+  assert.match(read(probe.dir, "plan.md"), /flagged step/);
+});
+
 test("(W1-R1-1) in the question list a marked dispute whose review entry an earlier self-correction superseded is investigated and then asked", async () => {
   const q1 = questionEntry("Q1", "question Q1?", [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
   const qv = (n: string) => questionEntry("Q1", `question Q1, ${n}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "r", default_answer: "A" });
