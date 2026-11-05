@@ -869,6 +869,18 @@ const leaveOnDecision = (s: ReviewState, asking: Ask, text: string): Transition 
   }
 };
 
+/**
+ * The round's decisions that name an issue, appended to the log (W1-R1-2 of issue #38): the convergence of a review with no
+ * counted issue skips the response, whose roundLog appends them otherwise, so without this the developer's answer would
+ * leave the id's resolution or disputed self-correction current and the next loop over the log would ask it again.
+ */
+const decisionsLogged = (s: ReviewState): Readonly<{ state: ReviewState; commands: readonly ReviewCommand[] }> => {
+  const named = s.current.decisions.filter((d) => d.id !== null);
+  if (named.length === 0) return { state: s, commands: [] };
+  const updated = named.reduce((acc, d) => log.appendUserDecision(acc, d.id!, d.decision, s.setup.phase, s.round), s.log);
+  return { state: { ...s, log: updated }, commands: [{ kind: "SaveLog", log: updated }] };
+};
+
 const onDecisionGiven = (s: ReviewState, text: string): Transition => {
   const step = s.step;
   const given = text !== "";
@@ -884,7 +896,13 @@ const onDecisionGiven = (s: ReviewState, text: string): Transition => {
       const state: ReviewState = given ? { ...s, current: { ...s.current, decisions: [...s.current.decisions, decision] } } : s;
       // Issue #38: on a review with no counted issue the loop converges after its asks, unless an answer applies something.
       const converged = step.converged === undefined ? undefined : { applied: step.converged.applied || (given && !standing) };
-      const after = converged === undefined || converged.applied ? toResponse : (t: ReviewState, b: readonly ReviewCommand[]) => converge(t, b);
+      const after =
+        converged === undefined || converged.applied
+          ? toResponse
+          : (t: ReviewState, b: readonly ReviewCommand[]) => {
+              const l = decisionsLogged(t);
+              return converge(l.state, [...b, ...l.commands]);
+            };
       return askEach(state, step.queue, (asking, queue) => ({ name: "askingReraised", asking, queue, ...(converged === undefined ? {} : { converged }) }), after, given ? record(s, decision) : []);
     }
     case "askingPauses": {

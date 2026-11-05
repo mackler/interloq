@@ -225,3 +225,34 @@ test("a marked dispute whose review entry an earlier self-correction superseded 
     assert.ok(!t3.commands.some((c) => c.kind === "Converse" && c.markdown.includes(prompts.WORDING_DISPUTE_HEADING)));
   }
 });
+
+const savedLogs = (t: Transition) => t.commands.flatMap((c) => (c.kind === "SaveLog" ? [c.log] : []));
+const kinds = (t: Transition) => t.commands.map((c) => c.kind);
+const noIssues: TestEvent = { kind: "ReviewDecoded", review: { issues: [] } };
+
+test("a decision on a review with no counted issue is logged before the loop converges, so the next loop does not ask it again (W1-R1-2)", () => {
+  // (a) an authority resolution kept with Claude Code's position.
+  const resolved = [reviewEntry("A", "partially_accepted", { phase: 0, resolution: { text: text("both"), changes: [text("requirement 2")] } })];
+  const kept = advance(run(begin(resolved), noIssues).state, { kind: "DecisionGiven", text: prompts.PLANNER_POSITION });
+  const k = kinds(kept);
+  assert.ok(k.indexOf("RecordDecision") >= 0 && k.indexOf("SaveLog") > k.indexOf("RecordDecision") && k.indexOf("SaveLog") < k.indexOf("Finish"), k.join(","));
+  const [logged] = savedLogs(kept);
+  assert.ok(logged?.some((e) => e.id === "A" && e.source === "user"));
+  const next = run(begin(logged!, { phase: 2 }), noIssues);
+  assert.deepEqual(asks(next), []);
+  assert.deepEqual(last(next), { kind: "Finish", result: "converged" });
+  // (b) a standing disputed self-correction kept with Claude Code's position.
+  const disputing = { ...respond([["A", "accepted"]]), self_corrections: [{ id: "X", new_action: "rejected" as const, explanation: "wrong", concern: "c", remedy: "m", resolution: null }] };
+  const t1 = run(begin([reviewEntry("X", "accepted")]), reviewed("A"), responded(disputing), responded(disputing, "InvestigationDecoded"), observed("h1"));
+  const standing = run(t1, noIssues);
+  const [selfAsk] = asks(standing);
+  assert.equal(selfAsk?.asks.kind === "pause" ? selfAsk.asks.facts.pause : "", "disputedSelfCorrection");
+  const keptSelf = advance(standing.state, { kind: "DecisionGiven", text: prompts.PLANNER_POSITION });
+  const [loggedSelf] = savedLogs(keptSelf);
+  assert.ok(loggedSelf?.some((e) => e.id === "X" && e.source === "user"), kinds(keptSelf).join(","));
+  assert.deepEqual(asks(run(begin(loggedSelf!, { phase: 2 }), noIssues)), []);
+  // (c) an empty answer records nothing and saves no log.
+  const empty = advance(run(begin(resolved), noIssues).state, { kind: "DecisionGiven", text: "" });
+  assert.deepEqual(savedLogs(empty), []);
+  assert.ok(!kinds(empty).includes("RecordDecision"));
+});

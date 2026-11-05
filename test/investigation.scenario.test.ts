@@ -156,3 +156,17 @@ test("(W1-R1-1) in the question list a marked dispute whose review entry an earl
   const conversation = read(probe.dir, "conversation.md");
   assert.ok(!new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\*[^\\n]*Q-R1-1`).test(conversation), conversation.slice(-2000));
 });
+
+test("(W1-R1-2) an authority resolution answered with Claude Code's position on a review with no counted issue is logged as the developer's decision", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["2"],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: resolved("rejected", "drop the step and its test", ["requirement 2: the step is required"]) }, { output: respond([[ID, "rejected"]]) }],
+    reviews: [{ issues: [issue(ID)] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 5 },
+  });
+  await runTask(layer);
+  assert.equal(disputes(probe.ui).length, 1);
+  const current = planLog(probe.dir).filter((e) => e.id === ID && !e.superseded).at(-1);
+  assert.equal(current?.source, "user", JSON.stringify(planLog(probe.dir)));
+});
