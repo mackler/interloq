@@ -1633,11 +1633,38 @@ export const countdownView = (wait: Countdown, nowMs: number): Readonly<{ percen
  * the last chain ended where it did, and one line per run of the chain; null before the first hello. The cutoff is
  * formatted by `time`, the page's own formatter of an instant.
  */
-export type ChainShown = Readonly<{ settings: ChainSettings; effective: ChainFrameSettings; reset: ChainReset; status: string; ended: string | null; runs: readonly string[]; runsLine: string | null }>;
+export type ChainShown = Readonly<{
+  settings: ChainSettings;
+  effective: ChainFrameSettings;
+  reset: ChainReset;
+  status: string;
+  ended: string | null;
+  runs: readonly string[];
+  runsLine: string | null;
+  /**
+   * Issue #253 (requirement 3, decision Q1): what stands beside the switch while it is off, or null (the switch alone):
+   * the status while a claimed run or a parking continues (issue #192), else the turned-off line while the run it names
+   * is the implementation run in progress. Read from the server's settings, so an off frame not yet acknowledged shows
+   * no "Run n of the chain" beside an off switch.
+   */
+  whileOff: string | null;
+}>;
+/** The item of the implementation run in progress, or null. */
+const implementationItem = (view: ViewState): string | null => {
+  const id = view.modes.implementation.current[0];
+  return view.modes.implementation.runs.find((r) => r.id === id)?.item?.id ?? null;
+};
+const whileOffOf = (view: ViewState, time: TimeText): string | null => {
+  if (view.chain === null || view.chain.settings.enabled) return null;
+  const chain = view.chain.chain;
+  if (chain._tag !== "Idle") return chainStatusText(view.chain);
+  const ended = chain.ended;
+  return ended?._tag === "TurnedOff" && ended.running !== null && ended.running === implementationItem(view) ? chainEndedText(ended, time) : null;
+};
 export const chainShown = (view: ViewState, time: TimeText): ChainShown | null => {
   if (view.chain === null) return null;
   const chain = view.chain.chain;
-  return { settings: view.chain.settings, effective: effective(view.chainPending, view.chain.settings), reset: view.chainReset, status: chainStatusText(view.chain), ended: chain._tag === "Idle" && chain.ended !== null ? chainEndedText(chain.ended, time) : null, runs: chain.history.map(chainEntryText), runsLine: chain.history.length === 0 ? null : chainRunsLine(chain.history) };
+  return { settings: view.chain.settings, effective: effective(view.chainPending, view.chain.settings), reset: view.chainReset, status: chainStatusText(view.chain), ended: chain._tag === "Idle" && chain.ended !== null ? chainEndedText(chain.ended, time) : null, runs: chain.history.map(chainEntryText), runsLine: chain.history.length === 0 ? null : chainRunsLine(chain.history), whileOff: whileOffOf(view, time) };
 };
 
 /** Issue #229: the chain's runs line opened or closed in this tab. */

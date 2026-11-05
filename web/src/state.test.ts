@@ -25,7 +25,7 @@ import { type ConnectionCondition, connectionNotices, messages, type Notices } f
 import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
 import { tabTitle } from "./title.ts";
-import { begun, type ChainEntry, type ChainState, configured, ended, OFF_SETTINGS, queueEdited } from "../../src/chain.ts";
+import { begun, type ChainEndReason, type ChainEntry, type ChainState, configured, ended, OFF_SETTINGS, queueEdited } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
 
 // Plan step 4.2: the page's reducer.
@@ -2645,7 +2645,7 @@ describe("chainShown", () => {
   });
   test("each chain gives its status, and an ended chain its reason and its runs", () => {
     const running = begun(helloChain, 4, "7" as ItemId, "seven");
-    expect(chainShown(withChain(running), time)).toEqual({ settings: running.settings, effective: { enabled: running.settings.enabled, runs: running.settings.limits.runs, cutoff: null }, reset: { version: 0, fields: [] }, status: prompts.chainStatusText(running), ended: null, runs: [], runsLine: null });
+    expect(chainShown(withChain(running), time)).toEqual({ settings: running.settings, effective: { enabled: running.settings.enabled, runs: running.settings.limits.runs, cutoff: null }, reset: { version: 0, fields: [] }, status: prompts.chainStatusText(running), ended: null, runs: [], runsLine: null, whileOff: null });
     const [stopped] = ended(running, 4, { code: 130, root: null, parked: null, abandoned: null });
     const shown = chainShown(withChain(stopped), time);
     expect(shown?.ended).toBe(prompts.chainEndedText({ _tag: "StoppedByDeveloper", item: "7" as ItemId }, time));
@@ -2660,6 +2660,44 @@ describe("chainShown", () => {
     expect(shown?.runsLine).toBe("3 runs ended in this chain, 1 queued item skipped");
     expect(shown?.runs.length).toBe(4);
     expect(chainShown(withChain({ ...helloChain, chain: { _tag: "Idle", ended: null, history: [] } }), time)?.runsLine).toBeNull();
+  });
+});
+
+// Issue #253 (requirements 3, decision Q1): what stands beside the switch while it is off.
+describe("chainShown whileOff", () => {
+  const time = (iso: string) => `<${iso}>`;
+  const off = { ...helloChain.settings, enabled: false };
+  const turnedOff = { _tag: "TurnedOff" as const, running: "38" as ItemId };
+  const withRun = (chain: ChainState, item: string | null): ViewState => ({
+    ...initialState,
+    chain,
+    modes: { ...initialState.modes, implementation: { ...initialState.modes.implementation, current: item === null ? [] : [1], runs: item === null ? [] : [{ ...emptyRun(1), item: { id: item, title: "t" } }] } },
+  });
+  const idleOff = (ended: ChainEndReason | null): ChainState => ({ ...helloChain, settings: off, chain: { _tag: "Idle", ended, history: [] } });
+  test("on: null", () => {
+    expect(chainShown(withRun(begun(helloChain, 1, "38" as ItemId, "t"), "38"), time)?.whileOff).toBeNull();
+  });
+  test("off, turned off during the run in progress of its item: the turned-off line", () => {
+    expect(chainShown(withRun(idleOff(turnedOff), "38"), time)?.whileOff).toBe(prompts.chainEndedText(turnedOff, time));
+  });
+  test("off, turned off, no run in progress or a run of another item: null", () => {
+    expect(chainShown(withRun(idleOff(turnedOff), null), time)?.whileOff).toBeNull();
+    expect(chainShown(withRun(idleOff(turnedOff), "40"), time)?.whileOff).toBeNull();
+  });
+  test("off, turned off with no run named: null", () => {
+    expect(chainShown(withRun(idleOff({ _tag: "TurnedOff", running: null }), "38"), time)?.whileOff).toBeNull();
+  });
+  test("off, a parking or a claimed run continuing: the status", () => {
+    const running = begun(helloChain, 1, "38" as ItemId, "t");
+    if (running.chain._tag !== "Running") throw new Error("not running");
+    const claimed: ChainState = { ...running, settings: off, chain: { ...running.chain, claim: { _tag: "Claimed", then: turnedOff } } };
+    expect(chainShown(withRun(claimed, "38"), time)?.whileOff).toBe(prompts.chainStatusText(claimed));
+    const { run: _run, title: _title, claim: _claim, ...common } = running.chain;
+    const parking: ChainState = { ...running, settings: off, chain: { ...common, _tag: "Parking", root: "r" as never, then: turnedOff } };
+    expect(chainShown(withRun(parking, null), time)?.whileOff).toBe(prompts.chainStatusText(parking));
+  });
+  test("off, idle, nothing ended: null", () => {
+    expect(chainShown(withRun(idleOff(null), null), time)?.whileOff).toBeNull();
   });
 });
 
