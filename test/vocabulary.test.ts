@@ -43,3 +43,8 @@ test("programWordsText names every name and every substitute of the table", () =
   const text = programWordsText();
   for (const word of PROGRAM_WORDS) for (const w of [...word.names, ...word.substitutes]) assert.ok(text.includes(w), w);
 });
+
+test("a substitute followed by letters is reported only where the word is itself listed (suite run 3)", () => {
+  assert.deepEqual(found("build" + "s"), ["builds"]);
+  assert.deepEqual(found("build" + "er"), []);
+});
