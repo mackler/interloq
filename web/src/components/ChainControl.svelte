@@ -6,6 +6,11 @@
   // fields empty and never refuses an empty form (requirements Q2); a field is sent when it is committed (change or
   // Enter), and a runs field that is not a positive whole number shows its error and sends nothing [error prevention].
   // Nothing asks a confirmation (behavior 1), and nothing names a cost (Q2).
+  // Issue #253 (the developer's instruction of 5 Nov 2026): while the switch is off (`shown.effective.enabled`, so at
+  // once, before the server answers) only the switch is rendered, with `shown.whileOff` beside it where something is
+  // still happening; the settings are a region the switch's input names by aria-controls, not rendered while off, and
+  // revealed with the page's short reveal, none under reduced motion. The drafts are this component's state and the
+  // settings the server's, so turning off clears nothing [aesthetic and minimalist design].
   import { Result } from "effect";
   import { untrack } from "svelte";
   import { Button, ConnectedButtons, Switch, TextFieldOutlined } from "m3-svelte";
@@ -41,6 +46,7 @@
   } = $props();
   const uid = $props.id();
   const runsListId = `${uid}-runs`;
+  const settingsId = `${uid}-settings`;
 
   const pad = (n: number) => String(n).padStart(2, "0");
   const hourOf = (ms: number) => {
@@ -118,7 +124,9 @@
 </script>
 
 <section class="chain" aria-label={CHAIN_SWITCH_LABEL}>
-  <label class="switch m3-font-label-large"><Switch name="chain" checked={shown.effective.enabled} onchange={(e: Event) => toggle((e.currentTarget as HTMLInputElement).checked)} />{CHAIN_SWITCH_LABEL}</label>
+  <label class="switch m3-font-label-large"><Switch name="chain" aria-controls={settingsId} checked={shown.effective.enabled} onchange={(e: Event) => toggle((e.currentTarget as HTMLInputElement).checked)} />{CHAIN_SWITCH_LABEL}</label>
+  {#if shown.effective.enabled}
+  <div class="settings" id={settingsId}>
   <div class="fields">
     <div class="field">
       <TextFieldOutlined label={CHAIN_RUNS_LABEL} name="chain-runs" inputmode="numeric" error={runsInvalid} bind:value={runsText} onchange={commitRuns} onkeydown={onEnter(commitRuns)} />
@@ -166,10 +174,17 @@
       </Disclosure>
     </div>
   {/if}
+  </div>
+  {:else if shown.whileOff !== null}
+    <p class="status m3-font-body-medium" role="status">{shown.whileOff}</p>
+  {/if}
 </section>
 
 <style>
   .chain { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem 1rem; border-radius: var(--m3-shape-medium, 12px); background: var(--m3c-surface-container-low); color: var(--m3c-on-surface); }
+  .settings { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; animation: reveal 200ms cubic-bezier(0.2, 0, 0, 1); }
+  @keyframes reveal { from { opacity: 0; transform: translateY(-0.25rem); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .settings { animation: none; } }
   .switch { display: flex; align-items: center; gap: 0.75rem; }
   .fields { display: flex; flex-wrap: wrap; gap: 0.75rem; }
   .field { display: flex; flex-direction: column; flex: 1 1 10rem; min-width: 0; }

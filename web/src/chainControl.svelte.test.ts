@@ -7,7 +7,7 @@ import { type ChainState, cutoffOf, DEFAULT_SETTINGS, initialState, OFF_SETTINGS
 import { Result } from "effect";
 import { chainSettingsOf, type ChainFrameSettings } from "../../src/protocol.ts";
 import ChainControl from "./components/ChainControl.svelte";
-import { chainSent, chainShown, chainUnsent, initialState as initialView, reduce, type ViewState } from "./state.ts";
+import { chainSent, chainShown, chainUnsent, emptyRun, initialState as initialView, reduce, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import type { ServerMessage } from "../../src/protocol.ts";
 import { chainFrame } from "./tabs.ts";
@@ -258,6 +258,10 @@ describe("ChainControl's consecutive changes", () => {
     expect(input(root, "chain-cutoff").value).toBe("07:00");
     click();
     expect(sent.at(-1)).toEqual({ enabled: false, runs: 3, cutoff: CUTOFF });
+    // Issue #253: the field is hidden while the switch is off, and shows the hour again once it is turned back on.
+    expect(root.querySelector("input[name=chain-cutoff]")).toBeNull();
+    click();
+    expect(sent.at(-1)).toEqual({ enabled: true, runs: 3, cutoff: CUTOFF });
     expect(input(root, "chain-cutoff").value).toBe("07:00");
   });
 
@@ -334,5 +338,73 @@ describe("ChainControl's queue", () => {
     const backlog = withQueue({ ...EMPTY_QUEUE, source: "backlog", entries });
     expect(backlog.root.textContent).toContain(prompts.QUEUE_BACKLOG_NOTE);
     expect(backlog.root.querySelectorAll("li[data-queued]").length).toBe(0);
+  });
+});
+
+// Issue #253 (requirements 1 to 5, decision Q1): with the switch off the control renders the switch alone.
+describe("ChainControl with the switch off (issue #253)", () => {
+  const time = (iso: string) => fullTime(iso);
+  const CUTOFF = new Date(2026, 9, 21, 7, 0).toISOString();
+  const settingsOf = (enabled: boolean, runs: number | null, cutoff: string | null) => Result.getOrThrow(chainSettingsOf({ enabled, runs, cutoff }));
+  const history = [{ item: "7" as ItemId, title: "seven", root: null, outcome: { _tag: "Finished" as const }, returned: null }];
+  const queue: ChainQueue = { source: "queue", entries: [{ item: "9" as ItemId, title: "nine" }], applied: [] };
+  const live = (view: ViewState) => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const props = $state({ shown: chainShown(view, time)!, onChange: (_: ChainFrameSettings) => {}, now: () => new Date(2026, 9, 20, 22, 0), queue });
+    mounted.push(mount(ChainControl, { target: root, props }));
+    flushSync();
+    const replace = (next: ViewState) => {
+      props.shown = chainShown(next, time)!;
+      flushSync();
+    };
+    return { root, replace };
+  };
+  const viewOf = (chain: ChainState, runOf: string | null = null): ViewState => ({
+    ...initialView,
+    chain,
+    modes: { ...initialView.modes, implementation: { ...initialView.modes.implementation, current: runOf === null ? [] : [1], runs: runOf === null ? [] : [{ ...emptyRun(1), item: { id: runOf, title: "t" } }] } },
+  });
+  const hidden = ["input[name=chain-runs]", "input[name=chain-cutoff]", "[role=radiogroup]", "[role=status]", "[data-chain-runs]", "ol.runs", "li[data-queued]"];
+
+  test("off: the switch alone, its aria-controls naming a region not in the DOM", () => {
+    const { root } = live(viewOf({ ...initialState(OFF_SETTINGS), chain: { _tag: "Idle", ended: null, history } }));
+    const section = root.querySelector("section.chain")!;
+    expect([...section.children].map((c) => c.className.split(" ")[0])).toEqual(["switch"]);
+    for (const selector of hidden) expect(root.querySelector(selector)).toBeNull();
+    const controls = input(root, "chain").getAttribute("aria-controls");
+    expect(controls).toBeTruthy();
+    expect(document.getElementById(controls!)).toBeNull();
+  });
+
+  test("turned on: the region, its fields with their values, the choice and the status", () => {
+    const { root, replace } = live(viewOf(initialState(OFF_SETTINGS)));
+    replace(viewOf({ ...initialState(DEFAULT_SETTINGS), settings: settingsOf(true, 3, CUTOFF) }));
+    const controls = input(root, "chain").getAttribute("aria-controls")!;
+    expect(document.getElementById(controls)).not.toBeNull();
+    expect(input(root, "chain-runs").value).toBe("3");
+    expect(input(root, "chain-cutoff").value).toBe("07:00");
+    expect(root.querySelector("[role=radiogroup]")).not.toBeNull();
+    expect(root.querySelector("[role=status]")).not.toBeNull();
+  });
+
+  test("off and on again keeps a run limit and a cutoff that were set", () => {
+    const { root, replace } = live(viewOf({ ...initialState(DEFAULT_SETTINGS), settings: settingsOf(true, 3, CUTOFF) }));
+    expect(input(root, "chain-runs").value).toBe("3");
+    replace(viewOf({ ...initialState(DEFAULT_SETTINGS), settings: settingsOf(false, 3, CUTOFF) }));
+    expect(root.querySelector("input[name=chain-runs]")).toBeNull();
+    replace(viewOf({ ...initialState(DEFAULT_SETTINGS), settings: settingsOf(true, 3, CUTOFF) }));
+    expect(input(root, "chain-runs").value).toBe("3");
+    expect(input(root, "chain-cutoff").value).toBe("07:00");
+  });
+
+  test("turned off during a run: its line beside the switch until the run ends", () => {
+    const turnedOff = { _tag: "TurnedOff" as const, running: "38" as ItemId };
+    const chain: ChainState = { ...initialState(OFF_SETTINGS), chain: { _tag: "Idle", ended: turnedOff, history } };
+    const { root, replace } = live(viewOf(chain, "38"));
+    expect(root.querySelector("[role=status]")?.textContent).toBe(prompts.chainEndedText(turnedOff, time));
+    expect(root.querySelector("input[name=chain-runs]")).toBeNull();
+    replace(viewOf(chain, null));
+    expect(root.querySelector("[role=status]")).toBeNull();
   });
 });
