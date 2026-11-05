@@ -205,7 +205,9 @@ test("decisionDraft shows the outcome labels of every disputed pause, naming no 
       case "secondClarification":
         return { ...base, pause: kind, disposition: null, effects: null };
       case "disputedSelfCorrection":
-        return { ...base, pause: kind, explanation: "wrong", effects: null };
+        return { ...base, pause: kind, explanation: "wrong", effects: null, resolution: null };
+      case "authorityResolution":
+        return { ...base, pause: kind, taskDispute: false, resolution: { text: "both" as S.PositionText, changes: ["requirement 2" as S.PositionText] }, effects: null };
       case "reversal":
         return { ...base, pause: kind, reverses: "P1-R1-1", issue: null, disposition: null, effects: null };
       case "repeatedUnderNewId":

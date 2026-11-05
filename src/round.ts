@@ -3,8 +3,8 @@
 // under decision Q3; since issue #151 it gets one validation repair turn first (reviewValidation, roundValidation).
 
 import { Result, Schema } from "effect";
-import { CorrectionInvalid, RoundInvalid } from "./errors.ts";
-import { correctionRepairPrompt, reviewRepairPrompt, roundRepairPrompt } from "./prompts.ts";
+import { CorrectionInvalid, InvestigationInvalid, RoundInvalid } from "./errors.ts";
+import { correctionRepairPrompt, investigationRepairPrompt, reviewRepairPrompt, roundRepairPrompt } from "./prompts.ts";
 import type { Validation } from "./review.ts";
 import type { Action, LogEntry, PlannerResponse, Review, UserQuestion, WorkEffect } from "./schema.ts";
 
@@ -213,6 +213,35 @@ export const correctiveValidation =
     if (changedIds.length === 0 && other.length === 0) return Result.succeed({ value: reply, notes: [] });
     const error = new CorrectionInvalid({ changedIds, other });
     return Result.fail({ error, repair: correctionRepairPrompt(error, acceptedIds) });
+  };
+
+/**
+ * The validation of an investigation reply (issue #38), with the prompt of its repair turn: it may change any field of a
+ * disposition or self-correction whose id is in `ids`, remove such a self-correction, and change the document; every
+ * other disposition and self-correction, the reviewer_feedback and the questions_for_user must be as before.
+ */
+export const investigationValidation =
+  <T extends PlannerResponse>(previous: PlannerResponse, ids: readonly string[]): Validation<T> =>
+  (reply) =>
+    {
+    const allowed = new Set(ids);
+    const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+    const keyed = <T extends { id: string }>(items: readonly T[]) => new Map(items.filter((x) => !allowed.has(x.id)).map((x) => [x.id, x] as const));
+    const changed = <T extends { id: string }>(was: readonly T[], now: readonly T[]): string[] => {
+      const before = keyed(was);
+      const after = keyed(now);
+      return unique([...before.keys(), ...after.keys()].filter((id) => !same(before.get(id), after.get(id))));
+    };
+    const changedIds = unique([...changed(previous.dispositions, reply.dispositions), ...changed(previous.self_corrections, reply.self_corrections)]);
+    const sameIds = reply.dispositions.length === previous.dispositions.length && reply.dispositions.every((d) => previous.dispositions.some((p) => p.id === d.id));
+    const other = [
+      ...(sameIds ? [] : ["dispositions"]),
+      ...(reply.reviewer_feedback === previous.reviewer_feedback ? [] : ["reviewer_feedback"]),
+      ...(same(reply.questions_for_user, previous.questions_for_user) ? [] : ["questions_for_user"]),
+    ];
+    if (changedIds.length === 0 && other.length === 0) return Result.succeed({ value: reply, notes: [] });
+    const error = new InvestigationInvalid({ changedIds, other });
+    return Result.fail({ error, repair: investigationRepairPrompt(error, ids) });
   };
 
 /** A review's validation with its repair turn (issue #151): unique, non-empty issue ids, or Codex's repair prompt. */

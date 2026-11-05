@@ -38,7 +38,7 @@ const withLabels = (reply: QuestionContext, labels: readonly string[]): Question
 });
 
 test("the context prompt of a disputed pause carries the outcome-label rule, and the validation refuses a label naming an agent", () => {
-  const rule = prompts.outcomeLabelsRule();
+  const rule = prompts.outcomeLabelsRule(false);
   for (const name of prompts.AGENT_NAMES) assert.ok(rule.includes(name), name);
   assert.ok(prompts.contextPrompt("t", disputed).includes(rule));
   assert.ok(!prompts.contextPrompt("t", identical).includes(rule));

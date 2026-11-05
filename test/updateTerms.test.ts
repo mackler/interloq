@@ -82,11 +82,12 @@ test("the round limit of Bring Up to Date asks with the origin's pass from passN
 // Work review 4 of issue #216 (W1-R1-2): the transport question and the disputed pause's own labels say check too.
 const TODAY_TRANSPORT = (heading: string): string => `the review in ${heading}`;
 const TODAY_LABELS: Readonly<Record<prompts.DisputedPauseKind, prompts.PositionLabels>> = {
-  reraised: { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now" },
-  repeatedUnderNewId: { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now" },
-  reversal: { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now" },
-  secondClarification: { reviewer: "Make the change the point asks for", planner: "Wait for the requested explanation before making a change" },
-  disputedSelfCorrection: { reviewer: "Keep the correction", planner: "Withdraw the correction" },
+  reraised: { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now", resolution: "Make the change that meets both concerns" },
+  repeatedUnderNewId: { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now", resolution: "Make the change that meets both concerns" },
+  reversal: { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now", resolution: "Make the change that meets both concerns" },
+  secondClarification: { reviewer: "Make the change the point asks for", planner: "Wait for the requested explanation before making a change", resolution: "Make the change that meets both concerns" },
+  disputedSelfCorrection: { reviewer: "Keep the correction", planner: "Withdraw the correction", resolution: "Make the change that meets both concerns" },
+  authorityResolution: { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now", resolution: "Make the change that meets both concerns" },
 };
 
 test("transportReviewWhat says check for a check, and is today's text for a review", () => {

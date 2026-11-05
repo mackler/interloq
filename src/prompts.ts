@@ -8,7 +8,7 @@ import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote, Sk
 import type { ChainSource } from "./chainQueue.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import type { CompletedWork, Ending, ItemReturn } from "./ending.ts";
-import { CONCERN_FIELD, REMEDY_FIELD, RESOLUTION_FIELD, CORRECTION_PASSAGES_FIELD, KEPT_PASSAGES_FIELD, FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { CONCERN_FIELD, REMEDY_FIELD, RESOLUTION_FIELD, CORRECTION_PASSAGES_FIELD, KEPT_PASSAGES_FIELD, FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Resolution, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -1391,6 +1391,46 @@ export function correctiveTurnHeading(attempt: number, round: number): string {
 }
 /** Issue #38: the position and resolution fields a corrective turn may change on the accepted ids. */
 const correctedFields = (): string => `${CONCERN_FIELD}, ${REMEDY_FIELD}, ${RESOLUTION_FIELD}`;
+/** Issue #38: the heading of the line said and written when the agents look for a resolution before the user is asked. */
+export const INVESTIGATION_HEADING = "Looking for a resolution of both concerns:";
+/** The line said and written before the agents investigate a disagreement that would be put to the user (issue #38). */
+export const investigationLine = (heading: string, ids: readonly string[], pass: PassNoun): string =>
+  `${heading} before you are asked about ${ids.join(", ")} in this ${pass}, Claude Code looks for a resolution that meets both concerns, and Codex reviews it.`;
+/** Issue #38: the heading of the line of a resolution both agents agreed, said and written, asking nothing. */
+export const RESOLUTION_AGREED_HEADING = "Resolved, not put to the user:";
+export const resolutionAgreedLine = (heading: string, id: string, text: string): string => `${heading} ${id}: Claude Code's resolution meets both concerns, and Codex raised no further point on it: ${text}`;
+/** Issue #38: appended to a response prompt in a round whose review raised a disputed point again (behavior 7, amended). */
+export const investigationNote = (ids: readonly string[]): string =>
+  `Codex has raised ${ids.join(", ")} again although you did not accept ${ids.length === 1 ? "it" : "them"} in full. Before the user is asked, for each of them state ${CONCERN_FIELD} apart from ${REMEDY_FIELD} and look for a resolution that meets both your concern and Codex's, as the rules above say for ${RESOLUTION_FIELD}. Codex reviews this response next, and the user is asked only if Codex raises the point again.`;
+/**
+ * Issue #38: the investigation turn, in the session of the reply it follows: that reply leaves disagreements that would
+ * be put to the user; investigationValidation of src/round.ts accepts exactly the changes it allows.
+ */
+export function investigationPrompt(root: RunRoot, fileLabel: string, round: number, ids: readonly string[]): string {
+  return `Your reply just given leaves disagreements on ${ids.join(", ")} in cycle ${round} of the review of ${runDir(root)}/${fileLabel} that would be put to the user.
+Before the user is asked, return the complete response again, changing only the dispositions and self-corrections of ${ids.join(", ")} and the file you return; return every other disposition, the other self-corrections, the reviewer_feedback and the questions_for_user exactly as before.
+For each of ${ids.join(", ")}, give ${CONCERN_FIELD}, the concern your position rests on, apart from ${REMEDY_FIELD}, and a resolution that meets both your concern and Codex's in ${RESOLUTION_FIELD}, or the reason none exists in the rationale, as the rules of your response say. A disputed self-correction may be kept, withdrawn or resolved, as those rules say.
+Codex reviews this response next, and the user is asked only if the disagreement still stands.
+Do not modify any file.`;
+}
+/** What an investigation reply changed that it may not (InvestigationInvalid). */
+export function investigationInvalidText(changedIds: readonly string[], other: readonly string[]): string {
+  const parts = [
+    ...(changedIds.length === 0 ? [] : [`the reply changed the dispositions or self-corrections of ${changedIds.join(", ")}, which it was not allowed to change`]),
+    ...(other.length === 0 ? [] : [`the reply changed ${other.join(", ")}`]),
+  ];
+  return parts.join("; ");
+}
+/** The repair turn of an investigation reply that changed what it may not (issue #38). */
+export function investigationRepairPrompt(error: Readonly<{ changedIds: readonly string[]; other: readonly string[] }>, ids: readonly string[]): string {
+  return `Your structured output matched the schema, but the program cannot accept it: ${investigationInvalidText(error.changedIds, error.other)}.
+Only the dispositions and self-corrections of ${ids.join(", ")} and the file you return may differ from your previous response; everything else must be returned exactly as before.
+Return the complete output again, corrected. Do not modify any file.`;
+}
+/** The heading of an investigation turn in conversation.md (issue #38), like correctiveTurnHeading. */
+export function investigationTurnHeading(round: number): string {
+  return `Investigation turn, cycle ${round}`;
+}
 /** The ids a corrective turn may change, as its prompt and its repair name them. */
 const correctableIds = (ids: readonly string[]): string => ids.join(", ");
 /**
@@ -3310,37 +3350,59 @@ export function unchangedFacts(heading: string, fileLabel: string, accepted: rea
  */
 export const REVIEWER_POSITION = "Follow Codex (the reviewer)";
 export const PLANNER_POSITION = "Follow Claude Code (the planner)";
-/** The five disputed pauses of behavior 7 (issue #159), whose two options are Codex's position and Claude Code's. */
-export const DISPUTED_PAUSE_KINDS = ["reraised", "secondClarification", "reversal", "repeatedUnderNewId", "disputedSelfCorrection"] as const;
+/**
+ * Issue #38: the program's record label of the third choice, a resolution of both agents' concerns that Claude Code
+ * proposed and Codex did not accept, or that both accept but only the developer may authorize. Never shown as a label.
+ */
+export const RESOLUTION_POSITION = "Adopt the resolution of both concerns";
+/**
+ * The disputed pauses (issue #159), whose options are Codex's position and Claude Code's, and since issue #38 a
+ * resolution of both concerns where one stands: the five of behavior 7, and `authorityResolution`, a resolution both
+ * agents accept that would change a requirement, a decision of the developer or decided behavior.
+ */
+export const DISPUTED_PAUSE_KINDS = ["reraised", "secondClarification", "reversal", "repeatedUnderNewId", "disputedSelfCorrection", "authorityResolution"] as const;
 export type DisputedPauseKind = (typeof DISPUTED_PAUSE_KINDS)[number];
 /** Whether a pause kind is one of the five disputed ones. */
 export const isDisputedKind = (pause: string): pause is DisputedPauseKind => (DISPUTED_PAUSE_KINDS as readonly string[]).includes(pause);
 /** Whether a question's origin is one of the five disputed pauses. */
 export const isDisputedPause = (origin: QuestionOrigin): boolean => origin.kind === "pause" && isDisputedKind(origin.pause);
 /** The labels the user is shown for the two positions, each naming the outcome and no agent (issue #159, requirements Q1). */
-export type PositionLabels = Readonly<{ reviewer: string; planner: string }>;
+export type PositionLabels = Readonly<{ reviewer: string; planner: string; resolution: string }>;
 const MAKE_THE_CHANGE = "Make the change the point asks for";
+/** Issue #38: the outcome label of the third choice, a resolution of both concerns, in every disputed pause. */
+const MEET_BOTH = "Make the change that meets both concerns";
 /** The program's own outcome labels of a disputed pause, shown where the context call cannot write its own. */
 export function positionLabels(pause: DisputedPauseKind, pass: PassNoun): PositionLabels {
-  switch (pause) {
-    case "reraised":
-    case "repeatedUnderNewId":
-    case "reversal":
-      return { reviewer: MAKE_THE_CHANGE, planner: `Keep ${fileUnder(pass)} as it is now` };
-    case "secondClarification":
-      return { reviewer: MAKE_THE_CHANGE, planner: "Wait for the requested explanation before making a change" };
-    case "disputedSelfCorrection":
-      return { reviewer: "Keep the correction", planner: "Withdraw the correction" };
-  }
+  const two = ((): Readonly<{ reviewer: string; planner: string }> => {
+    switch (pause) {
+      case "reraised":
+      case "repeatedUnderNewId":
+      case "reversal":
+      case "authorityResolution":
+        return { reviewer: MAKE_THE_CHANGE, planner: `Keep ${fileUnder(pass)} as it is now` };
+      case "secondClarification":
+        return { reviewer: MAKE_THE_CHANGE, planner: "Wait for the requested explanation before making a change" };
+      case "disputedSelfCorrection":
+        return { reviewer: "Keep the correction", planner: "Withdraw the correction" };
+    }
+  })();
+  return { ...two, resolution: MEET_BOTH };
 }
+/** Issue #38: how a pause's facts introduce a resolution Claude Code proposes. */
+export const RESOLUTION_PROPOSED = "Claude Code proposes a change that meets both concerns:";
+/** Issue #38: the third choice's description: the resolution, then each change only the developer may authorize. */
+export const resolutionDescription = (r: Resolution): string =>
+  r.changes.length === 0 ? r.text : `${r.text} It would change: ${r.changes.join("; ")}.`;
 /** The agents' names as a list in words. */
 const agentNamesText = (): string => AGENT_NAMES.map((n) => `"${n}"`).join(", ").replace(/, ([^,]*)$/, " or $1");
 /**
  * The context call's rule for the options of a disputed pause (issue #159): each label the outcome, from its position's
  * own content, as `determinateOptions` says, naming no agent; `contextValidation` refuses a label that names one.
  */
-export const outcomeLabelsRule = (): string =>
-  `The options of this question are the two positions of a disagreement between Codex and Claude Code, Codex's first and Claude Code's second, each description stating its position. Write each option's label as the outcome the reader gets if he chooses it, from that position's own content, in the reader's terms, as this rule says: ${ruleTextOf("determinateOptions")} Name none of the agents in a label: no label may contain ${agentNamesText()}. The context and the history may name them.`;
+const TWO_POSITIONS = "The options of this question are the two positions of a disagreement between Codex and Claude Code, Codex's first and Claude Code's second, each description stating its position.";
+const THREE_POSITIONS = "The options of this question are the two positions of a disagreement between Codex and Claude Code, Codex's first and Claude Code's second, and third a resolution that meets both concerns, each description stating its position or the resolution.";
+export const outcomeLabelsRule = (withResolution: boolean): string =>
+  `${withResolution ? THREE_POSITIONS : TWO_POSITIONS} Write each option's label as the outcome the reader gets if he chooses it, from that position's own content, in the reader's terms, as this rule says: ${ruleTextOf("determinateOptions")} Name none of the agents in a label: no label may contain ${agentNamesText()}. The context and the history may name them.`;
 /** The agents' names, none of which an option's label of a disputed pause may carry (issue #159). */
 export const AGENT_NAMES = ["Claude Code", "Claude", "Codex"] as const;
 const AGENT_NAME_PATTERN = new RegExp(`\\b(?:${AGENT_NAMES.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "i");
@@ -3871,6 +3933,8 @@ export const pauseSubject = (p: PauseOrigin): string => {
       return `issue ${p.id} against the accepted correction for ${p.reverses}`;
     case "repeatedUnderNewId":
       return `issue ${p.id}, a repetition of issue ${p.repeats}`;
+    case "authorityResolution":
+      return `issue ${p.id}, whose resolution of both concerns would change what only the user may change`;
     case "identical":
       return alternatingSubject(p.fileLabel);
     case "idle":
@@ -3894,6 +3958,8 @@ export function pauseQuestion(p: PauseOrigin, pass: PassNoun): string {
       return "Codex has raised a point that Claude Code does not accept in full. Which outcome do you want?";
     case "disputedSelfCorrection":
       return "Claude Code now considers wrong a correction it made earlier for a point that Codex raised. Do you want the correction to stay or to be withdrawn?";
+    case "authorityResolution":
+      return "A change that meets both concerns would change a requirement, a decision of yours or a decided behavior of the program, which only you may change. Which outcome do you want?";
     case "identical":
       return `${p.fileLabel} has returned to a version it had before, so the ${pass} alternates between two versions. Which of the two versions do you want kept?`;
     case "idle":
@@ -4060,6 +4126,8 @@ export const TASK_DISPUTE_ENTRY_MARK = "Claude Code marked this as a disagreemen
  */
 export const QUESTION_HISTORY_HEADING = "History";
 export const CODEX_SAYS = "Codex says:";
+/** Issue #38: an agent's concern apart from its remedy, as conversation.md and a pause's facts show them. */
+export const positionLine = (concern: string, remedy: string): string => `Concern: ${concern.trim()} Remedy: ${remedy.trim()}`;
 export function claudeAnswers(action: string, rationale: string): string {
   return `Claude Code ${action}: ${rationale.trim()}`;
 }
@@ -4076,6 +4144,8 @@ export function pauseLead(p: PauseOrigin): string {
       return `Codex's issue ${p.id} asks to reverse the correction that was made for issue ${p.reverses}.`;
     case "repeatedUnderNewId":
       return `Codex's issue ${p.id} repeats issue ${p.repeats}, which Claude Code did not accept in full.`;
+    case "authorityResolution":
+      return `Claude Code proposes, for issue ${p.id}, a change that meets both concerns but would change what only you may change.`;
     case "identical":
       return `${p.fileLabel} has returned to an earlier version.`;
     case "idle":
@@ -4132,7 +4202,7 @@ export function contextPrompt(task: string, request: ContextRequest): string {
   return `Interloq, the program that runs this task, is about to ask the user the question below. Write the context paragraph that the user reads before it, and return the whole question as pieces, with the explanations of the words a reader may not know. You may read the project to understand it; do not modify any file, do not use the AskUserQuestion tool, and do not answer the question.
 ${questionWritingRules()}
 ${QUESTION_TEXT_FORMAT}
-Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it: keep what the history given below says, rephrased if you wish, and add only what led to the question that it lacks; the history may be empty, and is an empty list only where the history given is empty and nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_FIGURES}${isDisputedPause(request.origin) ? ` ${outcomeLabelsRule()}` : ""} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
+Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it: keep what the history given below says, rephrased if you wish, and add only what led to the question that it lacks; the history may be empty, and is an empty list only where the history given is empty and nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_FIGURES}${isDisputedPause(request.origin) ? ` ${outcomeLabelsRule(request.options.length > 2)}` : ""} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
 
 The task of the run: ${task}
 

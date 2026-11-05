@@ -110,7 +110,8 @@ export const numberedOptions = (options: readonly (Readonly<{ label: string; des
  */
 export const positionOptions = (pause: prompts.DisputedPauseKind, options: readonly Readonly<{ label: string; description: string }>[], pass: prompts.PassNoun): readonly OfferedOption[] => {
   const outcomes = prompts.positionLabels(pause, pass);
-  const outcomeOf = (label: string): string => (label === prompts.REVIEWER_POSITION ? outcomes.reviewer : label === prompts.PLANNER_POSITION ? outcomes.planner : label);
+  const outcomeOf = (label: string): string =>
+    label === prompts.REVIEWER_POSITION ? outcomes.reviewer : label === prompts.PLANNER_POSITION ? outcomes.planner : label === prompts.RESOLUTION_POSITION ? outcomes.resolution : label;
   return options.map((o, i) => {
     const outcome = outcomeOf(o.label);
     return {

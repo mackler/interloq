@@ -11,7 +11,7 @@ import { FINDING_PROBLEM_KINDS, type FindingProblem } from "./requirementsFindin
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
 import type { OnExpiry } from "./protocol.ts";
 import type { TrackerError } from "./services.ts";
-import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText, findingsInvalidText, KEPT_CORRECTION_PROBLEM_KINDS, type KeptCorrectionProblem, correctionDroppedText } from "./prompts.ts";
+import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, investigationInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText, findingsInvalidText, KEPT_CORRECTION_PROBLEM_KINDS, type KeptCorrectionProblem, correctionDroppedText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -129,6 +129,8 @@ export class AnalysisInvalid extends Data.TaggedError("AnalysisInvalid")<{
  * a reference of one it was, or another part of the response. A halt after its own repair turn, like AnalysisInvalid.
  */
 export class CorrectionInvalid extends Data.TaggedError("CorrectionInvalid")<{ readonly changedIds: readonly string[]; readonly other: readonly string[] }> {}
+/** Issue #38: an investigation reply that changed what it may not, refused twice. */
+export class InvestigationInvalid extends Data.TaggedError("InvestigationInvalid")<{ readonly changedIds: readonly string[]; readonly other: readonly string[] }> {}
 export class PlanInvalid extends Data.TaggedError("PlanInvalid")<{
   readonly duplicateIds: readonly string[];
   readonly emptyIds: number;
@@ -280,6 +282,7 @@ export type RunError =
   | AnalysisInvalid
   | PlanInvalid
   | CorrectionInvalid
+  | InvestigationInvalid
   | QuestionInvalid
   | SkipConditionInvalid
   | PassageMissing
@@ -364,6 +367,8 @@ export const describe = (error: RunErrorFields): string => {
     }
     case "CorrectionInvalid":
       return correctionInvalidText(error.changedIds, error.other);
+    case "InvestigationInvalid":
+      return investigationInvalidText(error.changedIds, error.other);
     case "PlanInvalid":
       return planInvalidText(error);
     case "QuestionInvalid":
@@ -453,6 +458,7 @@ const RunErrorData = Schema.Union([
     blankUnclear: Strings,
   }),
   Schema.Struct({ _tag: Schema.Literal("CorrectionInvalid"), changedIds: Strings, other: Strings }),
+  Schema.Struct({ _tag: Schema.Literal("InvestigationInvalid"), changedIds: Strings, other: Strings }),
   Schema.Struct({ _tag: Schema.Literal("PlanInvalid"), duplicateIds: Strings, emptyIds: Schema.Number, removedDone: Strings, changedDone: Strings }),
   Schema.Struct({
     _tag: Schema.Literal("QuestionInvalid"),

@@ -9,7 +9,7 @@ import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type Pre
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
 import * as words from "./prompts.ts";
-import type { Disposition, FigureReply, Issue, TermsEntry } from "./schema.ts";
+import type { Disposition, FigureReply, Issue, Resolution, TermsEntry } from "./schema.ts";
 import { type PlannerResponse, type Review, WORK_EFFECT_FIELD } from "./schema.ts";
 import { isEffectDisposition, isEffectIssue } from "./workEffect.ts";
 import type { DecisionEvent } from "./reviewState.ts";
@@ -126,7 +126,11 @@ export const interviewSays = (turn: TurnText): readonly string[] =>
 
 /** Codex's half of a round (the page shows it as Codex's message). */
 export const renderReview = (review: Review): string =>
-  `### Codex\n\n${review.issues.map((i) => `- **[${i.id}]** (${i.severity}, ${i.location}) ${i.problem}\n  Evidence: ${i.evidence}${isEffectIssue(i) ? `\n  ${words.reviewerEffectLine(i[WORK_EFFECT_FIELD])}` : ""}`).join("\n")}\n\n`;
+  `### Codex\n\n${review.issues.map((i) => `- **[${i.id}]** (${i.severity}, ${i.location}) ${i.problem}\n  Evidence: ${i.evidence}${positionText(i)}${isEffectIssue(i) ? `\n  ${words.reviewerEffectLine(i[WORK_EFFECT_FIELD])}` : ""}`).join("\n")}\n\n`;
+/** Issue #38: a position and a resolution in conversation.md, where the reply gives them. */
+const positionText = (p: Readonly<{ concern: string; remedy: string }>): string => (p.concern.trim() === "" && p.remedy.trim() === "" ? "" : `\n  ${words.positionLine(p.concern, p.remedy)}`);
+const resolutionText = (r: Readonly<{ text: string; changes: readonly string[] }> | null): string =>
+  r === null ? "" : `\n  ${words.RESOLUTION_PROPOSED} ${r.text}${r.changes.length === 0 ? "" : ` It would change: ${r.changes.join("; ")}.`}`;
 /** Claude Code's half of a round. */
 export const renderResponse = (response: PlannerResponse): string => {
   const answers = response.dispositions.map((d) => {
@@ -134,9 +138,9 @@ export const renderResponse = (response: PlannerResponse): string => {
     const rev = d.reverses !== "" ? ` (reverses ${d.reverses})` : "";
     // Issue #183: Claude Code's statement of the effect on the work, on a disposition not accepted in full.
     const effect = isEffectDisposition(d) && d.action !== "accepted" ? `\n  ${words.plannerEffectLine(d[WORK_EFFECT_FIELD])}` : "";
-    return `- **[${d.id}]** ${d.action}${dup}${rev}: ${d.rationale}${effect}`;
+    return `- **[${d.id}]** ${d.action}${dup}${rev}: ${d.rationale}${positionText(d)}${resolutionText(d.resolution)}${effect}`;
   });
-  const self = response.self_corrections.map((s) => `- **Self-correction** (${s.new_action}, issue "${s.id}"): ${s.explanation}`);
+  const self = response.self_corrections.map((s) => `- **Self-correction** (${s.new_action}, issue "${s.id}"): ${s.explanation}${positionText(s)}${resolutionText(s.resolution)}`);
   const feedback = response.reviewer_feedback !== "" ? [`- **Feedback to the reviewer:** ${response.reviewer_feedback}`] : [];
   return `### Claude Code\n\n${[...answers, ...self, ...feedback].join("\n")}\n\n`;
 };
@@ -242,8 +246,14 @@ const entryProse = (e: ShownEntry): string => {
 const paragraph = (text: string): Block => ({ kind: "paragraph", pieces: [{ text, ref: "", code: false }] });
 const list = (lines: readonly string[]): Block => ({ kind: "list", items: lines.map((text) => ({ level: 0, pieces: [{ text, ref: "", code: false }] })) });
 const historyProse = (history: readonly ShownEntry[]): readonly Block[] => (history.length === 0 ? [] : [paragraph(words.HISTORY_HEADING), list(history.map(entryProse))]);
-const issueProse = (issue: Issue | null): readonly Block[] => (issue === null ? [] : [paragraph(`${words.CODEX_SAYS} ${issue.problem.trim()}`), ...(issue.evidence.trim() === "" ? [] : [paragraph(issue.evidence.trim())])]);
-const answerProse = (d: Disposition | null): readonly Block[] => (d === null ? [] : [paragraph(words.claudeAnswers(words.dispositionWords(d.action), d.rationale))]);
+/** Issue #38: an agent's concern apart from its remedy, where it gave one. */
+const positionProse = (p: Readonly<{ concern: string; remedy: string }>): readonly Block[] => (p.concern.trim() === "" && p.remedy.trim() === "" ? [] : [paragraph(words.positionLine(p.concern, p.remedy))]);
+const issueProse = (issue: Issue | null): readonly Block[] =>
+  issue === null ? [] : [paragraph(`${words.CODEX_SAYS} ${issue.problem.trim()}`), ...(issue.evidence.trim() === "" ? [] : [paragraph(issue.evidence.trim())]), ...positionProse(issue)];
+const answerProse = (d: Disposition | null): readonly Block[] =>
+  d === null ? [] : [paragraph(words.claudeAnswers(words.dispositionWords(d.action), d.rationale)), ...positionProse(d), ...(d.resolution === null ? [] : [paragraph(`${words.RESOLUTION_PROPOSED} ${d.resolution.changes.length === 0 ? d.resolution.text : `${d.resolution.text} It would change: ${d.resolution.changes.join("; ")}.`}`)])];
+/** Issue #38: a resolution of both concerns, its text and what it would change. */
+const resolutionProse = (r: Resolution | null): readonly Block[] => (r === null ? [] : [paragraph(`${words.RESOLUTION_PROPOSED} ${words.resolutionDescription(r)}`)]);
 /**
  * A pause of behaviour 7 as the user reads it (S11, issue #19): what happened, what Codex says and what Claude Code
  * answers, and the point's history, as blocks of the details (S9 of the task of issue #36); the null and empty fields of
@@ -258,11 +268,13 @@ export const pauseProse = (facts: PauseFacts): readonly Block[] => {
       case "secondClarification":
         return [...answerProse(facts.disposition), ...historyProse(facts.history)];
       case "disputedSelfCorrection":
-        return [paragraph(facts.explanation.trim()), ...historyProse(facts.history)];
+        return [paragraph(facts.explanation.trim()), ...resolutionProse(facts.resolution), ...historyProse(facts.history)];
       case "reversal":
         return [...issueProse(facts.issue), ...answerProse(facts.disposition), ...historyProse(facts.history)];
       case "repeatedUnderNewId":
         return [...issueProse(facts.issue), ...answerProse(facts.disposition), ...historyProse(facts.history)];
+      case "authorityResolution":
+        return [...resolutionProse(facts.resolution), ...historyProse(facts.history)];
       case "identical":
         return [paragraph(words.identicalFacts(facts.fileLabel, facts.round, facts.seen))];
       case "idle":

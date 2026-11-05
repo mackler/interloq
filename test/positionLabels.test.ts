@@ -24,9 +24,11 @@ test("the program's own labels of every disputed pause are distinct outcomes nam
     }
     assert.notEqual(reviewer, planner, kind);
   }
-  assert.deepEqual(prompts.positionLabels("reraised", "review"), { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now" });
-  assert.deepEqual(prompts.positionLabels("secondClarification", "review"), { reviewer: "Make the change the point asks for", planner: "Wait for the requested explanation before making a change" });
-  assert.deepEqual(prompts.positionLabels("disputedSelfCorrection", "review"), { reviewer: "Keep the correction", planner: "Withdraw the correction" });
+  // Issue #38: every kind's third label is the resolution of both concerns.
+  const resolution = "Make the change that meets both concerns";
+  assert.deepEqual(prompts.positionLabels("reraised", "review"), { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now", resolution });
+  assert.deepEqual(prompts.positionLabels("secondClarification", "review"), { reviewer: "Make the change the point asks for", planner: "Wait for the requested explanation before making a change", resolution });
+  assert.deepEqual(prompts.positionLabels("disputedSelfCorrection", "review"), { reviewer: "Keep the correction", planner: "Withdraw the correction", resolution });
 });
 
 test("namesAgent finds an agent's name as a whole word in any case", () => {
@@ -34,7 +36,7 @@ test("namesAgent finds an agent's name as a whole word in any case", () => {
   for (const text of ["Keep the correction", "Claudette agrees", "Make the change the point asks for", "codexes"]) assert.equal(prompts.namesAgent(text), false, text);
 });
 
-test("isDisputedPause holds for the five disputed pauses alone", () => {
+test("isDisputedPause holds for the disputed pauses alone", () => {
   for (const kind of prompts.DISPUTED_PAUSE_KINDS) assert.equal(prompts.isDisputedPause({ kind: "pause", pass: "review", heading: "Planning 1", ...pauseOf(kind) }), true, kind);
   const others: readonly QuestionOrigin[] = [
     { kind: "pause", pass: "review", heading: "Planning 1", pause: "identical", fileLabel: "plan.json" },

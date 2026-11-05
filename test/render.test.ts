@@ -27,7 +27,9 @@ test("renderRound lists the issues, the dispositions with their references, the 
   };
   const text = renderRound("Planning phase 1", 2, review, response);
   assert.match(text, /^## Planning phase 1, round 2\n\n### Codex\n\n- \*\*\[A\]\*\* /);
-  assert.match(text, /### Claude Code\n\n- \*\*\[A\]\*\* accepted: rationale A\n- \*\*\[B\]\*\* rejected \(duplicate of A\): rationale B\n- \*\*Self-correction\*\* \(plan_error, issue "C"\): oops\n- \*\*Feedback to the reviewer:\*\* be brief\n\n$/);
+  // Issue #38: each reply's position, where it gives one, on the line under it.
+  const scripted = "\n  Concern: scripted concern Remedy: scripted remedy";
+  assert.ok(text.endsWith(`### Claude Code\n\n- **[A]** accepted: rationale A${scripted}\n- **[B]** rejected (duplicate of A): rationale B${scripted}\n- **Self-correction** (plan_error, issue "C"): oops\n  Concern: c Remedy: r\n- **Feedback to the reviewer:** be brief\n\n`), text);
 });
 
 test("renderDecision gives the record line and the conversation line of one decision event", () => {
@@ -131,7 +133,7 @@ test("pauseProse writes every kind of pause as prose, without the record's field
   const all = [
     pauseProse({ pause: "reraised", id: "P1-R1-1", history: earlier, issue: issueNow, taskDispute: false, effects: null }),
     pauseProse({ pause: "secondClarification", id: "P1-R1-1", history: earlier, disposition, taskDispute: false, effects: null }),
-    pauseProse({ pause: "disputedSelfCorrection", id: "P1-R1-1", explanation: "It breaks the build.", history: earlier, taskDispute: false, effects: null }),
+    pauseProse({ pause: "disputedSelfCorrection", id: "P1-R1-1", explanation: "It breaks the build.", history: earlier, taskDispute: false, effects: null, resolution: null }),
     pauseProse({ pause: "reversal", id: "P1-R2-1", reverses: "P1-R1-1", history: earlier, issue: issueNow, disposition, taskDispute: false, effects: null }),
     pauseProse({ pause: "repeatedUnderNewId", id: "P1-R2-1", repeats: "P1-R1-1", history: earlier, issue: issueNow, disposition: null, taskDispute: false, effects: null }),
     pauseProse({ pause: "identical", fileLabel: "plan.json", round: 3, seen: "cycle 1" }),
@@ -410,6 +412,6 @@ test("renderRound shows Codex's statement per issue and Claude Code's per dispos
   const listResponse = Schema.decodeUnknownSync(S.QuestionListResponse)({ ...respond([["Q-R1-1", "rejected"]]), questions: [], correction_passages: [] });
   assert.equal(
     renderRound("Question review", 1, listReview, listResponse),
-    "## Question review, round 1\n\n### Codex\n\n- **[Q-R1-1]** (major, s) p\n  Evidence: e\n\n### Claude Code\n\n- **[Q-R1-1]** rejected: rationale Q-R1-1\n\n",
+    "## Question review, round 1\n\n### Codex\n\n- **[Q-R1-1]** (major, s) p\n  Evidence: e\n  Concern: scripted concern Remedy: scripted remedy\n\n### Claude Code\n\n- **[Q-R1-1]** rejected: rationale Q-R1-1\n  Concern: scripted concern Remedy: scripted remedy\n\n",
   );
 });

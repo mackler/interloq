@@ -15,10 +15,14 @@ import type { Config, FileChange, LogEntry, PlannerResponse, Review, UserQuestio
 import { piecesText } from "./pieces.ts";
 import { type PauseFacts, pauseOriginOf } from "./question.ts";
 import { changesNothing } from "./workEffect.ts";
+import { resolutionOf } from "./resolution.ts";
+import type * as S from "./schema.ts";
 import type { SubjectId } from "./artifacts.ts";
 import type { LoopResult, UiEvent } from "./uiEvents.ts";
 import { Result } from "effect";
 
+/** A reply's resolution as the program keeps it (issue #38); the round's validation has refused a blank one. */
+const resolvedOf = (r: S.ResolutionReply | null): S.Resolution | null => { const v = resolutionOf(r); return Result.isSuccess(v) ? v.success : null; };
 export type Stage = "start" | "response" | "decision";
 export type Observation = Readonly<{ round: number; stage: Stage; hash: string }>;
 /** The one typed decision of the user (finding 15): the issue log entry and the record lines both derive from it. */
@@ -457,7 +461,7 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
       // A self-correction carries no mark: the answer it disputes is the issue's entry as the round began.
       const taskDispute = markedEntry(history, sc.id);
       return {
-        asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), taskDispute, effects: null } },
+        asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), taskDispute, effects: null, resolution: resolvedOf(sc.resolution) } },
         id: sc.id as IssueId,
         options: positions(currentEntry(history, sc.id)?.problem ?? "", sc.explanation),
         key: `disputed ${sc.id}`,

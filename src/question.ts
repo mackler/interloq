@@ -7,7 +7,7 @@ import { QuestionInvalid } from "./errors.ts";
 import { blockPieces, blocksText, piecesText, plainRuns, type ShownBlock } from "./pieces.ts";
 import { type QuestionProblem, sensesNumbered } from "./prompts.ts";
 import { substitutesIn } from "./vocabulary.ts";
-import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption, StoredOption, type WorkEffects } from "./schema.ts";
+import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption, type Resolution, StoredOption, type WorkEffects } from "./schema.ts";
 
 export type { QuestionOption };
 export type { Explanation, Piece, PieceOption } from "./schema.ts";
@@ -252,6 +252,7 @@ export type PauseOrigin =
   | Readonly<{ pause: "disputedSelfCorrection"; id: string }>
   | Readonly<{ pause: "reversal"; id: string; reverses: string }>
   | Readonly<{ pause: "repeatedUnderNewId"; id: string; repeats: string }>
+  | Readonly<{ pause: "authorityResolution"; id: string }>
   | Readonly<{ pause: "identical"; fileLabel: string }>
   | Readonly<{ pause: "idle"; idle: number }>;
 
@@ -266,7 +267,9 @@ export type ShownEntry = LogEntry;
 export type PauseFacts =
   | Readonly<{ pause: "reraised"; id: string; history: readonly ShownEntry[]; issue: Issue | null; taskDispute: boolean; effects: WorkEffects | null }>
   | Readonly<{ pause: "secondClarification"; id: string; history: readonly ShownEntry[]; disposition: Disposition | null; taskDispute: boolean; effects: WorkEffects | null }>
-  | Readonly<{ pause: "disputedSelfCorrection"; id: string; explanation: string; history: readonly ShownEntry[]; taskDispute: boolean; effects: null }>
+  | Readonly<{ pause: "disputedSelfCorrection"; id: string; explanation: string; history: readonly ShownEntry[]; taskDispute: boolean; effects: null; resolution: Resolution | null }>
+  /** Issue #38: a resolution both agents accept that would change what only the developer may change. */
+  | Readonly<{ pause: "authorityResolution"; id: string; history: readonly ShownEntry[]; resolution: Resolution; taskDispute: false; effects: WorkEffects | null }>
   | Readonly<{
       pause: "reversal";
       id: string;
@@ -300,6 +303,7 @@ export const taskDisputeOf = (facts: PauseFacts): boolean => {
     case "disputedSelfCorrection":
     case "reversal":
     case "repeatedUnderNewId":
+    case "authorityResolution":
       return facts.taskDispute;
     case "identical":
     case "idle":
@@ -312,6 +316,7 @@ export const pauseOriginOf = (facts: PauseFacts): PauseOrigin => {
     case "reraised":
     case "secondClarification":
     case "disputedSelfCorrection":
+    case "authorityResolution":
       return { pause: facts.pause, id: facts.id };
     case "reversal":
       return { pause: "reversal", id: facts.id, reverses: facts.reverses };
