@@ -96,8 +96,9 @@ test("a point raised again on which Codex states a difference is asked, and its 
   const { wiring, probe } = testWiring(tempRepo(), {
     config,
     answers: ["1"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: noQuestions, plan: "v2" }],
-    reviews: [{ issues: [] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, NONE)] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [] }, { issues: [] }],
+    // Issue #38: the point is asked after its investigation, when Codex raises it a third time.
+    steps: [{ output: noQuestions, plan: "v1" }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, NONE)] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
   });
   assert.equal(await runOf(wiring, probe.project), 0);
@@ -111,8 +112,8 @@ test("an answer that keeps Claude Code's position is recorded, and the work revi
   const { wiring, probe } = testWiring(tempRepo(), {
     config,
     answers: ["2"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }],
-    reviews: [{ issues: [] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, NONE)] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [] }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }, { output: response(disposed("W1-R1-1", "rejected", ITEM_80.rationale, NONE)) }],
+    reviews: [{ issues: [] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, NONE)] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [stated("W1-R1-1", ITEM_80.problem, ITEM_80.evidence, differs(README))] }, { issues: [] }],
     execs: [finished],
   });
   assert.equal(await runOf(wiring, probe.project), 0);
@@ -120,7 +121,7 @@ test("an answer that keeps Claude Code's position is recorded, and the work revi
   assert.equal(planningPhases(probe.ui.notified), 1, "no planning phase 2");
   assert.equal(probe.planner.execPrompts.length, 1);
   assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), /W1-R1-1/);
-  assert.equal(json(probe.dir, "work-review-1/round-3.json").kind, "no_response", "the review went on to round 3, which raised no issue");
+  assert.equal(json(probe.dir, "work-review-1/round-4.json").kind, "no_response", "the review went on to round 4, which raised no issue");
 });
 
 test("the plan review: a point raised again with no effect stated by either agent is settled, and planning goes on to execution", async () => {

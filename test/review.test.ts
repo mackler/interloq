@@ -311,8 +311,9 @@ for (const answer of ["2", prompts.PLANNER_POSITION, prompts.positionLabels("rer
     const { layer, probe } = testLayer(tempRepo(), {
       config: { maxIdleRounds: 5 },
       answers: [answer],
-      steps: [{ output: noQuestions, plan: "v1" }, { output: rejected() }, { output: rejected() }],
-      reviews: [{ issues: [] }, { issues: [point(none)] }, { issues: [point({ kind: "differs", difference: "a file changes" })] }, { issues: [] }],
+      // Issue #38: the dispute is asked after its investigation, when Codex raises it a third time.
+      steps: [{ output: noQuestions, plan: "v1" }, { output: rejected() }, { output: rejected() }, { output: rejected() }],
+      reviews: [{ issues: [] }, { issues: [point(none)] }, { issues: [point({ kind: "differs", difference: "a file changes" })] }, { issues: [point({ kind: "differs", difference: "a file changes" })] }, { issues: [] }],
       execs: [finished],
     });
     assert.equal(await runTask(layer), 1, "one execution phase: no plan revision");
@@ -337,8 +338,8 @@ test("a work-review dispute answered with the context call's own planner label s
     config: { maxIdleRounds: 5 },
     answers: [leave],
     contexts: [{ output: relabel }],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: rejected() }, { output: rejected() }],
-    reviews: [{ issues: [] }, { issues: [point(none)] }, { issues: [point({ kind: "differs", difference: "a file changes" })] }, { issues: [] }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: rejected() }, { output: rejected() }, { output: rejected() }],
+    reviews: [{ issues: [] }, { issues: [point(none)] }, { issues: [point({ kind: "differs", difference: "a file changes" })] }, { issues: [point({ kind: "differs", difference: "a file changes" })] }, { issues: [] }],
     execs: [finished],
   });
   assert.equal(await runTask(layer), 1, "one execution phase: no plan revision");

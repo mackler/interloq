@@ -62,7 +62,8 @@ test("the context prompt of a disputed pause carries the outcome-label rule, and
 
 const noQuestions = { questions_for_user: [] };
 const finishedExec = { status: "finished" as const, summary: "done", question: "", remainingWork: "", userInput: null, checks: [] };
-const REVIEWS = [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }];
+// Issue #38: the point raised again is asked after its investigation, at the third review.
+const REVIEWS = [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }];
 const ACCEPT_LABEL = "Accept the review's point";
 const LEAVE_LABEL = "Leave the plan as it is now";
 const el = { text: "t", counterarguments: [] };
@@ -96,9 +97,10 @@ const escaped = (s: string) => s.replace(/[()]/g, "\\$&");
 
 test("a context reply whose labels name an agent is repaired, and the answer is paired with its position", async () => {
   const { probe, finished } = await runTaskWith({
+    config: { maxIdleRounds: 5 },
     answers: ["1"],
     contexts: relabeled([prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION], [ACCEPT_LABEL, LEAVE_LABEL]),
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
     reviews: REVIEWS,
     execs: [finishedExec],
   });
@@ -115,7 +117,7 @@ test("a typed label the context call wrote is recorded as its position (P1-R1-1)
     config: { maxIdleRounds: 5 },
     answers: ["/decide", LEAVE_LABEL],
     contexts: relabeled([ACCEPT_LABEL, LEAVE_LABEL]),
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: twoColumns(ACCEPT_LABEL, LEAVE_LABEL) }, { output: respond([["P1-R1-1", "rejected"]]) }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: twoColumns(ACCEPT_LABEL, LEAVE_LABEL) }, { output: respond([["P1-R1-1", "rejected"]]) }],
     reviews: REVIEWS,
     execs: [finishedExec],
   });
@@ -149,7 +151,7 @@ test("two refused context replies fall back to the program's outcome labels, and
     config: { maxIdleRounds: 5 },
     answers: ["2"],
     contexts: relabeled([prompts.REVIEWER_POSITION, LEAVE_LABEL], ["Codex wins", "Claude wins"]),
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
     reviews: REVIEWS,
     execs: [finishedExec],
   });

@@ -562,7 +562,8 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
   const { asked, settled } = askedOrSettled(state, disputes);
   const deferred = asked.filter((a) => fresh(state, a));
   const now = asked.filter((a) => !fresh(state, a));
-  const investigated = investigating(state, deferred);
+  // A dispute asked at the review is not asked again for the response of the same round.
+  const investigated = investigating({ ...state, current: { ...state.current, asked: now.map((a) => a.key ?? "") } }, deferred);
   return askEach(investigated, [...authority, ...now], (asking, queue) => ({ name: "askingReraised", asking, queue }), toResponse, [...before, ...agreed, ...settled, ...investigationLines(state, deferred), checkpoint(state, "reviewed")]);
 };
 
