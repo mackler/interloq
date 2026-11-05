@@ -21,7 +21,7 @@ test("occursInTexts is invariant under any re-spacing of the passage and the tex
 });
 
 const corrections = fc.uniqueArray(fc.stringMatching(/^P1-R[1-9]-[1-9]$/), { maxLength: 4 }).chain((ids) =>
-  fc.tuple(...ids.map((i) => fc.array(words.map((w) => `${i} ${w.join(" ")} .`), { minLength: 1, maxLength: 2 }).map((passages) => ({ id: i, passages })))),
+  fc.tuple(...ids.map((i) => fc.uniqueArray(words.map((w) => `${i} ${w.join(" ")} .`), { minLength: 1, maxLength: 2 }).map((passages) => ({ id: i, passages })))),
 );
 
 test("a reply keeping every baseline passage, with an entry per accepted disposition found in it, has no problems", () => {
