@@ -913,7 +913,10 @@ test.describe("the tests of the decideLong server, in order", () => {
     test(`(L15a) the opened Technical Context at ${width} × ${height} is set in ${expected[0] === expected[1] ? "one column" : "two or three columns"}`, async ({ page }) => {
       const analysis = await openLongAnalysis(page, width, height);
       const button = sectionButton(analysis, CONTEXT_HEADING);
-      await button.click();
+      // Issue #166 (requirements Q1): Technical Context arrives open, so it is clicked only where it is closed.
+      await expect(button).toHaveAttribute("aria-expanded", "true");
+      if ((await button.getAttribute("aria-expanded")) === "false") await button.click();
+      await expect(button).toHaveAttribute("aria-expanded", "true");
       await settled(page);
       const lefts = await (await bodyOf(page, button)).evaluate((el) => new Set([...el.querySelectorAll(".text-columns p")].map((p) => Math.round(p.getBoundingClientRect().left))).size);
       expect(lefts).toBeGreaterThanOrEqual(expected[0]);

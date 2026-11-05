@@ -589,7 +589,7 @@ test.describe("the tests of the decideWait server, in order", () => {
     await expect(page.getByRole("button", { name: HELP_ME_DECIDE })).toHaveCount(0);
     await expect(page.getByRole("region", { name: DECISION_REGION })).toHaveCount(0);
     await pane(page).locator(".question-text .term", { hasText: "service" }).hover();
-    await expect(page.getByRole("tooltip")).toContainText("The program this task builds.");
+    await expect(page.getByRole("tooltip")).toContainText("The program this task makes.");
     await option(page, /PostgreSQL/).click();
     await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]").getByText("PostgreSQL — a database server")).toBeVisible();
     await toHaveEnded(page, "Completed");

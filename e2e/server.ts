@@ -268,7 +268,7 @@ export const SCENARIOS: Record<string, TestOptions> = {
   // given meanwhile interrupts it, and the answer is then applied to the plan. The question carries one term.
   decideWait: askedInPlanReview({
     steps: [
-      { output: { questions_for_user: [questionOf({ context: "The service keeps its data in a database.", question: "Which database should the service use?", terms: [{ term: "service", explanation: "The program this task builds." }], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
+      { output: { questions_for_user: [questionOf({ context: "The service keeps its data in a database.", question: "Which database should the service use?", terms: [{ term: "service", explanation: "The program this task makes." }], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
       { hang: true },
       { output: noQuestions },
     ],
