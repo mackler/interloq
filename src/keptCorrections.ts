@@ -10,7 +10,7 @@ import { CorrectionDropped } from "./errors.ts";
 import { blocksText, piecesText } from "./pieces.ts";
 import { elementsOf, entriesOf, flatten } from "./analysisView.ts";
 import { KEPT_CORRECTION_PROBLEM_KINDS, type KeptCorrectionProblem, keptCorrectionsRepairPrompt } from "./prompts.ts";
-import type { ValidatedDisposition } from "./round.ts";
+import type { ValidatedDisposition, ValidatedRound } from "./round.ts";
 import type { CorrectionPassages, DecisionAnalysis, LogEntry, Piece, Plan, QuestionEntry, TermsEntry } from "./schema.ts";
 import type { Validation } from "./review.ts";
 
@@ -40,6 +40,33 @@ export const keptBaselineOf = (log: readonly LogEntry[], phase: number): readonl
 /** The ids an entry of correction_passages may restate: corrections that carry passages, and issues accepted earlier. */
 export const restatable = (log: readonly LogEntry[], phase: number): ReadonlySet<string> =>
   new Set(current(log, phase).flatMap((e) => (passagesOf(e).length > 0 || (e.source === "review" && (e.action === "accepted" || e.action === "partially_accepted")) ? [e.id] : [])));
+
+/**
+ * The passages each entry keeps after a round (issue #232), the rule appendRound applies: this round's entry of the id
+ * (its correction_passages) wins; otherwise the earlier passages stand, except that an accepted issue of this round
+ * without an entry keeps none, and a validated reversal of this round clears them. `earlier` is the log as the round began.
+ */
+export const keptPassagesAfter = (earlier: readonly LogEntry[], round: ValidatedRound) => {
+  const entry = (id: string): readonly string[] | undefined => round.correctionPassages.find((e) => e.id === id)?.passages;
+  const before = (id: string): readonly string[] => {
+    const found = earlier.filter((e) => !e.superseded && e.id === id).at(-1);
+    return found === undefined ? [] : passagesOf(found);
+  };
+  const reversed = new Set(round.dispositions.flatMap((d) => (d.reverses === null ? [] : [d.reverses as string])));
+  const cleared = (id: string, passages: readonly string[]): readonly string[] => (reversed.has(id) ? [] : passages);
+  return {
+    /** A review entry of this round. */
+    review: (id: string, accepted: boolean): readonly string[] => cleared(id, entry(id) ?? (accepted ? [] : before(id))),
+    /** A self-correction entry of this round. */
+    selfCorrection: (id: string): readonly string[] => cleared(id, entry(id) ?? before(id)),
+    /** An earlier entry no entry of this round replaces: restated or reversed in place, else unchanged. */
+    earlierEntry: (e: LogEntry): LogEntry => {
+      if (e.source === "user" || e.superseded) return e;
+      const passages = cleared(e.id, entry(e.id) ?? e.kept_passages);
+      return passages === e.kept_passages ? e : { ...e, kept_passages: passages };
+    },
+  };
+};
 
 export type KeptCorrectionsInput = Readonly<{
   baseline: readonly KeptCorrection[];

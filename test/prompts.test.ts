@@ -29,7 +29,7 @@ test("the log rules name the entries list, the three sources and null references
 // Issue #31 (the seam of S7): every key the log rules name for the measurement is a key of an entry appendRound writes,
 // and the rules name the field by the schema's constant. The rules are in round 1's prompt; later rounds refer to them in the same thread.
 test("the log rules explain file_change with the keys the log entries carry", () => {
-  const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [] }, { changed: true, added: 1, removed: 0 });
+  const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [], correctionPassages: [] }, { changed: true, added: 1, removed: 0 });
   const serialized = JSON.parse(JSON.stringify(entry)) as Record<string, Record<string, unknown>>;
   for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), questionReviewPrompt(TEST_ROOT, 1, "continued"), prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true, workExecution, "continued")]) {
     assert.ok(text.includes(`${S.FILE_CHANGE_FIELD}:`), "the rules do not explain the field");
@@ -987,7 +987,7 @@ test("issue #156: TASK_DISPUTE_RULE names the mark the two response schemas carr
   assert.ok(prompts.TASK_DISPUTE_RULE.includes(S.TASK_DISPUTE_FIELD));
   assert.ok(S.TASK_DISPUTE_FIELD in S.MarkedDisposition.fields);
   for (const schema of [S.QuestionListResponse, S.TermsResponse]) {
-    const decoded = Schema.decodeUnknownSync(schema)({ ...respond([["A", "rejected", true]]), questions: [], entries: [] });
+    const decoded = Schema.decodeUnknownSync(schema)({ ...respond([["A", "rejected", true]]), correction_passages: [], questions: [], entries: [] });
     assert.equal((decoded.dispositions[0] as Record<string, unknown>)[S.TASK_DISPUTE_FIELD], true);
   }
   const reviewed = Result.getOrThrow(validateReview({ issues: [issue("A"), issue("B")] }));

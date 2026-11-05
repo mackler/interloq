@@ -2,6 +2,7 @@
 // validated round (src/round.ts), so a missing disposition is unrepresentable here (finding 4).
 
 import type { IssueId, ValidatedRound } from "./round.ts";
+import { keptPassagesAfter } from "./keptCorrections.ts";
 import type { FileChange, LogEntry, Review } from "./schema.ts";
 
 const NOT_ACCEPTED_IN_FULL = new Set(["rejected", "partially_accepted", "no_change_needed"]);
@@ -48,6 +49,7 @@ function supersede(log: readonly LogEntry[], ids: ReadonlySet<string>): LogEntry
  */
 export function appendRound(log: readonly LogEntry[], round: ValidatedRound, change: FileChange | null): readonly LogEntry[] {
   const { phase, round: n } = round;
+  const kept = keptPassagesAfter(log, round);
   const fromReview: LogEntry[] = round.review.issues.map((issue) => {
     const d = round.dispositions.find((x) => x.id === issue.id)!;
     return {
@@ -67,7 +69,7 @@ export function appendRound(log: readonly LogEntry[], round: ValidatedRound, cha
       file_change: change,
       task_dispute: d.taskDispute,
       work_effects: issue.workEffect !== null && d.workEffect !== null ? { reviewer: issue.workEffect, planner: d.workEffect } : null,
-      kept_passages: [],
+      kept_passages: kept.review(issue.id, d.action === "accepted" || d.action === "partially_accepted"),
     };
   });
   const fromSelf: LogEntry[] = round.selfCorrections.map((sc) => {
@@ -82,14 +84,14 @@ export function appendRound(log: readonly LogEntry[], round: ValidatedRound, cha
       rationale: sc.explanation,
       superseded: false,
       file_change: change,
-      kept_passages: [],
+      kept_passages: kept.selfCorrection(sc.id),
     };
   });
   const reviewIds = new Set(fromReview.map((e) => e.id));
   const overlapping = fromSelf.filter((e) => reviewIds.has(e.id)).map((e) => ({ ...e, superseded: true }));
   const others = fromSelf.filter((e) => !reviewIds.has(e.id));
   const added = [...overlapping, ...fromReview, ...others];
-  return [...supersede(log, new Set(added.map((e) => e.id))), ...added];
+  return [...supersede(log.map(kept.earlierEntry), new Set(added.map((e) => e.id))), ...added];
 }
 
 /** An entry as the user is shown it (Q6 of issue #31): without the measurement, which is for the records and Codex. */

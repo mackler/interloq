@@ -15,6 +15,7 @@ const round = (dispositions: [string, ValidatedRound["dispositions"][number]["ac
   notes: [],
   reviewerFeedback: "",
   questionsForUser: [],
+  correctionPassages: [],
 });
 
 test("correctionsDue: an accepted or partially accepted disposition", () => {
@@ -85,4 +86,42 @@ test("appendRound writes work_effects where the issue and the disposition both s
     entries.map((e) => [e.id, e.source === "review" ? e.work_effects : "?"]),
     [["A", { reviewer: none, planner: differs }], ["B", null], ["C", null], ["D", null]],
   );
+});
+
+// Issue #232: kept_passages, the passages of an accepted correction. This round's entry of the id wins; otherwise the
+// earlier passages stand, except that a validated reversal clears them.
+const kept = (log: readonly import("../src/schema.ts").LogEntry[]) => log.filter((e) => !e.superseded).map((e) => [e.id, e.source, e.source === "user" ? null : e.kept_passages]);
+const withPassages = (r: ValidatedRound, entries: [string, string[]][], reverses: [string, string][] = []): ValidatedRound => ({
+  ...r,
+  correctionPassages: entries.map(([i, passages]) => ({ id: i, passages })),
+  dispositions: r.dispositions.map((d) => ({ ...d, reverses: (reverses.find(([by]) => by === d.id)?.[1] ?? null) as IssueId | null })),
+});
+
+test("kept_passages: an accepted issue records its entry's passages, [] without one", () => {
+  const log = appendRound([], withPassages(round([["A", "accepted"], ["B", "partially_accepted"], ["C", "accepted"]]), [["A", ["retry twice"]], ["B", ["b"]]]), null);
+  assert.deepEqual(kept(log), [["A", "review", ["retry twice"]], ["B", "review", ["b"]], ["C", "review", []]]);
+});
+
+test("kept_passages: an issue re-raised and rejected keeps the earlier passages, or its restatement's", () => {
+  const first = appendRound([], withPassages(round([["A", "accepted"]]), [["A", ["retry twice"]]]), null);
+  assert.deepEqual(kept(appendRound(first, round([["A", "rejected"]]), null)), [["A", "review", ["retry twice"]]]);
+  assert.deepEqual(kept(appendRound(first, withPassages(round([["A", "rejected"]]), [["A", ["two retry attempts"]]]), null)), [["A", "review", ["two retry attempts"]]]);
+});
+
+test("kept_passages: a self-correction carries the earlier passages forward, in a later round or beside a review issue of its id", () => {
+  const first = appendRound([], withPassages(round([["A", "accepted"]]), [["A", ["retry twice"]]]), null);
+  assert.deepEqual(kept(appendRound(first, round([], [["A", "plan_error"]]), null)), [["A", "self_correction", ["retry twice"]]]);
+  assert.deepEqual(kept(appendRound(first, round([], [["A", "rejected"]]), null)), [["A", "self_correction", ["retry twice"]]]);
+  assert.deepEqual(kept(appendRound(first, withPassages(round([], [["A", "accepted"]]), [["A", ["new"]]]), null)), [["A", "self_correction", ["new"]]]);
+  const beside = appendRound(first, round([["A", "rejected"]], [["A", "accepted"]]), null);
+  assert.deepEqual(kept(beside), [["A", "review", ["retry twice"]]]);
+  assert.deepEqual(beside.filter((e) => e.source === "self_correction").map((e) => (e.source === "self_correction" ? e.kept_passages : null)), [["retry twice"]]);
+});
+
+test("kept_passages: a restatement of an earlier entry replaces its passages in place; a validated reversal clears them", () => {
+  const first = appendRound([], withPassages(round([["A", "accepted"]]), [["A", ["retry twice"]]]), null);
+  const restated = appendRound(first, withPassages(round([["B", "accepted"]]), [["B", ["b"]], ["A", ["two retry attempts"]]]), null);
+  assert.deepEqual(kept(restated), [["A", "review", ["two retry attempts"]], ["B", "review", ["b"]]]);
+  const reversed = appendRound(first, withPassages(round([["B", "rejected"]]), [["A", ["ignored"]]], [["B", "A"]]), null);
+  assert.deepEqual(kept(reversed), [["A", "review", []], ["B", "review", []]]);
 });

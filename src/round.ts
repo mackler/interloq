@@ -49,7 +49,12 @@ export type ValidatedRound = Readonly<{
   notes: readonly ReferenceNote[];
   reviewerFeedback: string;
   questionsForUser: readonly UserQuestion[];
+  /** Issue #232: the response's correction_passages as it gave them; [] for a response whose schema lacks the field. */
+  correctionPassages: readonly S.CorrectionPassages[];
 }>;
+const carriesPassages = Schema.is(Schema.Struct({ [S.CORRECTION_PASSAGES_FIELD]: Schema.Array(S.CorrectionPassages) }));
+/** The response's correction_passages (issue #232), copied unchanged; their content is checked by src/keptCorrections.ts. */
+const correctionPassagesOf = (response: PlannerResponse): readonly S.CorrectionPassages[] => (carriesPassages(response) ? response[S.CORRECTION_PASSAGES_FIELD] : []);
 
 const ACCEPTED = new Set(["accepted", "partially_accepted"]);
 const unique = <T>(items: readonly T[]): T[] => [...new Set(items)];
@@ -142,7 +147,7 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
   const collidingIds = selfCorrections.filter((sc) => sc.generated && known.has(sc.id)).map((sc) => sc.id);
   if (collidingIds.length > 0) return Result.fail(roundInvalid({ collidingIds }));
 
-  return Result.succeed({ phase, round, review, dispositions, selfCorrections, notes, reviewerFeedback: response.reviewer_feedback, questionsForUser: response.questions_for_user });
+  return Result.succeed({ phase, round, review, dispositions, selfCorrections, notes, reviewerFeedback: response.reviewer_feedback, questionsForUser: response.questions_for_user, correctionPassages: correctionPassagesOf(response) });
 };
 
 /**

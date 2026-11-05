@@ -198,6 +198,14 @@ test("validateRound: a disposition decoded with the plain or the question list's
   const r = validated(review(issue("A")));
   const raw = { dispositions: [effectDisposition("A", "rejected", NONE)], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
   assert.deepEqual(ok(validateRound(r, decodeAs(S.PlannerResponse, raw), [], 1, 1, "P")).dispositions.map((d) => d.workEffect), [null]);
-  const marked = { ...raw, dispositions: [{ ...effectDisposition("A", "rejected", NONE), task_dispute: false }], questions: [] };
+  const marked = { ...raw, dispositions: [{ ...effectDisposition("A", "rejected", NONE), task_dispute: false }], correction_passages: [], questions: [] };
   assert.deepEqual(ok(validateRound(r, decodeAs(S.QuestionListResponse, marked), [], 1, 1, "Q")).dispositions.map((d) => d.workEffect), [null]);
+});
+
+// Issue #232: the response's correction_passages reach the validated round unchanged; a response without them gives none.
+test("validateRound carries correction_passages into the validated round, [] where the response has none", () => {
+  const r = validated(review(issue("A")));
+  const entries = [{ id: "A", passages: ["retry twice"] }];
+  assert.deepEqual(ok(validateRound(r, { ...respond([["A", "accepted"]]), [S.CORRECTION_PASSAGES_FIELD]: entries } as PlannerResponse, [], 1, 1, "P")).correctionPassages, entries);
+  assert.deepEqual(ok(validateRound(r, respond([["A", "accepted"]]), [], 1, 1, "P")).correctionPassages, []);
 });
