@@ -8,7 +8,7 @@ import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote, Sk
 import type { ChainSource } from "./chainQueue.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import type { CompletedWork, Ending, ItemReturn } from "./ending.ts";
-import { CORRECTION_PASSAGES_FIELD, KEPT_PASSAGES_FIELD, FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { CONCERN_FIELD, REMEDY_FIELD, RESOLUTION_FIELD, CORRECTION_PASSAGES_FIELD, KEPT_PASSAGES_FIELD, FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -40,6 +40,24 @@ const runDir = (root: RunRoot): string => `${RECORDS_DIR}/${root}`;
 
 const SEVERITY = `Severity: blocking = the work cannot succeed with the file as written; major = the file as written will produce a defect or omits something required; minor = everything else.`;
 
+/**
+ * Issue #38: Codex states its concern apart from its remedy on every issue, and reviews a resolution of both concerns the
+ * planner gives; every first-round review prompt carries it inside logRules. validateReview refuses a blank concern or remedy.
+ */
+export const POSITION_REVIEW_RULE = `Every issue states ${CONCERN_FIELD}, what is at stake, independent of how it is fixed, and ${REMEDY_FIELD}, the change you propose; neither is blank, so that a different remedy can meet the same concern.
+An entry of the log with source 'review' also has reviewer_position, your ${CONCERN_FIELD} and ${REMEDY_FIELD} on that issue, and planner_position, the planner's, each null where none was given; an entry with source 'review' or 'self_correction' has ${RESOLUTION_FIELD}, a resolution the planner proposes to meet both concerns (its text, and in changes each requirement, decision of the user or decided behavior it would change), or null; and investigations, the disagreements on that id that the planner was already asked to resolve before the user is asked.
+Where an entry carries a planner's ${RESOLUTION_FIELD}, review it: if it does not meet your concern, raise the id again and state in the evidence why; if it does, do not raise the id. A resolution that would change a requirement or a decision of the user's is never accepted by you alone: the user decides it.`;
+/**
+ * Issue #38: Claude Code states its concern apart from its remedy wherever it does not accept an issue in full, and
+ * looks for a resolution that meets both concerns; every response prompt carries it inside respondRules. carriesPosition
+ * and validateRound in src/round.ts check what it returns.
+ */
+export const POSITION_RESPONSE_RULE = `On every disposition other than 'accepted', state ${CONCERN_FIELD}, the concern your position rests on, apart from ${REMEDY_FIELD}, what you do instead, both not blank, and look for a resolution that meets both your concern and Codex's (the ${CONCERN_FIELD} of its issue) within the requirements of the task, the decisions in user-decisions.md and the decided behavior of the program:
+- where a resolution exists that changes none of them, carry it out as you carry out an accepted issue, set the action to 'partially_accepted', and give it in ${RESOLUTION_FIELD} with its text and an empty changes list;
+- where it would change a requirement, a decision of the user or decided behavior, do not carry it out: keep your position, and give it in ${RESOLUTION_FIELD}, naming each such change in changes; the user is offered it;
+- otherwise set ${RESOLUTION_FIELD} to null and say in the rationale why no resolution exists.
+On a self-correction with new_action 'rejected', state ${CONCERN_FIELD} and ${REMEDY_FIELD} likewise, and look for a resolution that meets your concern and the concern behind the accepted correction: where one changes none of the user's requirements, decisions or decided behavior, carry it out and report that self-correction with new_action 'accepted', keeping the correction as amended, with the resolution in ${RESOLUTION_FIELD}; where it would change one, keep 'rejected' and give the resolution with its changes; otherwise set ${RESOLUTION_FIELD} to null.
+Wherever you give a resolution, whatever the action, state ${CONCERN_FIELD} and ${REMEDY_FIELD} with it, since Codex reviews a resolution against the concern it meets. Elsewhere give ${CONCERN_FIELD} and ${REMEDY_FIELD} as empty strings and ${RESOLUTION_FIELD} as null.`;
 /** Rules for the use of an issue log. They are the same for every reviewed file. */
 function logRules(root: RunRoot, logFile: string, idPrefix: string, round: number): string {
   return `${runDir(root)}/${logFile} is a JSON object whose 'entries' list every issue raised in earlier rounds with the planner's disposition and rationale, in order.
@@ -48,6 +66,7 @@ An entry with source 'review' is an issue you raised: it also has severity, loca
 An entry with source 'self_correction' records a correction that the planner made to its own earlier work (action 'accepted', 'plan_error' or 'correction_disputed').
 Every entry with source 'review' or 'self_correction' also has ${FILE_CHANGE_FIELD}: what the program measured in the reviewed file during the planner's response in that round, for all of that round's entries together: changed (true or false), and the numbers of lines added and removed; null where nothing was measured. It is the program's measurement, not the planner's claim. If an 'accepted' or 'partially_accepted' entry's rationale describes amendments that ${FILE_CHANGE_FIELD} does not bear out, raise it as an issue.
 Every entry with source 'review' or 'self_correction' also has ${KEPT_PASSAGES_FIELD}: the passages of the reviewed file that carry its correction, as the planner named them; the program requires every later response of this review to keep them, so a correction recorded there is still in the file.
+${POSITION_REVIEW_RULE}
 An entry with source 'user' (action 'decided_by_user') contains a decision of the user on that issue, which must be followed.
 The rationale of every entry is addressed to you; read it irrespective of the action.
 ${runDir(root)}/reviewer-feedback.md contains feedback from the planner that concerns no single issue; take it into account.
@@ -687,6 +706,7 @@ Use new_action 'accepted' with the id of an issue that you rejected earlier and 
 Use new_action 'rejected' with the id of an accepted issue whose correction you now consider wrong; do not act on it, the user will decide.
 Use new_action 'plan_error' with an empty id for an error that concerns no issue; correct it.
 Return an empty self_corrections array when there is none.
+${POSITION_RESPONSE_RULE}
 Return exactly one disposition per issue id. ${questions ? `Put in questions_for_user only the questions the rule on whether to ask, below, allows.
 ${QUESTION_OPTIONS_RULE}` : "Return an empty questions_for_user array: a point the developer must settle is what the verdict states."}
 Do not use the AskUserQuestion tool.`;
@@ -1369,6 +1389,8 @@ Return the complete output again, corrected. Do not modify any file.`;
 export function correctiveTurnHeading(attempt: number, round: number): string {
   return `Corrective turn ${attempt}, cycle ${round}`;
 }
+/** Issue #38: the position and resolution fields a corrective turn may change on the accepted ids. */
+const correctedFields = (): string => `${CONCERN_FIELD}, ${REMEDY_FIELD}, ${RESOLUTION_FIELD}`;
 /** The ids a corrective turn may change, as its prompt and its repair name them. */
 const correctableIds = (ids: readonly string[]): string => ids.join(", ");
 /**
@@ -1377,9 +1399,9 @@ const correctableIds = (ids: readonly string[]): string => ids.join(", ");
  */
 export function correctivePrompt(root: RunRoot, fileLabel: string, round: number, acceptedIds: readonly string[]): string {
   return `${runDir(root)}/${fileLabel} did not change during your response to the review of cycle ${round}, although you accepted ${correctableIds(acceptedIds)} in full or in part.
-Either apply the amendments you described, or change the action of those dispositions and give the reason in the rationale; where your response carries ${TASK_DISPUTE_FIELD} and the disagreement is about what the task requires, set it on them; where your response carries ${WORK_EFFECT_FIELD}, state it on each disposition you no longer accept in full.
+Either apply the amendments you described, or change the action of those dispositions and give the reason in the rationale; where your response carries ${TASK_DISPUTE_FIELD} and the disagreement is about what the task requires, set it on them; where your response carries ${WORK_EFFECT_FIELD}, state it on each disposition you no longer accept in full; state ${CONCERN_FIELD}, ${REMEDY_FIELD} and ${RESOLUTION_FIELD}, as the rules of your response say, on each disposition you no longer accept in full.
 Return the complete response again in the same form as before; where your response carries the plan, the question list or the analysis, return it whole, with the amendments applied.
-Only the action, the rationale and, where your response carries them, ${TASK_DISPUTE_FIELD} and ${WORK_EFFECT_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response. Return every other disposition, every duplicate_of and reverses, the self_corrections, the reviewer_feedback and the questions_for_user exactly as before.
+Only the action, the rationale, ${correctedFields()} and, where your response carries them, ${TASK_DISPUTE_FIELD} and ${WORK_EFFECT_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response. Return every other disposition, every duplicate_of and reverses, the self_corrections, the reviewer_feedback and the questions_for_user exactly as before.
 Where your response carries ${CORRECTION_PASSAGES_FIELD}, it may differ too: give it as the file you now return requires, and keep every passage the log lists in ${KEPT_PASSAGES_FIELD} under the same rule as in your response.
 Do not modify any file.`;
 }
@@ -1394,7 +1416,7 @@ export function correctionInvalidText(changedIds: readonly string[], other: read
 /** The repair turn of a corrective reply that changed what it may not. */
 export function correctionRepairPrompt(error: Readonly<{ changedIds: readonly string[]; other: readonly string[] }>, acceptedIds: readonly string[]): string {
   return `Your structured output matched the schema, but the program cannot accept it: ${correctionInvalidText(error.changedIds, error.other)}.
-Only the action, the rationale and, where your response carries them, ${TASK_DISPUTE_FIELD} and ${WORK_EFFECT_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response; everything else must be returned exactly as before.
+Only the action, the rationale, ${correctedFields()} and, where your response carries them, ${TASK_DISPUTE_FIELD} and ${WORK_EFFECT_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response; everything else must be returned exactly as before.
 Return the complete output again, corrected. Do not modify any file.`;
 }
 
@@ -1418,6 +1440,8 @@ export const ROUND_REPAIR = {
   },
   blankEffects: (ids: readonly string[]): string =>
     `Give ${WORK_EFFECT_FIELD} of ${ids.join(", ")} a difference that says what would differ in the work (the code, tests, files committed or delivered behavior) if Codex's position were adopted, or set its kind to none where nothing in the work would differ.`,
+  blankPositions: (ids: readonly string[]): string =>
+    `For ${ids.join(", ")}, give ${CONCERN_FIELD} (the concern the position rests on) and ${REMEDY_FIELD} (the change proposed, or what is done instead) a text that is not blank, as the rules state they are required; where ${RESOLUTION_FIELD} is given, give its text and each of its changes a text that is not blank, or set ${RESOLUTION_FIELD} to null.`,
 } as const;
 
 /** What a review or a response did wrong (RoundInvalid), one sentence per field: the halt's text and the repair prompts state it from here. */
@@ -1429,6 +1453,7 @@ export const roundInvalidParts = (error: RoundProblems): readonly string[] => [
   ...(error.emptyIds.length > 0 ? [`an empty id in ${error.emptyIds.join(" and ")}`] : []),
   ...(error.collidingIds.length > 0 ? [`a generated self-correction id already exists in the log: ${error.collidingIds.join(", ")}`] : []),
   ...(error.blankEffects.length > 0 ? [`${WORK_EFFECT_FIELD} names a blank difference for: ${error.blankEffects.join(", ")}`] : []),
+  ...(error.blankPositions.length > 0 ? [`a blank ${CONCERN_FIELD}, ${REMEDY_FIELD} or ${RESOLUTION_FIELD} where it is required, for: ${error.blankPositions.join(", ")}`] : []),
 ];
 
 /** A validation repair turn: what the program refused, one line each, then what to return instead. */
@@ -1445,6 +1470,7 @@ export const reviewRepairPrompt = (error: RoundProblems): string =>
     ...(error.duplicateIssues.length > 0 ? [ROUND_REPAIR.duplicateIssues(error.duplicateIssues)] : []),
     ...(error.emptyIds.length > 0 ? [ROUND_REPAIR.emptyIssueId] : []),
     ...(error.blankEffects.length > 0 ? [ROUND_REPAIR.blankEffects(error.blankEffects)] : []),
+    ...(error.blankPositions.length > 0 ? [ROUND_REPAIR.blankPositions(error.blankPositions)] : []),
   ]);
 
 /** The validation repair turn of a response whose dispositions or generated self-correction ids are invalid (Claude Code); `reviewIds` are the review's issue ids. */
@@ -1456,6 +1482,7 @@ export const roundRepairPrompt = (error: RoundProblems, reviewIds: readonly stri
     ...(error.emptyIds.length > 0 ? [ROUND_REPAIR.emptyDispositionId] : []),
     ...(error.collidingIds.length > 0 ? [ROUND_REPAIR.collidingIds(error.collidingIds)] : []),
     ...(error.blankEffects.length > 0 ? [ROUND_REPAIR.blankEffects(error.blankEffects)] : []),
+    ...(error.blankPositions.length > 0 ? [ROUND_REPAIR.blankPositions(error.blankPositions)] : []),
   ]);
 
 // ---- prompts to the user ------------------------------------------------------------------------

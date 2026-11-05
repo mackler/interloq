@@ -10,6 +10,7 @@ import type { Action, LogEntry, PlannerResponse, Review, UserQuestion, WorkEffec
 
 import * as S from "./schema.ts";
 import { isEffectDisposition, isEffectIssue, workEffectOf } from "./workEffect.ts";
+import { positionOf, resolutionOf } from "./resolution.ts";
 import type { IssueId } from "./schema.ts";
 export type { IssueId };
 
@@ -78,6 +79,22 @@ const statedOf = (reply: S.Issue | S.Disposition): Stated => {
 };
 const effectOf = (stated: Stated): WorkEffect | null => (stated.kind === "stated" ? stated.effect : null);
 
+/**
+ * Issue #38: where a reply carries a position (concern and remedy), the one statement of the rule: wherever it gives a
+ * resolution, whatever its action; on a disposition not accepted in full; on a self-correction that disputes a correction.
+ */
+export const carriesPosition = (reply: S.Disposition | S.SelfCorrection): boolean =>
+  reply[S.RESOLUTION_FIELD] !== null || ("action" in reply ? reply.action !== "accepted" : reply.new_action === "rejected");
+/** A disposition's or self-correction's position and resolution (issue #38), or "blank" where one required is blank. */
+const positionedOf = (reply: S.Disposition | S.SelfCorrection): Result.Result<Readonly<{ position: S.Position | null; resolution: S.Resolution | null }>, "blank"> => {
+  const resolution = resolutionOf(reply[S.RESOLUTION_FIELD]);
+  if (Result.isFailure(resolution)) return Result.fail("blank");
+  if (!carriesPosition(reply)) return Result.succeed({ position: null, resolution: resolution.success });
+  const position = positionOf(reply);
+  return Result.isFailure(position) ? Result.fail("blank") : Result.succeed({ position: position.success, resolution: resolution.success });
+};
+const positionedOr = (p: ReturnType<typeof positionedOf>) => (Result.isSuccess(p) ? p.success : { position: null, resolution: null });
+
 /** A review with unique, non-empty issue ids, and no blank statement of an effect (issue #183). Checked before anything is counted or asked. */
 export const validateReview = (review: Review): Result.Result<ValidatedReview, RoundInvalid> => {
   const ids = review.issues.map((i) => i.id);
@@ -85,9 +102,14 @@ export const validateReview = (review: Review): Result.Result<ValidatedReview, R
   const empty = ids.filter((id) => id === "").length;
   const stated = review.issues.map(statedOf);
   const blankEffects = review.issues.filter((_, k) => stated[k].kind === "blank").map((i) => i.id);
-  if (duplicateIssues.length > 0 || empty > 0 || blankEffects.length > 0) return Result.fail(roundInvalid({ duplicateIssues, emptyIds: empty > 0 ? ["an issue of the review"] : [], blankEffects }));
+  const positions = review.issues.map(positionOf);
+  const blankPositions = review.issues.filter((_, k) => Result.isFailure(positions[k])).map((i) => i.id);
+  if (duplicateIssues.length > 0 || empty > 0 || blankEffects.length > 0 || blankPositions.length > 0) return Result.fail(roundInvalid({ duplicateIssues, emptyIds: empty > 0 ? ["an issue of the review"] : [], blankEffects, blankPositions }));
   return Result.succeed({
-    issues: review.issues.map((i, k) => ({ id: i.id as IssueId, severity: i.severity, location: i.location, problem: i.problem, evidence: i.evidence, workEffect: effectOf(stated[k]), position: null })),
+    issues: review.issues.map((i, k) => {
+      const position = positions[k];
+      return { id: i.id as IssueId, severity: i.severity, location: i.location, problem: i.problem, evidence: i.evidence, workEffect: effectOf(stated[k]), position: Result.isSuccess(position) ? position.success : null };
+    }),
   });
 };
 
@@ -102,12 +124,18 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
   const dispositionIds = response.dispositions.map((d) => d.id);
   // A statement on `accepted` is ignored, like the mark (issue #183): an accepted issue is no disagreement.
   const stated = response.dispositions.map((d): Stated => (d.action === "accepted" ? { kind: "absent" } : statedOf(d)));
+  const positioned = response.dispositions.map(positionedOf);
+  const selfPositioned = response.self_corrections.map(positionedOf);
   const problems = {
     missing: review.issues.map((i) => i.id).filter((id) => !dispositionIds.includes(id)),
     duplicateDispositions: duplicates(dispositionIds),
     unknownDispositions: unique(dispositionIds.filter((id) => id !== "" && !issueIds.has(id))),
     emptyIds: dispositionIds.some((id) => id === "") ? ["a disposition of the response"] : [],
     blankEffects: unique(response.dispositions.filter((_, k) => stated[k].kind === "blank").map((d) => d.id)),
+    blankPositions: unique([
+      ...response.dispositions.filter((_, k) => Result.isFailure(positioned[k])).map((d) => d.id),
+      ...response.self_corrections.flatMap((sc, k) => (Result.isFailure(selfPositioned[k]) ? [sc.id === "" ? "a self-correction with an empty id" : sc.id] : [])),
+    ]),
   };
   if (Object.values(problems).some((list) => list.length > 0)) return Result.fail(roundInvalid(problems));
 
@@ -137,8 +165,7 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
       reverses: reference(id, "reverses", d.reverses),
       taskDispute: taskDisputeOf(d),
       workEffect: effectOf(stated[k]),
-      position: null,
-      resolution: null,
+      ...positionedOr(positioned[k]),
     };
   });
 
@@ -148,8 +175,7 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
     newAction: sc.new_action,
     explanation: sc.explanation,
     generated: sc.id === "",
-    position: null,
-    resolution: null,
+    ...positionedOr(selfPositioned[k]),
   }));
   const collidingIds = selfCorrections.filter((sc) => sc.generated && known.has(sc.id)).map((sc) => sc.id);
   if (collidingIds.length > 0) return Result.fail(roundInvalid({ collidingIds }));

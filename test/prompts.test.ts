@@ -1016,7 +1016,7 @@ test("issue #156: the corrective prompt names the mark, and correctiveValidation
   const { respond } = await import("./helpers.ts");
   const { Result } = await import("effect");
   const prompt = prompts.correctivePrompt(TEST_ROOT, "questions.json", 1, ["A"]);
-  assert.match(prompt, new RegExp(`Only the action, the rationale and, where your response carries them, ${S.TASK_DISPUTE_FIELD} and ${S.WORK_EFFECT_FIELD} of A may differ`));
+  assert.match(prompt, new RegExp(`Only the action, the rationale, ${S.CONCERN_FIELD}, ${S.REMEDY_FIELD}, ${S.RESOLUTION_FIELD} and, where your response carries them, ${S.TASK_DISPUTE_FIELD} and ${S.WORK_EFFECT_FIELD} of A may differ`));
   assert.ok(prompts.correctionRepairPrompt({ changedIds: ["B"], other: [] }, ["A"]).includes(S.TASK_DISPUTE_FIELD));
   const previous = respond([["A", "accepted"], ["B", "rejected"]]);
   const validate = correctiveValidation(previous, ["A"]);

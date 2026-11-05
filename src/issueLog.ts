@@ -3,7 +3,7 @@
 
 import type { IssueId, ValidatedRound } from "./round.ts";
 import { keptPassagesAfter } from "./keptCorrections.ts";
-import type { FileChange, LogEntry, Review } from "./schema.ts";
+import type { FileChange, Investigation, LogEntry, Review } from "./schema.ts";
 
 const NOT_ACCEPTED_IN_FULL = new Set(["rejected", "partially_accepted", "no_change_needed"]);
 
@@ -46,9 +46,18 @@ function supersede(log: readonly LogEntry[], ids: ReadonlySet<string>): LogEntry
  * The log with the entries of one round appended; earlier entries with the same id are marked superseded.
  * Decision Q2: a self-correction that shares an id with a review issue of the round is appended before the
  * review entries and superseded by the disposition, which is the last word; other self-corrections follow.
+ * Issue #38: `investigations`, keyed by a dispute's own id, sets the list of this round's entries of that id; an id it
+ * does not name keeps the list of its latest earlier entry.
  */
-export function appendRound(log: readonly LogEntry[], round: ValidatedRound, change: FileChange | null): readonly LogEntry[] {
+export function appendRound(log: readonly LogEntry[], round: ValidatedRound, change: FileChange | null, investigations: ReadonlyMap<string, readonly Investigation[]> = new Map()): readonly LogEntry[] {
   const { phase, round: n } = round;
+  // Issue #38: the list given for an id, else the one its latest earlier entry kept.
+  const investigationsOf = (id: string): readonly Investigation[] => {
+    const given = investigations.get(id);
+    if (given !== undefined) return given;
+    const earlier = log.filter((e) => e.id === id && e.source !== "user").at(-1);
+    return earlier === undefined || earlier.source === "user" ? [] : earlier.investigations;
+  };
   const kept = keptPassagesAfter(log, round);
   const fromReview: LogEntry[] = round.review.issues.map((issue) => {
     const d = round.dispositions.find((x) => x.id === issue.id)!;
@@ -73,7 +82,7 @@ export function appendRound(log: readonly LogEntry[], round: ValidatedRound, cha
       reviewer_position: issue.position,
       planner_position: d.position,
       resolution: d.resolution,
-      investigations: [],
+      investigations: investigationsOf(issue.id),
     };
   });
   const fromSelf: LogEntry[] = round.selfCorrections.map((sc) => {
@@ -91,7 +100,7 @@ export function appendRound(log: readonly LogEntry[], round: ValidatedRound, cha
       kept_passages: kept.selfCorrection(sc.id),
       planner_position: sc.position,
       resolution: sc.resolution,
-      investigations: [],
+      investigations: investigationsOf(sc.id),
     };
   });
   const reviewIds = new Set(fromReview.map((e) => e.id));
