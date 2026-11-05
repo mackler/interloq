@@ -11,7 +11,7 @@ import * as log from "./issueLog.ts";
 import { renderRound } from "./render.ts";
 import { type IssueId, validateRound, type ValidatedIssue, type ValidatedReview, type ValidatedRound } from "./round.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
-import type { Config, FileChange, Investigation, LogEntry, PlannerResponse, Review, UserQuestion, WorkEffect, WorkEffects } from "./schema.ts";
+import type { Config, FileChange, Investigation, LogEntry, PlannerResponse, Position, Review, UserQuestion, WorkEffect, WorkEffects } from "./schema.ts";
 import { piecesText } from "./pieces.ts";
 import { type PauseFacts, pauseOriginOf } from "./question.ts";
 import { changesNothing } from "./workEffect.ts";
@@ -138,6 +138,21 @@ const positions = (reviewer: string, planner: string): readonly Option[] => [
   { label: prompts.REVIEWER_POSITION, description: reviewer },
   { label: prompts.PLANNER_POSITION, description: planner },
 ];
+/** W1-R1-3 of issue #38: an agent's concern and remedy as a Position, null where it stated neither. */
+const positionOf = (p: Readonly<{ concern: string; remedy: string }> | null | undefined): Position | null =>
+  p === null || p === undefined || (p.concern.trim() === "" && p.remedy.trim() === "") ? null : { concern: p.concern as S.PositionText, remedy: p.remedy as S.PositionText };
+/** An option's description followed by its agent's concern and remedy, where it stated them (requirement 5 of issue #38). */
+const sideText = (text: string, p: Position | null): string => (p === null ? text : `${text} ${prompts.positionLine(p.concern, p.remedy)}`.trim());
+/** Codex's and Claude Code's options, each stating its agent's concern and remedy. */
+const sides = (reviewer: string, reviewerPosition: Position | null, planner: string, plannerPosition: Position | null): readonly Option[] =>
+  positions(sideText(reviewer, reviewerPosition), sideText(planner, plannerPosition));
+/** Codex's position on an id in the log: its last review entry's. */
+const loggedReviewer = (history: readonly LogEntry[], id: string): Position | null => {
+  const e = history.filter((x) => x.id === id && x.source === "review").at(-1);
+  return e !== undefined && e.source === "review" ? e.reviewer_position : null;
+};
+/** Claude Code's position on an id in the log: its current entry's. */
+const loggedPlanner = (e: LogEntry | undefined): Position | null => (e === undefined || e.source === "user" ? null : e.planner_position);
 /** What Codex states in an issue: its problem and its evidence. */
 const reviewerSays = (i: Review["issues"][number] | undefined): string => (i === undefined ? "" : `${i.problem} ${i.evidence}`.trim());
 /**
@@ -468,10 +483,12 @@ const resolutionOfEntry = (e: LogEntry | undefined): S.Resolution | null => (e =
 const reraisedAsk = (s: ReviewState, review: Review, validated: ValidatedReview, id: string): Ask => {
   const taskDispute = markedEntry(s.log, id);
   const entry = currentEntry(s.log, id);
+  const raised = review.issues.find((i) => i.id === id);
+  const planner = loggedPlanner(entry);
   return {
-    asks: { kind: "pause", facts: { pause: "reraised", id, history: entriesOf(s.log, id), issue: review.issues.find((i) => i.id === id) ?? null, taskDispute, effects: effectsAt(validated.issues.find((i) => i.id === id), loggedPlannerEffect(s.log, id)) } },
+    asks: { kind: "pause", facts: { pause: "reraised", id, history: entriesOf(s.log, id), issue: raised ?? null, planner, taskDispute, effects: effectsAt(validated.issues.find((i) => i.id === id), loggedPlannerEffect(s.log, id)) } },
     id: id as IssueId,
-    options: withResolution(positions(reviewerSays(review.issues.find((i) => i.id === id)), entry?.rationale ?? ""), resolutionOfEntry(entry)),
+    options: withResolution(sides(reviewerSays(raised), positionOf(raised) ?? loggedReviewer(s.log, id), entry?.rationale ?? "", planner), resolutionOfEntry(entry)),
     key: `reraised ${id}`,
     taskDispute,
   };
@@ -487,7 +504,7 @@ const standingAsks = (s: ReviewState, review: Review, validated: ValidatedReview
   return standingDisputes(s.log).flatMap(({ id, investigation, entry }): Ask[] => {
     const taskDispute = markedEntry(s.log, id);
     const effects = effectsAt(validated.issues.find((i) => i.id === id), loggedPlannerEffect(s.log, id));
-    const options = withResolution(positions(reviewerSays(issueOf(id) ?? undefined), entry.rationale), resolutionOfEntry(entry));
+    const options = withResolution(sides(reviewerSays(issueOf(id) ?? undefined), positionOf(issueOf(id)) ?? loggedReviewer(s.log, id), entry.rationale, loggedPlanner(entry)), resolutionOfEntry(entry));
     const other = investigation.other ?? "";
     switch (investigation.pause) {
       case "reraised":
@@ -502,9 +519,9 @@ const standingAsks = (s: ReviewState, review: Review, validated: ValidatedReview
         const lastReview = s.log.filter((e) => e.id === id && e.source === "review").at(-1);
         return [
           {
-            asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id, explanation: entry.rationale, history: entriesOf(s.log, id), taskDispute, effects: null, resolution: resolutionOfEntry(entry) } },
+            asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id, explanation: entry.rationale, history: entriesOf(s.log, id), reviewer: loggedReviewer(s.log, id), planner: loggedPlanner(entry), taskDispute, effects: null, resolution: resolutionOfEntry(entry) } },
             id,
-            options: withResolution(positions(lastReview?.problem ?? "", entry.rationale), resolutionOfEntry(entry)),
+            options: withResolution(sides(lastReview?.problem ?? "", loggedReviewer(s.log, id), entry.rationale, loggedPlanner(entry)), resolutionOfEntry(entry)),
             key: `disputed ${id}`,
             taskDispute,
           },
@@ -524,7 +541,7 @@ const authorityAsk = (s: ReviewState, e: LogEntry): Ask => {
   return {
     asks: { kind: "pause", facts: { pause: "authorityResolution", id: e.id, history: entriesOf(s.log, e.id), resolution, taskDispute: false, effects: e.source === "review" ? e.work_effects : null } },
     id: e.id,
-    options: [...positions(reviewerOf(e), e.rationale), resolutionOption(resolution)],
+    options: [...sides(reviewerOf(e), loggedReviewer(s.log, e.id), e.rationale, loggedPlanner(e)), resolutionOption(resolution)],
     key: `authority ${e.id}`,
   };
 };
@@ -589,7 +606,7 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
       return {
         asks: { kind: "pause", facts: { pause: "secondClarification", id, history: entriesOf(history, id), disposition: dispositionOf(id), taskDispute, effects: effectsNow(id) } },
         id: id as IssueId,
-        options: withResolution(positions(reviewerSays(review.issues.find((i) => i.id === id)), dispositionOf(id)?.rationale ?? ""), resolvedOf(dispositionOf(id)?.resolution ?? null)),
+        options: withResolution(sides(reviewerSays(review.issues.find((i) => i.id === id)), positionOf(review.issues.find((i) => i.id === id)), dispositionOf(id)?.rationale ?? "", positionOf(dispositionOf(id))), resolvedOf(dispositionOf(id)?.resolution ?? null)),
         key: `clarification ${id}`,
         taskDispute,
       };
@@ -598,9 +615,9 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
       // A self-correction carries no mark: the answer it disputes is the issue's entry as the round began.
       const taskDispute = markedEntry(history, sc.id);
       return {
-        asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), taskDispute, effects: null, resolution: resolvedOf(sc.resolution) } },
+        asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), reviewer: loggedReviewer(history, sc.id), planner: positionOf(sc), taskDispute, effects: null, resolution: resolvedOf(sc.resolution) } },
         id: sc.id as IssueId,
-        options: withResolution(positions(currentEntry(history, sc.id)?.problem ?? "", sc.explanation), resolvedOf(sc.resolution)),
+        options: withResolution(sides(currentEntry(history, sc.id)?.problem ?? "", loggedReviewer(history, sc.id), sc.explanation, positionOf(sc)), resolvedOf(sc.resolution)),
         key: `disputed ${sc.id}`,
         taskDispute,
       };
@@ -610,7 +627,7 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
       return {
         asks: { kind: "pause", facts: { pause: "reversal", id: idNew, reverses: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: dispositionOf(idNew), taskDispute, effects: effectsNow(idNew) } },
         id: idNew as IssueId,
-        options: withResolution(positions(reviewerSays(review.issues.find((i) => i.id === idNew)), dispositionOf(idNew)?.rationale ?? ""), resolvedOf(dispositionOf(idNew)?.resolution ?? null)),
+        options: withResolution(sides(reviewerSays(review.issues.find((i) => i.id === idNew)), positionOf(review.issues.find((i) => i.id === idNew)), dispositionOf(idNew)?.rationale ?? "", positionOf(dispositionOf(idNew))), resolvedOf(dispositionOf(idNew)?.resolution ?? null)),
         key: `reversal ${idNew} ${idOld}`,
         taskDispute,
       };
@@ -622,7 +639,7 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
       return {
         asks: { kind: "pause", facts: { pause: "repeatedUnderNewId", id: idNew, repeats: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: dispositionOf(idNew), taskDispute, effects: effectsNow(idNew) } },
         id: idNew as IssueId,
-        options: withResolution(positions(reviewerSays(review.issues.find((i) => i.id === idNew)), planner), resolvedOf(dispositionOf(idNew)?.resolution ?? null)),
+        options: withResolution(sides(reviewerSays(review.issues.find((i) => i.id === idNew)), positionOf(review.issues.find((i) => i.id === idNew)), planner, taskDispute ? positionOf(dispositionOf(idNew)) : loggedPlanner(currentEntry(history, idOld))), resolvedOf(dispositionOf(idNew)?.resolution ?? null)),
         key: `repeat ${idNew} ${idOld}`,
         taskDispute,
       };

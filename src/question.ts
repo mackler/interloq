@@ -7,7 +7,7 @@ import { QuestionInvalid } from "./errors.ts";
 import { blockPieces, blocksText, piecesText, plainRuns, type ShownBlock } from "./pieces.ts";
 import { type QuestionProblem, sensesNumbered } from "./prompts.ts";
 import { substitutesIn } from "./vocabulary.ts";
-import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption, type Resolution, StoredOption, type WorkEffects } from "./schema.ts";
+import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type Position, type QuestionOption, type Resolution, StoredOption, type WorkEffects } from "./schema.ts";
 
 export type { QuestionOption };
 export type { Explanation, Piece, PieceOption } from "./schema.ts";
@@ -265,9 +265,11 @@ export type ShownEntry = LogEntry;
  * or the subject carries none; a disputed self-correction always carries null.
  */
 export type PauseFacts =
-  | Readonly<{ pause: "reraised"; id: string; history: readonly ShownEntry[]; issue: Issue | null; taskDispute: boolean; effects: WorkEffects | null }>
+  /** `planner` (W1-R1-3 of issue #38): Claude Code's position from the id's current entry, null where it gave none. */
+  | Readonly<{ pause: "reraised"; id: string; history: readonly ShownEntry[]; issue: Issue | null; planner: Position | null; taskDispute: boolean; effects: WorkEffects | null }>
   | Readonly<{ pause: "secondClarification"; id: string; history: readonly ShownEntry[]; disposition: Disposition | null; taskDispute: boolean; effects: WorkEffects | null }>
-  | Readonly<{ pause: "disputedSelfCorrection"; id: string; explanation: string; history: readonly ShownEntry[]; taskDispute: boolean; effects: null; resolution: Resolution | null }>
+  /** `reviewer` and `planner` (W1-R1-3 of issue #38): Codex's position on the id's last review entry, and the self-correction's own. */
+  | Readonly<{ pause: "disputedSelfCorrection"; id: string; explanation: string; history: readonly ShownEntry[]; reviewer: Position | null; planner: Position | null; taskDispute: boolean; effects: null; resolution: Resolution | null }>
   /** Issue #38: a resolution both agents accept that would change what only the developer may change. */
   | Readonly<{ pause: "authorityResolution"; id: string; history: readonly ShownEntry[]; resolution: Resolution; taskDispute: false; effects: WorkEffects | null }>
   | Readonly<{

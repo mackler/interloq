@@ -105,9 +105,10 @@ test("a counted review saves the review, reports the count, and asks about each 
   assert.match(askedProse(last(t)), /raised issue A again/);
   assert.deepEqual(last(t), {
     kind: "AskDecision",
-    asks: { kind: "pause", facts: { pause: "reraised", id: "A", history: [entry("A", "rejected")], issue: issue("A"), taskDispute: false, effects: null } },
+    asks: { kind: "pause", facts: { pause: "reraised", id: "A", history: [entry("A", "rejected")], issue: issue("A"), planner: null, taskDispute: false, effects: null } },
     id: "A",
-    options: [{ label: prompts.REVIEWER_POSITION, description: "p e" }, { label: prompts.PLANNER_POSITION, description: "r" }],
+    // W1-R1-3 of issue #38: Codex's option states its concern and remedy.
+    options: [{ label: prompts.REVIEWER_POSITION, description: `p e ${prompts.positionLine(issue("A").concern, issue("A").remedy)}` }, { label: prompts.PLANNER_POSITION, description: "r" }],
   });
   assert.equal(askedSubject(last(t), t.state), "issue A, raised again after Claude Code did not accept it in full");
   const kept = advance(t.state, { kind: "DecisionGiven", text: "keep the rejection" });
@@ -260,7 +261,9 @@ test("identical content names the round after which it was seen, with the decisi
 test("idle rounds: the prompt after maxIdleRounds, a decision applies and is observed as a decision stage, and the counter resets", () => {
   const t = run(afterReview(), { kind: "ResponseDecoded", response: respond([["A", "rejected"]]), resultText: "", costUsd: null }, { kind: "FileObserved", hash: "h0", text: "" });
   const idle = run(start({ maxIdleRounds: 1 }), { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "rejected"]]), { kind: "FileObserved", hash: "h0", text: "" });
-  assert.match(askedProse(last(idle)), /accepted no issue in the last cycle\.\n\nThe issues of the last cycle that led to no change:\n\n- In cycle 1, Codex raised it: p — Claude Code rejected it: rationale A$/);
+  // W1-R1-3 of issue #38: each entry names both agents' positions.
+  const scripted = (agent: (c: string, r: string) => string) => agent(issue("A").concern, issue("A").remedy);
+  assert.ok(askedProse(last(idle)).endsWith(`accepted no issue in the last cycle.\n\nThe issues of the last cycle that led to no change:\n\n- In cycle 1, Codex raised it: p — Claude Code rejected it: rationale A ${scripted(prompts.reviewerPositionLine)} ${scripted(prompts.plannerPositionLine)}`), askedProse(last(idle)));
   assert.equal(askedSubject(last(idle), idle.state), "the issues of the last 1 cycles that produced no amendment");
   assert.equal(last(idle).kind, "AskDecision");
   const applied = run(idle, { kind: "DecisionGiven", text: "apply" }, { kind: "DecisionsApplied" });
@@ -506,10 +509,11 @@ test("each disputed pause offers the two positions; a question offers its option
   }
   const positions = (reviewer: string, planner: string) => [{ label: prompts.REVIEWER_POSITION, description: reviewer }, { label: prompts.PLANNER_POSITION, description: planner }];
   assert.deepEqual(seen, [
-    positions("A is unclear see s", "what do you mean by A?"),
-    positions("C was missing", "C was wrong"),
-    positions("undo C e", "C must stay"),
-    positions("O again e", "O is fine"),
+    // W1-R1-3 of issue #38: each side states its agent's concern and remedy where it gave one.
+    positions("A is unclear see s Concern: c Remedy: r", "what do you mean by A? Concern: c Remedy: r"),
+    positions("C was missing", "C was wrong Concern: c Remedy: r"),
+    positions(`undo C e ${prompts.positionLine(issue("B").concern, issue("B").remedy)}`, "C must stay Concern: c Remedy: r"),
+    positions(`O again e ${prompts.positionLine(issue("N").concern, issue("N").remedy)}`, "O is fine"),
     question.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) })),
   ]);
   // The idle pause.
@@ -705,7 +709,7 @@ test("issue #156: an issue raised again whose latest answer is marked is asked, 
   const c = last(t) as AskCommand;
   assert.equal(c.kind, "AskDecision");
   assert.deepEqual(c.options, [
-    { label: prompts.REVIEWER_POSITION, description: "p e" },
+    { label: prompts.REVIEWER_POSITION, description: `p e ${prompts.positionLine(issue("A").concern, issue("A").remedy)}` },
     { label: prompts.PLANNER_POSITION, description: "r" },
   ]);
   assert.equal(pauseOf(c)?.pause, "reraised");
@@ -752,7 +756,7 @@ test("issue #156: a marked repetition under a new id offers the new id's rationa
   const facts = pauseOf(c!) as { pause: string; disposition: { id: string; rationale: string } | null };
   assert.equal(facts.pause, "repeatedUnderNewId");
   assert.equal(facts.disposition?.id, "N");
-  assert.deepEqual(c!.options?.[1], { label: prompts.PLANNER_POSITION, description: "rationale N" });
+  assert.deepEqual(c!.options?.[1], { label: prompts.PLANNER_POSITION, description: `rationale N ${prompts.positionLine(issue("A").concern, issue("A").remedy)}` });
   const user = afterDisputed((log) => start({}, log), { a: false, b: false, n: false });
   const repeat = askedPauses(user).find((x) => pauseOf(x)?.pause === "repeatedUnderNewId");
   assert.deepEqual(repeat?.options?.[1], { label: prompts.PLANNER_POSITION, description: "r" });

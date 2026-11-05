@@ -71,3 +71,19 @@ test("an authorityResolution origin, built by pauseOriginOf, crosses the protoco
   assert.deepEqual(decoded.success.origin, origin);
   assert.ok(prompts.isDisputedPause(origin));
 });
+
+test("a disputed pause's details show both agents' concerns and remedies, and a history entry shows its positions (W1-R1-3)", async () => {
+  const { pauseProse } = await import("../src/render.ts");
+  const { blocksText } = await import("../src/pieces.ts");
+  const { reviewEntry } = await import("./resolutionFixtures.ts");
+  const codex = { concern: text("codex concern X"), remedy: text("codex remedy X") };
+  const claude = { concern: text("claude concern Y"), remedy: text("claude remedy Y") };
+  const entry = reviewEntry("A", "rejected", { reviewer_position: codex, planner_position: claude });
+  const shown = (facts: PauseFacts): string => blocksText(pauseProse(facts)).join("\n");
+  const issue = { id: "A", severity: "major" as const, location: "l", problem: "p", evidence: "e", concern: "codex concern X", remedy: "codex remedy X" };
+  const reraised = shown({ pause: "reraised", id: "A", history: [], issue, planner: claude, taskDispute: false, effects: null });
+  const disputed = shown({ pause: "disputedSelfCorrection", id: "A", explanation: "wrong", history: [], reviewer: codex, planner: claude, taskDispute: false, effects: null, resolution: null });
+  const history = shown({ pause: "authorityResolution", id: "A", history: [entry], resolution: resolution("both"), taskDispute: false, effects: null });
+  for (const [name, t] of [["reraised", reraised], ["disputed", disputed], ["history", history]] as const)
+    for (const want of ["codex concern X", "codex remedy X", "claude concern Y", "claude remedy Y"]) assert.ok(t.includes(want), `${name}: ${want} in\n${t}`);
+});

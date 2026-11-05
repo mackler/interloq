@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
-import { piecesText } from "../src/pieces.ts";
+import { blocksText, piecesText } from "../src/pieces.ts";
 import type * as S from "../src/schema.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { finished, issue, presentedQuestions, questionEntry, respond, runRefinement, runTask, summaryReply, tempRepo, testLayer } from "./helpers.ts";
@@ -59,7 +59,7 @@ test("(2) a resolution proposed in Claude Code's first response, raised by Codex
   assert.deepEqual(entry.planner_position, { concern: "the plan must stay short", remedy: "keep the step" });
 });
 
-test("(3, 4) a resolution only the developer may authorize is a third choice naming the change, never applied before his answer", async () => {
+test("(3) a resolution only the developer may authorize is a third choice naming the change, never applied before his answer", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["2"],
     steps: [{ output: noQuestions, plan: "v1" }, { output: resolved("rejected", "drop the step and its test", ["requirement 2: the step is required"]) }, { output: respond([[ID, "rejected"]]) }],
@@ -169,4 +169,35 @@ test("(W1-R1-2) an authority resolution answered with Claude Code's position on 
   assert.equal(disputes(probe.ui).length, 1);
   const current = planLog(probe.dir).filter((e) => e.id === ID && !e.superseded).at(-1);
   assert.equal(current?.source, "user", JSON.stringify(planLog(probe.dir)));
+});
+
+const CODEX_SIDE = { concern: "codex concern X", remedy: "codex remedy X" };
+const CLAUDE_SIDE = { concern: "claude concern Y", remedy: "claude remedy Y" };
+const codexRaises = () => ({ ...issue(ID), ...CODEX_SIDE });
+const claudeRejects = (resolution: { text: string; changes: string[] } | null = null) => ({
+  ...respond([[ID, "rejected"]]),
+  dispositions: respond([[ID, "rejected"]]).dispositions.map((d) => ({ ...d, ...CLAUDE_SIDE, resolution })),
+});
+const fourTexts = [CODEX_SIDE.concern, CODEX_SIDE.remedy, CLAUDE_SIDE.concern, CLAUDE_SIDE.remedy];
+
+test("(4, W1-R1-3) the question after an investigation that ends without agreement shows both agents' concerns and remedies, in its options and its details", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["2"],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: claudeRejects(), plan: "v2" }, { output: claudeRejects({ text: "keep the step behind a check", changes: [] }), plan: "v3" }, { output: claudeRejects(), plan: "v4" }],
+    reviews: [{ issues: [codexRaises()] }, { issues: [codexRaises()] }, { issues: [{ ...codexRaises(), evidence: "the check does not meet the concern" }] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 5 },
+  });
+  await runTask(layer);
+  assert.ok(probe.planner.prompts[2]?.includes(prompts.investigationNote([ID])), "the response to the first re-raise carries the investigation note");
+  const [question] = disputes(probe.ui);
+  assert.ok(question !== undefined, "asked after the investigation");
+  assert.deepEqual(tagsOf(probe.ui.notified).slice(0, 6), ["ReviewReceived", "ResponseReceived", "ReviewReceived", "ResponseReceived", "ReviewReceived", "QuestionPresented"]);
+  assert.equal(question.options.length, 3, "the resolution is the third choice");
+  const descriptions = question.options.map((o) => piecesText(o.description)).join("\n");
+  const details = blocksText(question.attached?.blocks ?? []).join("\n");
+  for (const want of fourTexts) {
+    assert.ok(descriptions.includes(want), `${want} in the options:\n${descriptions}`);
+    assert.ok(details.includes(want), `${want} in the details:\n${details}`);
+  }
 });

@@ -9,7 +9,7 @@ import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type Pre
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
 import * as words from "./prompts.ts";
-import type { Disposition, FigureReply, Issue, Resolution, TermsEntry } from "./schema.ts";
+import type { Disposition, FigureReply, Issue, Position, Resolution, TermsEntry } from "./schema.ts";
 import { type PlannerResponse, type Review, WORK_EFFECT_FIELD } from "./schema.ts";
 import { isEffectDisposition, isEffectIssue } from "./workEffect.ts";
 import type { DecisionEvent } from "./reviewState.ts";
@@ -234,15 +234,21 @@ export const renderQuestionRecord = (q: PresentedQuestion): string => {
 const entryProse = (e: ShownEntry): string => {
   switch (e.source) {
     case "review": {
-      const line = words.reviewEntryLine(e.round, e.problem, words.dispositionWords(e.action), e.rationale);
+      const line = [words.reviewEntryLine(e.round, e.problem, words.dispositionWords(e.action), e.rationale), ...positionLines(e.reviewer_position, e.planner_position)].join(" ");
       return e.task_dispute ? `${line} ${words.TASK_DISPUTE_ENTRY_MARK}` : line;
     }
     case "self_correction":
-      return words.selfCorrectionLine(e.round, words.selfCorrectionWords(e.action), e.rationale);
+      return [words.selfCorrectionLine(e.round, words.selfCorrectionWords(e.action), e.rationale), ...positionLines(null, e.planner_position)].join(" ");
     case "user":
       return words.userDecisionLine(e.round, e.rationale);
   }
 };
+/** W1-R1-3 of issue #38: Codex's and Claude Code's positions, each named as its agent's, where given. */
+const positionLines = (reviewer: Position | null, planner: Position | null): readonly string[] => [
+  ...(reviewer === null ? [] : [words.reviewerPositionLine(reviewer.concern, reviewer.remedy)]),
+  ...(planner === null ? [] : [words.plannerPositionLine(planner.concern, planner.remedy)]),
+];
+const positionsProse = (reviewer: Position | null, planner: Position | null): readonly Block[] => positionLines(reviewer, planner).map(paragraph);
 const paragraph = (text: string): Block => ({ kind: "paragraph", pieces: [{ text, ref: "", code: false }] });
 const list = (lines: readonly string[]): Block => ({ kind: "list", items: lines.map((text) => ({ level: 0, pieces: [{ text, ref: "", code: false }] })) });
 const historyProse = (history: readonly ShownEntry[]): readonly Block[] => (history.length === 0 ? [] : [paragraph(words.HISTORY_HEADING), list(history.map(entryProse))]);
@@ -264,11 +270,11 @@ export const pauseProse = (facts: PauseFacts): readonly Block[] => {
   const parts = ((): readonly Block[] => {
     switch (facts.pause) {
       case "reraised":
-        return [...issueProse(facts.issue), ...historyProse(facts.history)];
+        return [...issueProse(facts.issue), ...positionsProse(null, facts.planner), ...historyProse(facts.history)];
       case "secondClarification":
         return [...answerProse(facts.disposition), ...historyProse(facts.history)];
       case "disputedSelfCorrection":
-        return [paragraph(facts.explanation.trim()), ...resolutionProse(facts.resolution), ...historyProse(facts.history)];
+        return [paragraph(facts.explanation.trim()), ...positionsProse(facts.reviewer, facts.planner), ...resolutionProse(facts.resolution), ...historyProse(facts.history)];
       case "reversal":
         return [...issueProse(facts.issue), ...answerProse(facts.disposition), ...historyProse(facts.history)];
       case "repeatedUnderNewId":

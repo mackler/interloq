@@ -174,7 +174,7 @@ test("decisionDraft asks a marked disagreement as a reading of the task, and an 
   const { programContext } = await import("../src/offer.ts");
   const { piecesText, blocksText } = await import("../src/pieces.ts");
   const options = [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }];
-  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute, effects: null });
+  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, planner: null, taskDispute, effects: null });
   const markedDraft = decisionDraft("Question review", { kind: "pause", facts: facts(true) }, options, null, "review");
   assert.equal(piecesText(markedDraft.question), prompts.TASK_DISPUTE_QUESTION);
   assert.deepEqual(markedDraft.context, { blocks: [{ kind: "paragraph", pieces: [{ text: prompts.taskDisputeContext("Question review"), ref: "", code: false }] }], by: "program" });
@@ -201,11 +201,11 @@ test("decisionDraft shows the outcome labels of every disputed pause, naming no 
   const factsOf = (kind: prompts.DisputedPauseKind): import("../src/question.ts").PauseFacts => {
     switch (kind) {
       case "reraised":
-        return { ...base, pause: kind, issue: null, effects: null };
+        return { ...base, pause: kind, issue: null, planner: null, effects: null };
       case "secondClarification":
         return { ...base, pause: kind, disposition: null, effects: null };
       case "disputedSelfCorrection":
-        return { ...base, pause: kind, explanation: "wrong", effects: null, resolution: null };
+        return { ...base, pause: kind, explanation: "wrong", reviewer: null, planner: null, effects: null, resolution: null };
       case "authorityResolution":
         return { ...base, pause: kind, taskDispute: false, resolution: { text: "both" as S.PositionText, changes: ["requirement 2" as S.PositionText] }, effects: null };
       case "reversal":
@@ -261,7 +261,7 @@ test("a marked pause keeps its context when the context call falls back, and the
   const { plainBlocks } = await import("../src/pieces.ts");
   const { presentedQuestions } = await import("./helpers.ts");
   const options = [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }];
-  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute, effects: null });
+  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, planner: null, taskDispute, effects: null });
   const asked = async (taskDispute: boolean) => {
     const { layer, probe } = testLayer(tempRepo(), { answers: ["1"] });
     const requests: prompts.ContextRequest[] = [];

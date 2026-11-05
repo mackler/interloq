@@ -131,9 +131,9 @@ test("pauseProse writes every kind of pause as prose, without the record's field
   const issueNow = { id: "P1-R2-1", severity: "major" as const, location: "S3", problem: "Still no migration.", evidence: "S3 is unchanged.", concern: "c", remedy: "r" };
   const disposition = { id: "P1-R2-1", action: "partially_accepted" as const, rationale: "Only the index.", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null };
   const all = [
-    pauseProse({ pause: "reraised", id: "P1-R1-1", history: earlier, issue: issueNow, taskDispute: false, effects: null }),
+    pauseProse({ pause: "reraised", planner: null, id: "P1-R1-1", history: earlier, issue: issueNow, taskDispute: false, effects: null }),
     pauseProse({ pause: "secondClarification", id: "P1-R1-1", history: earlier, disposition, taskDispute: false, effects: null }),
-    pauseProse({ pause: "disputedSelfCorrection", id: "P1-R1-1", explanation: "It breaks the build.", history: earlier, taskDispute: false, effects: null, resolution: null }),
+    pauseProse({ pause: "disputedSelfCorrection", reviewer: null, planner: null, id: "P1-R1-1", explanation: "It breaks the build.", history: earlier, taskDispute: false, effects: null, resolution: null }),
     pauseProse({ pause: "reversal", id: "P1-R2-1", reverses: "P1-R1-1", history: earlier, issue: issueNow, disposition, taskDispute: false, effects: null }),
     pauseProse({ pause: "repeatedUnderNewId", id: "P1-R2-1", repeats: "P1-R1-1", history: earlier, issue: issueNow, disposition: null, taskDispute: false, effects: null }),
     pauseProse({ pause: "identical", fileLabel: "plan.json", round: 3, seen: "cycle 1" }),
@@ -369,13 +369,13 @@ test("pauseProse states a marked disagreement after its lead, shows a repetition
   const issueNow = { id: "Q-R2-1", severity: "major" as const, location: "Q1", problem: "Still drop Q1.", evidence: "e2", concern: "c", remedy: "r" };
   const disposition = { id: "Q-R2-1", action: "rejected" as const, rationale: "Either reading is open.", duplicate_of: "Q-R1-1", reverses: "", concern: "c", remedy: "r", resolution: null };
   const text = (facts: Parameters<typeof pauseProse>[0]) => blocksMarkdown(pauseProse(facts));
-  const markedFacts = pauseProse({ pause: "reraised", id: "Q-R1-1", history: [markedEntry], issue: issueNow, taskDispute: true, effects: null });
+  const markedFacts = pauseProse({ pause: "reraised", planner: null, id: "Q-R1-1", history: [markedEntry], issue: issueNow, taskDispute: true, effects: null });
   assert.equal(piecesText((markedFacts[1] as { pieces: Parameters<typeof piecesText>[0] }).pieces), prompts.TASK_DISPUTE_FACT);
-  assert.ok(!text({ pause: "reraised", id: "Q-R1-1", history: [plainEntry], issue: issueNow, taskDispute: false, effects: null }).includes(prompts.TASK_DISPUTE_FACT));
+  assert.ok(!text({ pause: "reraised", planner: null, id: "Q-R1-1", history: [plainEntry], issue: issueNow, taskDispute: false, effects: null }).includes(prompts.TASK_DISPUTE_FACT));
   const repeat = text({ pause: "repeatedUnderNewId", id: "Q-R2-1", repeats: "Q-R1-1", history: [markedEntry], issue: issueNow, disposition, taskDispute: true, effects: null });
   assert.ok(repeat.includes(prompts.claudeAnswers(prompts.dispositionWords("rejected"), "Either reading is open.")), repeat);
   assert.ok(repeat.includes(prompts.TASK_DISPUTE_ENTRY_MARK), repeat);
-  assert.ok(!text({ pause: "reraised", id: "Q-R1-1", history: [plainEntry], issue: issueNow, taskDispute: false, effects: null }).includes(prompts.TASK_DISPUTE_ENTRY_MARK));
+  assert.ok(!text({ pause: "reraised", planner: null, id: "Q-R1-1", history: [plainEntry], issue: issueNow, taskDispute: false, effects: null }).includes(prompts.TASK_DISPUTE_ENTRY_MARK));
   const idle = text({ pause: "idle", idle: 2, round: 3, issues: [markedEntry] });
   for (const part of ["Drop Q1: the code settles it.", "The task allows another reading.", prompts.TASK_DISPUTE_ENTRY_MARK]) assert.ok(idle.includes(part), part);
   assert.ok(!idle.includes(prompts.TASK_DISPUTE_FACT));
@@ -387,10 +387,10 @@ test("pauseProse states each agent's stated effect on the work where the facts c
   const { blocksMarkdown } = await import("../src/pieces.ts");
   const { pauseProse } = await import("../src/render.ts");
   const effects = { reviewer: { kind: "differs", difference: "website/README.md is committed unwrapped" }, planner: { kind: "none" } } as unknown as import("../src/schema.ts").WorkEffects;
-  const text = blocksMarkdown(pauseProse({ pause: "reraised", id: "W1-R1-1", history: [], issue: null, taskDispute: false, effects }));
+  const text = blocksMarkdown(pauseProse({ pause: "reraised", planner: null, id: "W1-R1-1", history: [], issue: null, taskDispute: false, effects }));
   assert.ok(prompts.workEffectsFact(effects).includes("website/README.md is committed unwrapped"));
   assert.ok(text.includes(prompts.workEffectsFact(effects)), text);
-  assert.ok(!blocksMarkdown(pauseProse({ pause: "reraised", id: "W1-R1-1", history: [], issue: null, taskDispute: false, effects: null })).includes(prompts.workEffectsFact(effects)));
+  assert.ok(!blocksMarkdown(pauseProse({ pause: "reraised", planner: null, id: "W1-R1-1", history: [], issue: null, taskDispute: false, effects: null })).includes(prompts.workEffectsFact(effects)));
 });
 
 // Issue #183: conversation.md shows each agent's statement of an issue's effect on the work where the reply carries it.

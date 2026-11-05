@@ -11,7 +11,7 @@ import { withOffer } from "../src/prompts.ts";
 import type { RunError } from "../src/errors.ts";
 import type { ArguedColumn, Column, DecisionAnalysis, Entry } from "../src/schema.ts";
 import { Decider, type DecisionQuestion, type Services, Store, Ui } from "../src/services.ts";
-import { askedInPlanReview, issue, opt, para, plain, questionEntry, respond, tempRepo, term, testLayer, type TestOptions, presentedQuestions, presentedSubjects, userQuestion, questionOf } from "./helpers.ts";
+import { askedInPlanReview, issue, opt, para, plain, questionEntry, respond, tempRepo, term, testLayer, type TestOptions, presentedQuestions, presentedSubjects, userQuestion, questionOf, SCRIPTED_POSITION } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 
 /** The column as an argued one (a test fails on an unclear column). */
@@ -318,7 +318,7 @@ test("a disputed pause offers Help me decide; the analysis runs in the phase, an
   assert.ok(presented.length > 0);
   // Issue #183: in the plan review the option names what each agent states would differ in the work and what it costs.
   const scripted = { kind: "differs", difference: "scripted" } as unknown as import("../src/schema.ts").WorkEffect;
-  const described = `p e ${prompts.followCodexChanges({ reviewer: scripted, planner: scripted })} ${prompts.followCodexCost(false)}`;
+  const described = `p e ${prompts.positionLine(SCRIPTED_POSITION.concern, SCRIPTED_POSITION.remedy)} ${prompts.followCodexChanges({ reviewer: scripted, planner: scripted })} ${prompts.followCodexCost(false)}`;
   assert.deepEqual(presented[0].options[0], { label: plain(prompts.positionLabels("reraised", "review").reviewer), description: plain(described), figure: null, answer: { token: "1" } });
   assert.deepEqual(json(probe.dir, "decision-1/question.json").phase, { kind: "planning", n: 1 });
   assert.equal(json(probe.dir, "decision-1/chosen.json").option, prompts.REVIEWER_POSITION);
@@ -587,7 +587,7 @@ test("an agreed question gives the analysis its reviewed context, reason and ter
   const { prompt } = await decideOn(draft);
   for (const part of ["The service stores orders in a database.", "the schema depends on it", "orders: What customers buy."]) assert.ok(prompt.includes(part), part);
   const { decisionDraft } = await import("../src/review.ts");
-  const facts = { pause: "reraised" as const, id: "P1-R1-1", history: [], issue: { id: "P1-R1-1", severity: "major" as const, location: "S1", problem: "The migration is missing.", evidence: "S1 never migrates.", concern: "c", remedy: "r" }, taskDispute: false, effects: null };
+  const facts = { pause: "reraised" as const, id: "P1-R1-1", history: [], issue: { id: "P1-R1-1", severity: "major" as const, location: "S1", problem: "The migration is missing.", evidence: "S1 never migrates.", concern: "c", remedy: "r" }, planner: null, taskDispute: false, effects: null };
   const pause = await decideOn({ ...decisionDraft("Planning phase 1", { kind: "pause", facts }, question.options, null, "review"), explain: undefined });
   assert.ok(pause.prompt.includes("Codex says: The migration is missing."), pause.prompt.slice(-1500));
 });

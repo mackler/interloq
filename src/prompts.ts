@@ -4128,6 +4128,9 @@ export const QUESTION_HISTORY_HEADING = "History";
 export const CODEX_SAYS = "Codex says:";
 /** Issue #38: an agent's concern apart from its remedy, as conversation.md and a pause's facts show them. */
 export const positionLine = (concern: string, remedy: string): string => `Concern: ${concern.trim()} Remedy: ${remedy.trim()}`;
+/** W1-R1-3 of issue #38: an agent's position named as that agent's, where the text around it does not say whose it is. */
+export const reviewerPositionLine = (concern: string, remedy: string): string => `Codex's position: ${positionLine(concern, remedy)}`;
+export const plannerPositionLine = (concern: string, remedy: string): string => `Claude Code's position: ${positionLine(concern, remedy)}`;
 export function claudeAnswers(action: string, rationale: string): string {
   return `Claude Code ${action}: ${rationale.trim()}`;
 }
