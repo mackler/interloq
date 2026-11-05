@@ -209,3 +209,19 @@ test("property: a re-raised point is asked only after its investigation and a re
     }),
   );
 });
+
+test("a marked dispute whose review entry an earlier self-correction superseded keeps its mark: investigated, then asked, never settled (W1-R1-1)", () => {
+  const log = [reviewEntry("Q-R1-1", "partially_accepted", { task_dispute: true, superseded: true }), selfEntry("Q-R1-1", "accepted", { round: 1 })];
+  const disputing = { ...respond([["Q-R1-2", "accepted"]]), self_corrections: [{ id: "Q-R1-1", new_action: "rejected" as const, explanation: "wrong", concern: "c", remedy: "m", resolution: null }] };
+  const t1 = run(begin(log, { subject: "questions", disputesSettledBy: "agents" }), reviewed("Q-R1-2"), responded(disputing));
+  assert.deepEqual(last(t1), { kind: "CallInvestigation", round: 1, ids: ["Q-R1-1"], attempt: 1 });
+  assert.ok(!t1.commands.some((c) => c.kind === "Converse" && c.markdown.includes(prompts.WORDING_DISPUTE_HEADING)));
+  const t2 = run(t1, responded(disputing, "InvestigationDecoded"), observed("h1"));
+  for (const raising of [[], ["Q-R1-1"]]) {
+    const t3 = run(t2, reviewed(...raising));
+    const [question] = asks(t3);
+    assert.ok(question?.asks.kind === "pause" && question.asks.facts.pause === "disputedSelfCorrection", `asked, raising [${raising}]`);
+    assert.equal(question.asks.facts.taskDispute, true);
+    assert.ok(!t3.commands.some((c) => c.kind === "Converse" && c.markdown.includes(prompts.WORDING_DISPUTE_HEADING)));
+  }
+});

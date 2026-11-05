@@ -10,7 +10,7 @@ import * as prompts from "../src/prompts.ts";
 import { piecesText } from "../src/pieces.ts";
 import type * as S from "../src/schema.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
-import { finished, issue, presentedQuestions, respond, runTask, tempRepo, testLayer } from "./helpers.ts";
+import { finished, issue, presentedQuestions, questionEntry, respond, runRefinement, runTask, summaryReply, tempRepo, testLayer } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 const ID = "P1-R1-1";
@@ -132,4 +132,27 @@ test("(11) a disputed self-correction kept with a resolution naming a change is 
   assert.equal(question.options.length, 3);
   assert.ok(read(probe.dir, "user-decisions.md").includes(prompts.RESOLUTION_POSITION));
   assert.match(read(probe.dir, "plan.md"), /v4/);
+});
+
+test("(W1-R1-1) in the question list a marked dispute whose review entry an earlier self-correction superseded is investigated and then asked", async () => {
+  const q1 = questionEntry("Q1", "question Q1?", [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
+  const qv = (n: string) => questionEntry("Q1", `question Q1, ${n}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "r", default_answer: "A" });
+  const marked = { ...respond([["Q-R1-1", "partially_accepted", true]]), questions: [qv("first")] };
+  const corrected = { ...respond([["Q-R2-1", "accepted"]]), self_corrections: [{ id: "Q-R1-1", new_action: "accepted" as const, explanation: "the point holds after all", concern: "", remedy: "", resolution: null }], questions: [questionEntry("Q1", "question Q1, revised?", [["A", "a"], ["B", "b"]], { context: "c", reason: "r", default_answer: "A" })] };
+  const disputing = { ...respond([["Q-R3-1", "accepted"]]), self_corrections: [{ id: "Q-R1-1", new_action: "rejected" as const, explanation: "the correction misread the task", concern: "the task allows two readings", remedy: "keep Q1 as asked", resolution: null }], questions: [questionEntry("Q1", "question Q1, again?", [["A", "a"], ["B", "b"]], { context: "c", reason: "r", default_answer: "A" })] };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["2", "A"],
+    steps: [{ output: { questions: [q1] } }, { output: marked }, { output: corrected }, { output: disputing }, { output: disputing }, { output: { ...respond([]), questions: [q1] } }],
+    closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Complete.") }],
+    reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [issue("Q-R2-1")] }, { issues: [issue("Q-R3-1")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 9 },
+  });
+  await runRefinement(layer);
+  assert.ok(fs.readdirSync(probe.dir, { recursive: true }).some((f) => /cc-\d+-investigation-\d+\.json$/.test(String(f))), "the investigation turn ran");
+  const [question] = disputes(probe.ui);
+  assert.ok(question !== undefined, "the marked dispute reaches the developer");
+  assert.equal(question.origin.kind === "pause" ? question.origin.pause : "", "disputedSelfCorrection");
+  const conversation = read(probe.dir, "conversation.md");
+  assert.ok(!new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\*[^\\n]*Q-R1-1`).test(conversation), conversation.slice(-2000));
 });

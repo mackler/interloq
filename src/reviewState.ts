@@ -153,9 +153,15 @@ const loggedPlannerEffect = (history: readonly LogEntry[], id: string): WorkEffe
 };
 /** The current entry of an id in the log (the last one that is not superseded). */
 const currentEntry = (history: readonly LogEntry[], id: string): LogEntry | undefined => history.filter((e) => e.id === id && e.superseded !== true).at(-1);
-/** Whether Claude Code's latest answer to an id in the log carries its mark (issue #156): its current entry is a marked review entry. */
+/**
+ * Whether Claude Code's latest answer to an id in the log carries its mark (issue #156): the id's latest review entry,
+ * current or superseded by a self-correction, is marked (W1-R1-1 of issue #38, since a self-correction entry carries no
+ * mark and would otherwise drop it); false where the id's current entry is the developer's decision, which ends the
+ * dispute.
+ */
 const markedEntry = (history: readonly LogEntry[], id: string): boolean => {
-  const e = currentEntry(history, id);
+  if (currentEntry(history, id)?.source === "user") return false;
+  const e = history.filter((x) => x.id === id && x.source === "review").at(-1);
   return e !== undefined && e.source === "review" && e.task_dispute;
 };
 /** Where the loop is inside a round: what the next event means. */
