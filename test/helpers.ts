@@ -574,7 +574,7 @@ export class ScriptedPlanner implements PlannerShape {
    */
   private withPlan(schema: Schema.Top, step: PlanningStep): unknown {
     if (step.plan !== undefined) this.root.lastPlan = step.plan;
-    const output = withWorkEffects(step.output);
+    const output = withCorrectionPassages(withWorkEffects(step.output));
     // Issue #186: the run's first planning call replies a plan or the verdict under `reply`; a script written as a plan
     // write (a plan and an empty questions_for_user) is that plan, and a script with a question there is refused, since
     // the first plan asks none any more.
@@ -726,6 +726,17 @@ export const withIssueEffect = (i: Review["issues"][number]): Review["issues"][n
 export const withWorkEffects = (output: unknown): unknown => {
   if (output === null || typeof output !== "object" || Array.isArray(output) || !("dispositions" in output) || !Array.isArray(output.dispositions)) return output;
   return { ...output, dispositions: output.dispositions.map((d: unknown) => (d !== null && typeof d === "object" && !(S.WORK_EFFECT_FIELD in d) ? { ...d, [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT } : d)) };
+};
+/**
+ * A scripted response given, where it states no correction_passages (issue #232), one entry with no passage per
+ * disposition accepted in full or in part, so that a scenario written before the field passes the check of
+ * src/keptCorrections.ts; an output that states the field keeps its own, and every subject whose schema lacks the field
+ * drops it on decode.
+ */
+export const withCorrectionPassages = (output: unknown): unknown => {
+  if (output === null || typeof output !== "object" || Array.isArray(output) || !("dispositions" in output) || !Array.isArray(output.dispositions) || S.CORRECTION_PASSAGES_FIELD in output) return output;
+  const accepted = output.dispositions.filter((d: unknown) => d !== null && typeof d === "object" && "action" in d && (d.action === "accepted" || d.action === "partially_accepted"));
+  return { ...output, [S.CORRECTION_PASSAGES_FIELD]: accepted.map((d: { id?: unknown }) => ({ id: d.id, passages: [] })) };
 };
 /**
  * A response with one disposition per tuple. Each carries Claude Code's mark (issue #156), the tuple's third element or

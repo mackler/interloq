@@ -1054,6 +1054,7 @@ describe("a replay of a question phase", () => {
           self_corrections: [],
           reviewer_feedback: "",
           questions_for_user: [],
+          correction_passages: [],
           questions: [{ id: "Q1", context: plainBlocks("c"), history: [], question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p"), figure: null }, { label: plainPieces("SQLite"), description: plainPieces("s"), figure: null }], default_answer: "PostgreSQL", skip_if: null }],
         },
         resultText: "",
@@ -1317,7 +1318,7 @@ test("a blank answer to a relayed question, then the question presented again: t
 // W2-R1-1: a decision's response (with its amended analysis) folds into one Claude message; the rail is unchanged.
 test("a decision's ResponseReceived is one Claude message in the right panel, live and replayed, and adds nothing to the rail", () => {
   const analysisOf = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
-  const response = { dispositions: [{ id: "D1-R1-1", action: "accepted" as const, rationale: "amended", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [], analysis: analysisOf };
+  const response = { dispositions: [{ id: "D1-R1-1", action: "accepted" as const, rationale: "amended", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [], correction_passages: [], analysis: analysisOf };
   const phase = notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } });
   const events: RunEvent[] = [started, phase, notified({ _tag: "ResponseReceived", subject: { decision: 1 }, round: 1, response, resultText: "" })];
   const before = fold(live([started, phase]));

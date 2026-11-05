@@ -38,6 +38,8 @@ const UserQuestion = Schema.Struct({ context: Blocks, history: Blocks, question:
 const plannerFields = { dispositions: Schema.Array(Disposition), self_corrections: Schema.Array(SelfCorrection), reviewer_feedback: Str, questions_for_user: Schema.Array(UserQuestion) };
 const markedFields = { ...plannerFields, dispositions: Schema.Array(MarkedDisposition) };
 const effectFields = { ...plannerFields, dispositions: Schema.Array(EffectDisposition) };
+/** Issue #232: per accepted issue, the passages of the returned file that carry its correction. */
+const correctionPassages = { correction_passages: Schema.Array(Schema.Struct({ id: Str, passages: Strings })) };
 const QuestionEntry = Schema.Struct({
   id: Str,
   context: Blocks,
@@ -93,7 +95,7 @@ export const protoSchemas: Record<string, Schema.Top> = {
   planWrite: Schema.Struct({ questions_for_user: Schema.Array(UserQuestion) }),
   execReport: Schema.Struct({ status: Schema.Literals(["finished", "continuing", "needs_input", "blocked", "not_refined"]), summary: Str, question: Str, remaining_work: Str, checks: Schema.Array(Schema.Struct({ step: Str, command: Str, seconds: Schema.Finite, selection: Schema.Boolean, counts: Schema.NullOr(Schema.Struct({ passed: Schema.Int, failed: Schema.Int, skipped: Schema.Int })) })), missing: Str }),
   questionList: Schema.Struct({ questions: Schema.Array(QuestionEntry) }),
-  questionListResponse: Schema.Struct({ ...markedFields, questions: Schema.Array(QuestionEntry) }),
+  questionListResponse: Schema.Struct({ ...markedFields, ...correctionPassages, questions: Schema.Array(QuestionEntry) }),
   interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
   interviewReply: Schema.Struct({
     message_to_user: Str,
@@ -103,10 +105,10 @@ export const protoSchemas: Record<string, Schema.Top> = {
     summary: Str,
   }),
   decisionAnalysis: DecisionAnalysis,
-  decisionResponse: Schema.Struct({ ...plannerFields, analysis: DecisionAnalysis }),
+  decisionResponse: Schema.Struct({ ...plannerFields, ...correctionPassages, analysis: DecisionAnalysis }),
   decisionApplied: Schema.Struct({ analysis: DecisionAnalysis }),
   planReply: Schema.Struct({ plan: Plan, questions_for_user: Schema.Array(UserQuestion) }),
-  planResponse: Schema.Struct({ ...effectFields, plan: Plan }),
+  planResponse: Schema.Struct({ ...effectFields, ...correctionPassages, plan: Plan }),
   // Issue #186: the first plan's reply (a plan, or the verdict that the item is not refined), the plan after a
   // withdrawn verdict, and the response to a review of the verdict.
   firstPlanReply: Schema.Struct({ reply: Schema.Union([Schema.Struct({ kind: Schema.Literal("plan"), plan: Plan }), Schema.Struct({ kind: Schema.Literal("notRefined"), missing: Str })]) }),
@@ -117,7 +119,7 @@ export const protoSchemas: Record<string, Schema.Top> = {
   questionContext: Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, options: Schema.Array(PieceOption), details: Blocks, explanations: Schema.Array(Explanation) }),
   // S17: the explanations of the agreed questions' terms, each question divided into pieces (issue #36, decision Q1).
   termsWrite: Schema.Struct({ entries: Schema.Array(TermsEntry) }),
-  termsResponse: Schema.Struct({ ...markedFields, entries: Schema.Array(TermsEntry) }),
+  termsResponse: Schema.Struct({ ...markedFields, ...correctionPassages, entries: Schema.Array(TermsEntry) }),
   // Issue #216: Claude Code's response to a check of the issue in Bring Up to Date, and the application of the developer's answers.
   updateResponse: Schema.Struct({ ...markedFields, issue: IssueText, outcome: UpdateOutcome, developer_passages: Strings }),
   // Issue #47: Claude Code's response to a review of the requirements, with the classification of each accepted finding

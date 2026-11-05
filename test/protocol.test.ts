@@ -360,6 +360,7 @@ const questionListResponse: QuestionListResponse = {
   self_corrections: [],
   reviewer_feedback: "",
   questions_for_user: [],
+  correction_passages: [],
   questions: [entryOf({ id: "Q1", context: "c", question: "Which database?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }], default_answer: "PostgreSQL" })],
 };
 const responseEvent = (subject: SubjectId, response: QuestionListResponse | PlannerResponse | DecisionResponse): RunEvent => ({ _tag: "Notified", event: { _tag: "ResponseReceived", subject, round: 1, response, resultText: "" } });

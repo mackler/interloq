@@ -52,8 +52,8 @@ const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQue
 const execReport = { status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks: [{ step: "S1", command: "npm run test:unit", seconds: 12.5, selection: false, counts: null }] };
 const execOutcome = { status: "needs_input", summary: "s", question: "q", remainingWork: "w", userInput: null, checks: [] };
 // Version 2 (Q5): three shapes tagged by source.
-const reviewEntry = { id: "A", phase: 1, round: 2, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null };
-const selfEntry = { id: "P1-S2-1", phase: 1, round: 2, source: "self_correction", problem: "p", action: "plan_error", rationale: "r", superseded: false, file_change: null };
+const reviewEntry = { id: "A", phase: 1, round: 2, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null, kept_passages: [] };
+const selfEntry = { id: "P1-S2-1", phase: 1, round: 2, source: "self_correction", problem: "p", action: "plan_error", rationale: "r", superseded: false, file_change: null, kept_passages: [] };
 const userEntry = { id: "A", phase: 1, round: 2, source: "user", problem: "p", action: "decided_by_user", rationale: "r", superseded: true };
 const usage = { version: 2, agent: "claude", time: "2026-09-24T00:00:00.000Z", session: null, num_turns: 0, total_cost_usd: 0 };
 // Issue #120, part 1: the tracker key.
@@ -73,7 +73,7 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   assert.deepEqual(decode(S.QuestionEntry, questionEntry), questionEntry);
   assert.deepEqual(decode(S.QuestionList, { questions: [questionEntry] }), { questions: [questionEntry] });
   // Issue #156: the question list's dispositions carry Claude Code's mark.
-  const markedResponse = { ...plannerResponse, dispositions: [{ ...disposition, task_dispute: true }], questions: [questionEntry] };
+  const markedResponse = { ...plannerResponse, dispositions: [{ ...disposition, task_dispute: true }], correction_passages: [{ id: "A", passages: ["the fix"] }], questions: [questionEntry] };
   assert.deepEqual(decode(S.QuestionListResponse, markedResponse), markedResponse);
   assert.deepEqual(decode(S.InterviewTurn, interviewTurn), interviewTurn);
   assert.deepEqual(decode(S.ExecReport, execReport), execReport);
@@ -98,7 +98,7 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<
     Equals<
       DeepMutable<typeof S.QuestionListResponse.Type>,
-      DeepMutable<Omit<WithQuestions<Omit<legacy.QuestionListResponse, "questions">>, "dispositions"> & { dispositions: (legacy.Disposition & { task_dispute: boolean })[]; questions: QuestionEntry[] }>
+      DeepMutable<Omit<WithQuestions<Omit<legacy.QuestionListResponse, "questions">>, "dispositions"> & { dispositions: (legacy.Disposition & { task_dispute: boolean })[]; correction_passages: { id: string; passages: string[] }[]; questions: QuestionEntry[] }>
     >
   >();
   // G-R1-1: the context call returns the whole question as pieces.
@@ -226,7 +226,7 @@ const analysis = {
 
 test("the decision analysis decodes three levels of nested arguments; the response and the applied output carry it", () => {
   assert.deepEqual(decode(S.DecisionAnalysis, analysis), analysis);
-  const response = { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [], analysis };
+  const response = { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [], correction_passages: [], analysis };
   assert.deepEqual(decode(S.DecisionResponse, response), response);
   assert.deepEqual(decode(S.DecisionApplied, { analysis }), { analysis });
 });
@@ -251,7 +251,7 @@ test("the plan's schemas: the reply without statuses, the record with them", () 
   assert.deepEqual(decode(S.Plan, plan), plan);
   assert.deepEqual(decode(S.PlanWrite, { plan, questions_for_user: [userQuestion] }), { plan, questions_for_user: [userQuestion] });
   const effectResponse = { ...plannerResponse, dispositions: plannerResponse.dispositions.map((d) => ({ ...d, work_effect: { kind: "none" } })) };
-  assert.deepEqual(decode(S.PlanResponse, { ...effectResponse, plan }), { ...effectResponse, plan });
+  assert.deepEqual(decode(S.PlanResponse, { ...effectResponse, correction_passages: [], plan }), { ...effectResponse, correction_passages: [], plan });
   const recorded = { version: 2, plan: { stages: [{ ...plan.stages[0], steps: [{ ...planStep, status: "started" }] }] } };
   assert.deepEqual(decode(S.PlanFile, recorded), recorded);
   for (const status of ["pending", "started", "done", "unfinished"]) decode(S.StepStatus, status);
@@ -260,4 +260,25 @@ test("the plan's schemas: the reply without statuses, the record with them", () 
   rejects(S.Plan, { stages: [{ ...plan.stages[0], steps: [{ ...planStep, number: 1.5 }] }] }, "a step number that is not an integer");
   rejects(S.PlanFile, { ...recorded, version: 1 }, "a plan file of another version");
   rejects(S.PlanFile, { version: 2, plan }, "a recorded step without a status");
+});
+
+// Issue #232: a log entry carries the passages of its accepted correction; a log written before the field decodes with none.
+test("a review entry and a self-correction entry decode kept_passages, and [] where a log written before it lacks it", () => {
+  const { kept_passages: _r, ...oldReview } = reviewEntry;
+  const { kept_passages: _s, ...oldSelf } = selfEntry;
+  assert.deepEqual(decode(S.LogEntry, oldReview), { ...oldReview, [S.KEPT_PASSAGES_FIELD]: [] });
+  assert.deepEqual(decode(S.LogEntry, oldSelf), { ...oldSelf, [S.KEPT_PASSAGES_FIELD]: [] });
+  assert.deepEqual(decode(S.LogEntry, { ...reviewEntry, kept_passages: ["retry twice"] }), { ...reviewEntry, kept_passages: ["retry twice"] });
+  assert.deepEqual(decode(S.LogEntry, { ...selfEntry, kept_passages: ["retry twice"] }), { ...selfEntry, kept_passages: ["retry twice"] });
+});
+
+// Issue #232: the four responses that rewrite their reviewed file name the passages that carry each accepted correction.
+test("the four responses that rewrite their file require correction_passages, and others do not carry it", () => {
+  const field = S.CORRECTION_PASSAGES_FIELD;
+  const base = { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
+  rejects(S.PlanResponse, { ...base, plan: { stages: [] } }, "a plan response without correction_passages");
+  rejects(S.DecisionResponse, { ...base, analysis }, "a decision response without correction_passages");
+  const entries = [{ id: "P1-R1-1", passages: ["retry twice", ""] }];
+  assert.deepEqual(decode(S.PlanResponse, { ...base, [field]: entries, plan: { stages: [] } })[field], entries);
+  rejects(S.PlannerResponse, { ...base, [field]: entries }, "a planner response carrying correction_passages");
 });

@@ -162,6 +162,21 @@ export const QuestionContext = Schema.Struct({
 });
 
 /** The fields that every response to a review has. Spread into the question-list response. */
+/**
+ * The name of a response's field naming, per issue Claude Code accepts in full or in part, the passages of the file it
+ * returns that carry the correction (issue #232), and of the log entry's field recording them. The one source of both
+ * names for the schemas, the prompts, the check (src/keptCorrections.ts) and the tests.
+ */
+export const CORRECTION_PASSAGES_FIELD = "correction_passages";
+export const KEPT_PASSAGES_FIELD = "kept_passages";
+/**
+ * One issue's passages: verbatim from the file returned, whitespace aside, each within one field. Plain strings with no
+ * minLength or minItems, as the agents' strict mode wants; a blank passage is refused by src/keptCorrections.ts.
+ */
+export const CorrectionPassages = Schema.Struct({ id: Schema.String, passages: Schema.Array(Schema.String) });
+export type CorrectionPassages = typeof CorrectionPassages.Type;
+const correctionPassagesField = { [CORRECTION_PASSAGES_FIELD]: Schema.Array(CorrectionPassages) };
+
 const plannerResponseFields = {
   dispositions: Schema.Array(Disposition),
   self_corrections: Schema.Array(SelfCorrection),
@@ -252,7 +267,7 @@ export const Plan = Schema.Struct({ stages: Schema.Array(PlanStage) });
 /** The plan write, its revision and the application of the user's decisions to it. */
 export const PlanWrite = Schema.Struct({ plan: Plan, questions_for_user: Schema.Array(UserQuestion) });
 /** A response to a review of the plan, with the complete amended plan. */
-export const PlanResponse = Schema.Struct({ ...effectResponseFields, plan: Plan });
+export const PlanResponse = Schema.Struct({ ...effectResponseFields, ...correctionPassagesField, plan: Plan });
 
 // ---- the verdict that an item is not refined (issue #186) -------------------------------------------------------------
 
@@ -364,6 +379,7 @@ export const QuestionList = Schema.Struct({ questions: Schema.Array(QuestionEntr
 /** A response to a review of the question list: the dispositions and the complete amended list. */
 export const QuestionListResponse = Schema.Struct({
   ...markedResponseFields,
+  ...correctionPassagesField,
   questions: Schema.Array(QuestionEntry),
 });
 
@@ -385,10 +401,10 @@ export const TermsEntry = Schema.Struct({
 export const StoredTermsEntry = Schema.Struct({ ...TermsEntry.fields, proposed_answers: Schema.Array(StoredOption) });
 export const TermsWrite = Schema.Struct({ entries: Schema.Array(TermsEntry) });
 /** A response to a review of the explanations: the dispositions and the complete amended explanations. */
-export const TermsResponse = Schema.Struct({ ...markedResponseFields, entries: Schema.Array(TermsEntry) });
+export const TermsResponse = Schema.Struct({ ...markedResponseFields, ...correctionPassagesField, entries: Schema.Array(TermsEntry) });
 
 /** A response to a review of a decision analysis: the dispositions and the complete amended analysis. */
-export const DecisionResponse = Schema.Struct({ ...plannerResponseFields, analysis: DecisionAnalysis });
+export const DecisionResponse = Schema.Struct({ ...plannerResponseFields, ...correctionPassagesField, analysis: DecisionAnalysis });
 /**
  * Every response a review loop's subject can return, the one list the event ResponseReceived carries (src/protocol.ts
  * decodes it, src/uiEvents.ts types it). Its order is the decoder's: a response with more fields comes before the
@@ -520,6 +536,12 @@ export const ReviewEntry = Schema.Struct({
    * subject carries none (every subject but the plan and the work) and on an `accepted` disposition.
    */
   work_effects: Schema.NullOr(WorkEffects),
+  /**
+   * The passages of the reviewed file that carry this id's accepted correction (issue #232), recorded by the program
+   * from Claude Code's correction_passages and carried forward onto a later self-correction of the same id; empty where
+   * none, and in a log written before the field.
+   */
+  [KEPT_PASSAGES_FIELD]: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 /** A correction Claude Code made to its own earlier work. */
 export const SelfCorrectionEntry = Schema.Struct({
@@ -527,6 +549,12 @@ export const SelfCorrectionEntry = Schema.Struct({
   source: Schema.Literal("self_correction"),
   action: Schema.Literals(["accepted", "plan_error", "correction_disputed"]),
   [FILE_CHANGE_FIELD]: Schema.NullOr(FileChange),
+  /**
+   * The passages of the reviewed file that carry this id's accepted correction (issue #232), recorded by the program
+   * from Claude Code's correction_passages and carried forward onto a later self-correction of the same id; empty where
+   * none, and in a log written before the field.
+   */
+  [KEPT_PASSAGES_FIELD]: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 /** A decision of the user on one issue. */
 export const UserEntry = Schema.Struct({ ...logEntryBase, source: Schema.Literal("user"), action: Schema.Literal("decided_by_user") });

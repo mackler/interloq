@@ -497,6 +497,28 @@
         "additionalProperties": false
       }
     },
+    "correction_passages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "passages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "passages"
+        ],
+        "additionalProperties": false
+      }
+    },
     "plan": {
       "type": "object",
       "properties": {
@@ -559,6 +581,7 @@
     "self_corrections",
     "reviewer_feedback",
     "questions_for_user",
+    "correction_passages",
     "plan"
   ],
   "additionalProperties": false

@@ -60,6 +60,15 @@ const withMark = <T extends { properties: { dispositions: { items: { properties:
     },
   },
 });
+/** Issue #232: the response names the passages that carry each accepted correction, before the amended list. */
+const withPassages = <T extends { properties: { questions: object } }>(schema: T): T => ({
+  ...schema,
+  properties: (({ questions, ...rest }) => ({
+    ...rest,
+    [S.CORRECTION_PASSAGES_FIELD]: { type: "array", items: { type: "object", properties: { id: { type: "string" }, passages: { type: "array", items: { type: "string" } } } } },
+    questions,
+  }))(schema.properties) as T["properties"],
+});
 const withQuestions = <T extends { properties: object }>(schema: T): T => ({ ...schema, properties: { ...schema.properties, questions_for_user: userQuestions } });
 const agentSchemas = {
   review: { effect: S.Review, legacy: legacy.reviewSchema },
@@ -97,7 +106,7 @@ const agentSchemas = {
     },
   },
   questionList: { effect: S.QuestionList, legacy: withContext(legacy.questionListSchema) },
-  questionListResponse: { effect: S.QuestionListResponse, legacy: withMark(withContext(withQuestions(legacy.questionListResponseSchema))) },
+  questionListResponse: { effect: S.QuestionListResponse, legacy: withPassages(withMark(withContext(withQuestions(legacy.questionListResponseSchema)))) },
   // Issue #21 (Q6 follow-up): the interview turn has asked_ids beyond the frozen legacy schema, which stays frozen.
   interviewTurn: {
     effect: S.InterviewTurn,
@@ -259,5 +268,17 @@ test("the plan's schema files in prototypes/proto-schema-output/ are what the pr
   for (const [name, schema] of [["planReply", S.PlanWrite], ["planResponse", S.PlanResponse], ["questionContext", S.QuestionContext], ["termsWrite", S.TermsWrite], ["termsResponse", S.TermsResponse], ["questionListResponse", S.QuestionListResponse], ["interviewReply", S.InterviewReply], ["effectReview", S.EffectReview], ["workResponse", S.WorkResponse], ["firstPlanReply", S.FirstPlanReply], ["planOnly", S.PlanOnly], ["verdictResponse", S.VerdictResponse], ["updateResponse", S.UpdateResponse], ["updateWrite", S.UpdateWrite], ["requirementsResponse", S.RequirementsResponse], ["requirementsWrite", S.RequirementsWrite]] as const) {
     assert.deepEqual(rawJsonSchema(schema), proven(name, "raw"), `${name} raw`);
     assert.deepEqual(strict(rawJsonSchema(schema)), proven(name, "strict"), `${name} strict`);
+  }
+});
+
+// Issue #232: the four responses that rewrite their reviewed file name, per accepted issue, the passages carrying its correction.
+test("the four responses that rewrite their file require correction_passages, a list of closed { id, passages } objects", () => {
+  for (const [name, schema] of [["planResponse", S.PlanResponse], ["questionListResponse", S.QuestionListResponse], ["termsResponse", S.TermsResponse], ["decisionResponse", S.DecisionResponse]] as const) {
+    const json = agentJsonSchema(schema);
+    assert.ok((json.required as string[]).includes(S.CORRECTION_PASSAGES_FIELD), `${name} requires it`);
+    assert.deepEqual((json.properties as Json)[S.CORRECTION_PASSAGES_FIELD], {
+      type: "array",
+      items: { type: "object", properties: { id: { type: "string" }, passages: { type: "array", items: { type: "string" } } }, required: ["id", "passages"], additionalProperties: false },
+    }, name);
   }
 });

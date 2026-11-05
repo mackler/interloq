@@ -40,7 +40,7 @@ test("the question subject's handlers receive the decoded list and write questio
   assert.ok(subject.applyDecisions.after !== null && subject.respond.after !== null);
   await withStore(subject.applyDecisions.after(list));
   assert.deepEqual(JSON.parse(fs.readFileSync(store.questions, "utf8")).questions.map((q: { id: string }) => q.id), ["Q1"]);
-  await withStore(subject.respond.after({ dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [], questions: [] }));
+  await withStore(subject.respond.after({ dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [], correction_passages: [], questions: [] }));
   assert.deepEqual(JSON.parse(fs.readFileSync(store.questions, "utf8")).questions, []);
 });
 
