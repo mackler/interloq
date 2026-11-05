@@ -69,10 +69,18 @@ const withPassages = <T extends { properties: { questions: object } }>(schema: T
     questions,
   }))(schema.properties) as T["properties"],
 });
+/** Issue #38: each agent's position on its issues, dispositions and self-corrections, and Claude Code's resolution, after the legacy fields. */
+const position = { [S.CONCERN_FIELD]: { type: "string" }, [S.REMEDY_FIELD]: { type: "string" } };
+const resolution = { [S.RESOLUTION_FIELD]: { anyOf: [{ type: "object", properties: { text: { type: "string" }, changes: { type: "array", items: { type: "string" } } } }, { type: "null" }] } };
+const withPositions = <T extends { properties: object }>(schema: T): T => {
+  const props = schema.properties as Record<string, { items: { properties: object } }>;
+  const extend = (key: string, extra: object) => (key in props ? { [key]: { ...props[key], items: { ...props[key].items, properties: { ...props[key].items.properties, ...extra } } } } : {});
+  return { ...schema, properties: { ...props, ...extend("issues", position), ...extend("dispositions", { ...position, ...resolution }), ...extend("self_corrections", { ...position, ...resolution }) } };
+};
 const withQuestions = <T extends { properties: object }>(schema: T): T => ({ ...schema, properties: { ...schema.properties, questions_for_user: userQuestions } });
 const agentSchemas = {
-  review: { effect: S.Review, legacy: legacy.reviewSchema },
-  plannerResponse: { effect: S.PlannerResponse, legacy: withQuestions(legacy.plannerResponseSchema) },
+  review: { effect: S.Review, legacy: withPositions(legacy.reviewSchema) },
+  plannerResponse: { effect: S.PlannerResponse, legacy: withPositions(withQuestions(legacy.plannerResponseSchema)) },
   planWrite: { effect: S.PlanWriteResult, legacy: withQuestions(legacy.planWriteSchema) },
   // Issue #154 (Q2): the report's fourth status, beyond the frozen legacy schema, which stays frozen.
   execReport: {
@@ -106,7 +114,7 @@ const agentSchemas = {
     },
   },
   questionList: { effect: S.QuestionList, legacy: withContext(legacy.questionListSchema) },
-  questionListResponse: { effect: S.QuestionListResponse, legacy: withPassages(withMark(withContext(withQuestions(legacy.questionListResponseSchema)))) },
+  questionListResponse: { effect: S.QuestionListResponse, legacy: withPassages(withMark(withPositions(withContext(withQuestions(legacy.questionListResponseSchema))))) },
   // Issue #21 (Q6 follow-up): the interview turn has asked_ids beyond the frozen legacy schema, which stays frozen.
   interviewTurn: {
     effect: S.InterviewTurn,

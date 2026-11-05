@@ -7,13 +7,18 @@ import { Schema } from "effect";
 // Transcribed field by field from src/schemas.ts.
 const Str = Schema.String;
 const Strings = Schema.Array(Schema.String);
-const Issue = Schema.Struct({ id: Str, severity: Schema.Literals(["blocking", "major", "minor"]), location: Str, problem: Str, evidence: Str });
+// Issue #38: each agent's position, its concern apart from its remedy, and Claude Code's resolution of both concerns.
+const Resolution = Schema.NullOr(Schema.Struct({ text: Str, changes: Strings }));
+const Issue = Schema.Struct({ id: Str, severity: Schema.Literals(["blocking", "major", "minor"]), location: Str, problem: Str, evidence: Str, concern: Str, remedy: Str });
 const Disposition = Schema.Struct({
   id: Str,
   action: Schema.Literals(["accepted", "partially_accepted", "rejected", "no_change_needed", "clarification_requested"]),
   rationale: Str,
   duplicate_of: Str,
   reverses: Str,
+  concern: Str,
+  remedy: Str,
+  resolution: Resolution,
 });
 // Issue #156: Claude Code's mark, in the question list's and the terms' responses only.
 const MarkedDisposition = Schema.Struct({ ...Disposition.fields, task_dispute: Schema.Boolean });
@@ -21,7 +26,7 @@ const MarkedDisposition = Schema.Struct({ ...Disposition.fields, task_dispute: S
 const WorkEffect = Schema.Union([Schema.Struct({ kind: Schema.Literal("none") }), Schema.Struct({ kind: Schema.Literal("differs"), difference: Str })]);
 const EffectIssue = Schema.Struct({ ...Issue.fields, work_effect: WorkEffect });
 const EffectDisposition = Schema.Struct({ ...Disposition.fields, work_effect: WorkEffect });
-const SelfCorrection = Schema.Struct({ id: Str, new_action: Schema.Literals(["accepted", "rejected", "plan_error"]), explanation: Str });
+const SelfCorrection = Schema.Struct({ id: Str, new_action: Schema.Literals(["accepted", "rejected", "plan_error"]), explanation: Str, concern: Str, remedy: Str, resolution: Resolution });
 // Issue #36 (30 Sep 2026): a question's text is blocks and pieces, and its explanations a list the pieces refer to.
 const Piece = Schema.Struct({ text: Str, ref: Str, code: Schema.Boolean });
 const Pieces = Schema.Array(Piece);

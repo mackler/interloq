@@ -26,6 +26,12 @@
           "evidence": {
             "type": "string"
           },
+          "concern": {
+            "type": "string"
+          },
+          "remedy": {
+            "type": "string"
+          },
           "work_effect": {
             "anyOf": [
               {
@@ -71,6 +77,8 @@
           "location",
           "problem",
           "evidence",
+          "concern",
+          "remedy",
           "work_effect"
         ],
         "additionalProperties": false

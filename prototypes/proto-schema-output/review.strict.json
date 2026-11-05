@@ -25,6 +25,12 @@
           },
           "evidence": {
             "type": "string"
+          },
+          "concern": {
+            "type": "string"
+          },
+          "remedy": {
+            "type": "string"
           }
         },
         "required": [
@@ -32,7 +38,9 @@
           "severity",
           "location",
           "problem",
-          "evidence"
+          "evidence",
+          "concern",
+          "remedy"
         ],
         "additionalProperties": false
       }

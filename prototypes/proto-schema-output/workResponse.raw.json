@@ -28,6 +28,38 @@
           "reverses": {
             "type": "string"
           },
+          "concern": {
+            "type": "string"
+          },
+          "remedy": {
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "changes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "text",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "work_effect": {
             "anyOf": [
               {
@@ -73,6 +105,9 @@
           "rationale",
           "duplicate_of",
           "reverses",
+          "concern",
+          "remedy",
+          "resolution",
           "work_effect"
         ],
         "additionalProperties": false
@@ -96,12 +131,47 @@
           },
           "explanation": {
             "type": "string"
+          },
+          "concern": {
+            "type": "string"
+          },
+          "remedy": {
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "changes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "text",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "id",
           "new_action",
-          "explanation"
+          "explanation",
+          "concern",
+          "remedy",
+          "resolution"
         ],
         "additionalProperties": false
       }
