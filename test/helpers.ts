@@ -690,7 +690,7 @@ export class ScriptedPlanner implements PlannerShape {
  * `raw` replaces the reply text, for a reply that is not a review (or not JSON). `inputTokens` is the turn's input as
  * Codex would report it (issue #165), null without one.
  */
-export type ReviewStep = Review & { inputTokens?: number; fault?: string; /** Issue #233: fails the turn by the adapter's own mapping, turnFailure of src/codex.ts, from this message. */ failure?: string; /** Issue #201: the network code the fault carries. */ faultCode?: NetworkCode; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void; /** Issue #153: the turn waits for this promise (interruptibly) before it is taken. */ gate?: () => Promise<void> };
+export type ReviewStep = Review & { inputTokens?: number; fault?: string; /** Issue #233: fails the turn by the adapter's own mapping, turnFailure of src/codex.ts, from this message. */ failure?: string; /** Issue #251: the reset Codex's session file recorded for the failure, passed to turnFailure. */ failureReset?: LimitReset; /** Issue #201: the network code the fault carries. */ faultCode?: NetworkCode; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void; /** Issue #153: the turn waits for this promise (interruptibly) before it is taken. */ gate?: () => Promise<void> };
 
 export class ScriptedReviewer implements ReviewerShape {
   phases = 0;
@@ -725,7 +725,7 @@ export class ScriptedReviewer implements ReviewerShape {
         }).pipe(
           Effect.flatMap((reply) =>
             reply.failure !== null
-              ? Effect.fail(turnFailure(reply.failure))
+              ? Effect.fail(turnFailure(reply.failure, null, reply.failureReset ?? { kind: "unknown" }))
               : reply.fault === null
                 ? Effect.succeed({ text: reply.text, inputTokens: reply.inputTokens })
                 : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null, networkCode: reply.faultCode })),
@@ -744,11 +744,11 @@ export class ScriptedReviewer implements ReviewerShape {
   partReviews: Record<string, ReviewStep[]> = {};
   /** Issue #252: the prompts of the step parts, kept apart from `prompts`, so the counts of the whole-work review stand. */
   readonly partPrompts: string[] = [];
-  private partTurn(prompt: string, key: string): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null; failure: string | null } {
+  private partTurn(prompt: string, key: string): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null; failure: string | null; failureReset: LimitReset | null } {
     this.partPrompts.push(prompt);
     const step = this.partReviews[key]?.shift() ?? { issues: [] };
     step.onCall?.();
-    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map((i) => withIssuePosition(withIssueEffect(i))) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null, failure: step.failure ?? null };
+    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map((i) => withIssuePosition(withIssueEffect(i))) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null, failure: step.failure ?? null, failureReset: step.failureReset ?? null };
   }
   /** One scripted turn: its effects on the files, then its reply text, or the fault it fails with. */
   /** The reviews of the terms (S17), apart from `reviews`; without one, a terms review raises no issue. */
@@ -761,7 +761,7 @@ export class ScriptedReviewer implements ReviewerShape {
   readings: ReviewStep[] = [];
   /** Issue #166: the prompts of those readings, kept apart from `prompts`, so the counts of the other reviews stand. */
   readonly readingPrompts: string[] = [];
-  private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null; failure: string | null } {
+  private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null; failure: string | null; failureReset: LimitReset | null } {
     const reading = prompt.includes(QUESTION_READING_MARKER);
     (prompt.includes(UPDATE_MARKER) ? this.checkPrompts : reading ? this.readingPrompts : this.prompts).push(prompt);
     if (!reading) this.callPhases.push(phase);
@@ -773,7 +773,7 @@ export class ScriptedReviewer implements ReviewerShape {
     if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "codex\n");
     // A record under plan-review/ that the turn edits, as Codex could (the work review's changes.diff).
     if (step.editRecord !== undefined) fs.appendFileSync(path.join(this.state.records(), step.editRecord), "edited by the reviewer\n");
-    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map((i) => withIssuePosition(withIssueEffect(i))) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null, failure: step.failure ?? null };
+    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map((i) => withIssuePosition(withIssueEffect(i))) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null, failure: step.failure ?? null, failureReset: step.failureReset ?? null };
   }
 }
 

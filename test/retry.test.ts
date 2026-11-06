@@ -862,3 +862,19 @@ test("W1-R1-1: Retry again answered during a usage-limit wait: the question clos
   assert.deepEqual(ui.notified.flatMap((e) => (e._tag === "TransportRetrying" ? [e.attempt] : [])), [1, 2, 1]);
   assert.equal(ui.notified.filter((e) => e._tag === "QuestionPresented").length, 1);
 });
+
+// Issue #251: a Codex limit is waited out whatever the exhaustion policy, since the usage-limit branch precedes them all.
+import { CODEX_CAPACITY_TYPE } from "../src/limitReset.ts";
+import { FAIL } from "../src/retry.ts";
+for (const [name, policy] of [["FAIL", () => FAIL], ["background", () => background(() => false)]] as const) {
+  test(`a Codex limit under the ${name} exhaustion is waited out with nothing asked, and the attempt after it succeeds`, async () => {
+    const { layer, ui } = await setup([]);
+    const { clock, sleeps } = steppingClock(START);
+    const { calls, attempt } = limitScripted([new UsageLimited({ agent: "codex", message: "Selected model is at capacity.", reset: UNKNOWN, limitType: CODEX_CAPACITY_TYPE }), "ok"]);
+    const exit = await exitOf(withTransportRetry("codex", "review", "the plan", attempt, Effect.void, policy()).pipe(withClock(clock)), layer);
+    assert.deepEqual(exit, Exit.succeed("reply 2"));
+    assert.deepEqual(calls, [1, 2]);
+    assert.deepEqual(sleeps, [USAGE_LIMIT_RETRY_SECONDS * 1000]);
+    assert.deepEqual(ui.asked, []);
+  });
+}
