@@ -12,7 +12,7 @@ import { lineChange } from "../src/lineChange.ts";
 // through `advance`, checked against a small independent model kept in the test.
 
 const RUNS = { numRuns: 150, seed: 20260925 };
-const setup: ReviewSetup = { subject: { plan: 1 }, heading: "Planning phase 1", fileLabel: "plan.md", dirName: "planning-1", phase: 1, idNumber: 1, proceed: "proceed", hasAmend: false, leaveOnAcceptance: false, leaveOnDecision: false, onUnchanged: null, disputesSettledBy: "user", maxRounds: 3, maxIdleRounds: 2, countMinor: true };
+const setup: ReviewSetup = { subject: { plan: 1 }, heading: "Planning phase 1", fileLabel: "plan.md", dirName: "planning-1", phase: 1, idNumber: 1, proceed: "proceed", hasAmend: false, onAcceptance: "continue", leaveOnDecision: false, onUnchanged: null, disputesSettledBy: "user", maxRounds: 3, maxIdleRounds: 2, countMinor: true };
 const PRODUCING = new Set(["AwaitBoundary", "CallCorrective", "AskDecision", "CallReviewer", "CallPlanner", "ApplyDecisions", "Amend", "ObserveFile", "Halt", "Finish"]);
 const ACTIONS: readonly Action[] = ["accepted", "partially_accepted", "rejected", "no_change_needed", "clarification_requested"];
 
@@ -175,7 +175,7 @@ test("property: the limit is respected — no reviewer call beyond the current l
 
 // Plan step 2.4: the policies of a work review. A correction due or a user decision ends the trace with
 // revise; no round is logged twice; every logged checkpoint follows the response and the validated record.
-const workSetup: ReviewSetup = { ...setup, subject: { work: 1 }, heading: "Work review 1", fileLabel: "changes.diff", dirName: "work-review-1", proceed: null, leaveOnAcceptance: true, leaveOnDecision: true };
+const workSetup: ReviewSetup = { ...setup, subject: { work: 1 }, heading: "Work review 1", fileLabel: "changes.diff", dirName: "work-review-1", proceed: null, onAcceptance: "leave", leaveOnDecision: true };
 test("property: a work review ends at the first correction due or decision, logs each round once, and writes only valid logged checkpoints", () => {
   fc.assert(
     fc.property(fc.array(arbScript, { minLength: 1, maxLength: 8 }), (scripts) => {

@@ -72,14 +72,13 @@ test("the item's section is the run's requirements.md, and the plan review and t
 });
 
 test("a halt in the work review and a stop leave the item implementing", async () => {
+  // Issue #252: a work review's limit no longer halts, so the halt is a Codex turn that changes the project.
   const halted = await implement(withSection, {
-    answers: [{ beside: "0" }],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]]) }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }],
+    steps: [{ output: noQuestions, plan: "v1" }],
+    reviews: [{ issues: [] }, { issues: [], touchProject: true }],
     execs: [finished],
-    config: { maxRounds: 1 },
   });
-  assert.equal(failureOf(halted.exit)._tag, "RoundLimitStop");
+  assert.equal(failureOf(halted.exit)._tag, "ProjectChanged");
   assert.equal(await stateOf(halted.tracker, withSection), "implementing");
   // Issue #243: a question that still waits, Claude Code's own, answered q.
   const stopped = await implement(withSection, { answers: ["q"], steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]], { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }) }], reviews: [{ issues: [issue("P1-R1-1")] }] });

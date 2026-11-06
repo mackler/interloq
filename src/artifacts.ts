@@ -27,6 +27,13 @@ export type Artifact =
   /** The tree of the project at the start of the run (Q7), and the change record a work review reads. */
   | Readonly<{ kind: "baseline" }>
   | Readonly<{ kind: "changes"; phase: number }>
+  /**
+   * Issue #252: the tree code review `phase` last read (written at each cycle), and the change from the tree of the
+   * latest earlier code review to the current project, which code review `phase` is given.
+   */
+  | Readonly<{ kind: "reviewedTree" | "changesSince"; phase: number }>
+  /** Issue #252: the raw reply of one part of a code review's cycle, beside the cycle's merged review. */
+  | Readonly<{ kind: "reviewPart"; subject: SubjectId; round: number; part: string }>
   /** The output of suite run n, the whole suite Interloq runs after the review of the work finds nothing left to correct (issue #162). */
   | Readonly<{ kind: "suiteLog"; n: number }>
   /**
@@ -206,6 +213,12 @@ export const pathOf = (artifact: Artifact): string => {
       return "baseline.json";
     case "changes":
       return `work-review-${artifact.phase}/changes.diff`;
+    case "reviewedTree":
+      return `work-review-${artifact.phase}/tree.json`;
+    case "changesSince":
+      return `work-review-${artifact.phase}/since-previous.diff`;
+    case "reviewPart":
+      return `${subjectDir(artifact.subject)}/${ROUND_FILE.review}-${artifact.round}-${artifact.part}.json`;
     case "suiteLog":
       return `suite-${artifact.n}.log`;
     case "suiteCountsFile":

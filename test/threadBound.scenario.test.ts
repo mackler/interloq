@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { newThreadSentence, threadRestartLine } from "../src/prompts.ts";
+import { newThreadSentence, reviewPartLine, threadRestartLine } from "../src/prompts.ts";
 import { subjectHeading } from "../src/render.ts";
 import { finished, issue, respond, runTask, tempRepo, testLayer, TEST_ROOT } from "./helpers.ts";
 
@@ -90,7 +90,8 @@ test("the work review follows the same rule", async () => {
   });
   assert.equal(await runTask(layer), 1);
   assert.deepEqual(probe.reviewer.callPhases, [1, 2, 3]);
-  assert.ok(probe.reviewer.prompts[2]!.startsWith(newThreadSentence(TEST_ROOT, "work-review-log.json", 2)));
+  // Issue #252: the part's marker line opens a code review's prompt.
+  assert.ok(probe.reviewer.prompts[2]!.startsWith(`${reviewPartLine({ _tag: "Whole" })}\n${newThreadSentence(TEST_ROOT, "work-review-log.json", 2)}`));
   assert.ok(conversation(probe.dir).includes(threadRestartLine("Work review 1", 2, 700_000, 500_000)));
   assert.deepEqual(probe.ui.asked, []);
 });

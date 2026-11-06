@@ -29,9 +29,9 @@ test("the work review's criterion no longer raises tests the change does not tou
   assert.doesNotMatch(prompts.WORK_CHECK_CRITERION, /does not touch/u);
 });
 
-test("the work review's first round and a new thread carry the criterion", () => {
-  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued").includes(prompts.WORK_CHECK_CRITERION));
-  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 3, false, work, "new").includes(prompts.WORK_CHECK_CRITERION));
+test("the work review's first round and a new thread carry the criterion in a step's part (issue #252)", () => {
+  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued", { _tag: "Step", id: "S1", label: "l", text: "t" }, null).includes(prompts.WORK_CHECK_CRITERION));
+  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 3, false, work, "new", { _tag: "Step", id: "S1", label: "l", text: "t" }, null).includes(prompts.WORK_CHECK_CRITERION));
 });
 
 test("the issue #183 exemptions, which qualified the removed clauses, are gone", () => {

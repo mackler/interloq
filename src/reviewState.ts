@@ -101,8 +101,12 @@ export type ReviewSetup = Readonly<{
   /** The label of the choice to proceed at the round limit; null: no such choice, "p" is a stop (Q13). */
   proceed: string | null;
   hasAmend: boolean;
-  /** Q14: a round with a correction due ends the loop with "revise" right after its log, before the observation. */
-  leaveOnAcceptance: boolean;
+  /**
+   * What a round with a correction due does: "continue" (the loop goes on), "leave" (Q14: the loop ends with "revise"
+   * right after its log, before the observation; the verdict), or "collect" (issue #252, the work review: the loop goes
+   * on, and ends with "revise" at the first review with no counted issue or at the round limit).
+   */
+  onAcceptance: OnAcceptance;
   /** G-R1-1: a non-empty decision at any pause ends the loop with "revise" instead of a planning call. */
   leaveOnDecision: boolean;
   /**
@@ -255,8 +259,13 @@ export type RoundInProgress = Readonly<{
   investigations: number;
 }>;
 
+/** Issue #252: what a round with a correction due does. */
+export type OnAcceptance = "continue" | "leave" | "collect";
+
 export type ReviewState = Readonly<{
   setup: ReviewSetup;
+  /** Issue #252: a round of this collecting loop had a correction due. */
+  collected: boolean;
   step: Step;
   round: number;
   limit: number;
@@ -286,6 +295,7 @@ const freshRound: RoundInProgress = { review: null, validatedReview: null, round
  */
 export const initialState = (setup: ReviewSetup, config: Pick<Config, "maxRounds" | "maxIdleRounds" | "countMinor">, continueFrom: Readonly<{ round: number }> | null = null): ReviewState => ({
   setup: { ...setup, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor },
+  collected: false,
   step: { name: "idle" },
   round: continueFrom?.round ?? 0,
   limit: (continueFrom?.round ?? 0) + config.maxRounds,
@@ -360,11 +370,13 @@ const startRound = (s: ReviewState): Transition =>
  */
 const roundOrLimit = (s: ReviewState, before: readonly ReviewCommand[] = []): Transition => {
   if (s.round + 1 <= s.limit) return withBefore(beginRound(s), before);
+  const counted = prompts.cycleCountsLines(s.setup.heading, s.counts, s.costs).map(say);
+  // Issue #252 (requirements Q1): a collecting review leaves at its limit with everything found so far, extending nothing.
+  if (s.setup.onAcceptance === "collect") return leave(s, [...before, ...counted, ...recorded(prompts.collectedLimitLine(s.setup.heading, s.round))]);
   const extended: ReviewState = { ...s, limit: s.limit + s.setup.maxRounds };
-  const counts = prompts.cycleCountsLines(s.setup.heading, s.counts, s.costs).map(say);
-  if (isOpen(s, "limit")) return withBefore(beginRound(extended), [...before, ...counts, ...extension(s, "rounds", "again")]);
+  if (isOpen(s, "limit")) return withBefore(beginRound(extended), [...before, ...counted, ...extension(s, "rounds", "again")]);
   const [state, open] = opening(extended, { kind: "limit", limit: s.limit }, `R${s.round}/limit`);
-  return withBefore(beginRound(state), [...before, ...counts, ...extension(s, "rounds", "asked"), open]);
+  return withBefore(beginRound(state), [...before, ...counted, ...extension(s, "rounds", "asked"), open]);
 };
 const beginRound = (s: ReviewState): Transition => {
   const n = s.round + 1;
@@ -775,7 +787,8 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
     const selfCorrections = askedOrSettled(state, standing.filter((a) => a.asks.kind === "pause" && a.asks.facts.pause === "disputedSelfCorrection"));
     // Issue #243: the asks of a review with no counted issue are opened beside the run, and the loop ends.
     const opened = openDisputes(state, [...authority, ...selfCorrections.asked]);
-    return ending(opened.state, "converged", [...before, ...agreed, ...selfCorrections.settled, ...opened.commands], [{ kind: "Converse", markdown: prompts.reviewConvergedMarkdown(s.setup.heading, n, s.setup.fileLabel, prompts.passNoun(s.setup.subject)) }, checkpoint(state, "reviewed"), ...finished(state, "converged")]);
+    const ended = endOfLoop(state, n);
+    return ending(opened.state, ended.result, [...before, ...agreed, ...selfCorrections.settled, ...opened.commands], [...ended.lines, checkpoint(state, "reviewed"), ...finished(state, ended.result)]);
   }
   const disputes = [...standing, ...reraisedAsks(state, review, validated, standing)];
   const { asked, settled } = askedOrSettled(state, disputes);
@@ -946,19 +959,33 @@ const amendStep = (s: ReviewState, before: readonly ReviewCommand[] = []): Trans
 const roundLog = (s: ReviewState, decisions: readonly DecisionEvent[], change: FileChange | null): readonly LogEntry[] =>
   decisions.reduce((acc, d) => (d.id === null ? acc : log.appendUserDecision(acc, d.id, d.decision, s.setup.phase, s.round)), log.appendRound(s.current.startLog, s.current.round!, change, s.current.investigating));
 
+/** A line said on the page and written to conversation.md. */
+const recorded = (text: string): readonly ReviewCommand[] => [say(text), { kind: "Converse", markdown: `${text}\n\n` }];
+/**
+ * The end of the loop at a review with no counted issue: agreement, or, for a collecting loop that had a correction due
+ * (issue #252), the leave for planning with every accepted finding; the agreement block, which src/earlierPlan.ts reads
+ * as a review that ended in agreement, is written only for agreement.
+ */
+const endOfLoop = (s: ReviewState, n: number): Readonly<{ result: LoopResult; lines: readonly ReviewCommand[] }> =>
+  s.collected
+    ? { result: "revise", lines: recorded(prompts.collectedLeaveLine(s.setup.heading, n)) }
+    : { result: "converged", lines: [{ kind: "Converse", markdown: prompts.reviewConvergedMarkdown(s.setup.heading, n, s.setup.fileLabel, prompts.passNoun(s.setup.subject)) }] };
+
 /** The loop leaves for a planning phase (a work review, plan 2.4). */
 const leave = (s: ReviewState, before: readonly ReviewCommand[]): Transition => ending(s, "revise", before, finished(s, "revise"));
 
 /**
  * The issue log update. A measured subject (issue #31) first observes the file, so that the log carries the response's
  * change and the checks after the response use the same observation; an unmeasured one logs with file_change null and
- * observes after (with leaveOnAcceptance, a round with a correction due leaves right after its log, Q14).
+ * observes after (with onAcceptance "leave", a round with a correction due leaves right after its log, Q14).
  */
 const logStep = (s: ReviewState, before: readonly ReviewCommand[] = []): Transition => {
   if (s.setup.onUnchanged !== null) return { state: { ...s, step: { name: "measuring" } }, commands: [...before, { kind: "ObserveFile", stage: "response" }] };
   const { state, logged } = logRound(s, null, before);
-  if (s.setup.leaveOnAcceptance && log.correctionsDue(s.current.round!)) return leave(state, logged);
-  return { state: { ...state, step: { name: "observingResponse" } }, commands: [...logged, { kind: "ObserveFile", stage: "response" }] };
+  const due = log.correctionsDue(s.current.round!);
+  if (s.setup.onAcceptance === "leave" && due) return leave(state, logged);
+  const collected = state.collected || (s.setup.onAcceptance === "collect" && due);
+  return { state: { ...state, collected, step: { name: "observingResponse" } }, commands: [...logged, { kind: "ObserveFile", stage: "response" }] };
 };
 const logRound = (s: ReviewState, change: FileChange | null, before: readonly ReviewCommand[]): { state: ReviewState; logged: readonly ReviewCommand[] } => {
   const updated = roundLog(s, s.current.decisions, change);
@@ -1004,7 +1031,8 @@ const checkResponse = (s: ReviewState, hash: string, before: readonly ReviewComm
   const { fileLabel, heading } = s.setup;
   const { accepted, selfCount } = roundCounts(s);
   const last = lastHash(s);
-  if (accepted > 0 && hash === last) {
+  // Issue #252: a collecting review's response is read-only, so its file is unchanged by design; it never takes this branch.
+  if (accepted > 0 && hash === last && s.setup.onAcceptance !== "collect") {
     // Issue #30: one corrective turn in the same session before the condition is put to the user.
     if (s.setup.onUnchanged === "corrective" && s.current.corrections === 0) return correct(s, before);
     // Issue #243: the question is opened beside the review, which goes on as Proceed would; one per round and attempt.

@@ -31,7 +31,7 @@ test("the log rules name the entries list, the three sources and null references
 test("the log rules explain file_change with the keys the log entries carry", () => {
   const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null, position: null }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null, position: null, resolution: null }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [], correctionPassages: [] }, { changed: true, added: 1, removed: 0 });
   const serialized = JSON.parse(JSON.stringify(entry)) as Record<string, Record<string, unknown>>;
-  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), questionReviewPrompt(TEST_ROOT, 1, "continued"), prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true, workExecution, "continued")]) {
+  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), questionReviewPrompt(TEST_ROOT, 1, "continued"), prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true, workExecution, "continued", { _tag: "Whole" }, null)]) {
     assert.ok(text.includes(`${S.FILE_CHANGE_FIELD}:`), "the rules do not explain the field");
     for (const key of ["changed", "added", "removed"]) {
       assert.match(text, new RegExp(`\\b${key}\\b`));
@@ -54,15 +54,15 @@ test("the interview prompts ask for the current question's parts under the rules
 
 // Plan step 2.6: the prompts of the work review and the revision of the plan after an execution phase.
 test("the work review prompt names the change record, the plan, the requirements, the log and the ids", () => {
-  const first = prompts.workReviewPrompt(TEST_ROOT, 2, 1, true, workExecution, "continued");
+  const first = prompts.workReviewPrompt(TEST_ROOT, 2, 1, true, workExecution, "continued", { _tag: "Whole" }, null);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/work-review-2\/changes\.diff/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/plan\.json/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/requirements\.md/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/work-review-log\.json/);
   assert.match(first, /W2-R1-1/);
   assert.match(first, /Missing work of a step with another status is not an issue/);
-  assert.doesNotMatch(prompts.workReviewPrompt(TEST_ROOT, 2, 1, false, workExecution, "continued"), /requirements\.md/);
-  const later = prompts.workReviewPrompt(TEST_ROOT, 2, 3, true, workExecution, "continued");
+  assert.doesNotMatch(prompts.workReviewPrompt(TEST_ROOT, 2, 1, false, workExecution, "continued", { _tag: "Whole" }, null), /requirements\.md/);
+  const later = prompts.workReviewPrompt(TEST_ROOT, 2, 3, true, workExecution, "continued", { _tag: "Whole" }, null);
   assert.match(later, /W2-R3-1/);
   assert.match(later, /changes\.diff has been rewritten/);
 });
@@ -96,13 +96,15 @@ test("the revision prompt after an execution phase names the stop and the work r
   assert.match(stopOnly, /Work review 1 found no issue in the work so far/);
   const revise = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 2, { _tag: "ExecutionEnded", stop: null, workReview: { revisedInRound: 3 } }, NO_STEP_CHECKS);
   assert.doesNotMatch(revise, /last entry of plan-review\/runs\/[^/\s]+\/user-decisions\.md contains the user's input for this stop/);
-  assert.match(revise, /Work review 2 ended in round 3/);
+  assert.match(revise, /Work review 2 ended after cycle 3/);
   assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-2\/round-3\.json/);
+  assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-2\/round-1\.json/, "issue #252: every round of the collecting review");
+  assert.match(revise, /Correct every issue accepted in those cycles/);
   assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-log\.json/);
   assert.ok(revise.includes(prompts.planIdRule(TEST_ROOT)));
   const both = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stop: { _tag: "Answered" }, workReview: { revisedInRound: 1 } }, NO_STEP_CHECKS);
   assert.match(both, /user's input for this stop/);
-  assert.match(both, /Work review 1 ended in round 1/);
+  assert.match(both, /Work review 1 ended after cycle 1/);
 });
 
 // W2-R1-4: the page's help and notice texts live here, with the other texts the user reads.
@@ -436,7 +438,7 @@ test("each clause of the id rule is enforced by validatePlan, and the repair pro
 });
 
 test("the plan review and the work review read plan.json with its statuses", () => {
-  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, workExecution, "continued")]) {
+  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, workExecution, "continued", { _tag: "Whole" }, null)]) {
     assert.match(text, /plan-review\/runs\/[^/\s]+\/plan\.json/);
     assert.match(text, /status 'done'/);
     assert.doesNotMatch(text, /plan-review\/runs\/[^/\s]+\/plan\.md/);
@@ -1033,7 +1035,8 @@ test("issue #156: the corrective prompt names the mark, and correctiveValidation
     ["terms", (r, t) => prompts.termsReviewPrompt(TEST_ROOT, r, t), "T", "terms-log.json"],
     ["requirements", (r, t) => prompts.requirementsReviewPrompt(TEST_ROOT, r, t), "G", "requirements-log.json"],
     ["plan", (r, t) => prompts.planReviewPrompt(TEST_ROOT, 1, r, true, NO_STEP_CHECKS, t), "P1", "issue-log.json"],
-    ["work", (r, t) => prompts.workReviewPrompt(TEST_ROOT, 1, r, true, workExecution, t), "W1", "work-review-log.json"],
+    // Issue #252: the part's marker line opens the code review's prompt; the thread rule governs what follows it.
+    ["work", (r, t) => prompts.workReviewPrompt(TEST_ROOT, 1, r, true, workExecution, t, { _tag: "Whole" }, null).slice(prompts.reviewPartLine({ _tag: "Whole" }).length + 1), "W1", "work-review-log.json"],
     ["decision", (r, t) => prompts.decisionReviewPrompt(TEST_ROOT, "the format", 2, r, t), "D2", "decision-log.json"],
   ];
   for (const [name, prompt, prefix, log] of cases) {

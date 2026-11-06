@@ -7,12 +7,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
 import { type Artifact, guardedRecord, implementationRootsOf, LOG_SUBJECTS, subjectOf, pathOf, RECORDS_DIR, recordsDirOf, reviewedFile, RUNS_DIR, type RunRoot, recordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
 import { describe, FileSystemError, GitError } from "./errors.ts";
-import { IssueBeforeFile, IssueFile, type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
+import { EffectReview, IssueBeforeFile, IssueFile, type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import type { Platform } from "./platform.ts";
-import { AnalysisFile, Baseline, RoundFile, type RoundRecord, TermsFile, VerdictFile, type CheckpointPoint, questionsFile, type WaitingNote, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
+import { AnalysisFile, Baseline, ReviewedTreeFile, RoundFile, type RoundRecord, TermsFile, VerdictFile, type CheckpointPoint, questionsFile, type WaitingNote, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
 import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
+import type { CodeReviewRecord } from "./lateFindings.ts";
 import { type CommitCheck, commitCheckOf, uncommittedPaths } from "./commitCheck.ts";
 import { decodeStatusV2, excluded, type StatusRecord, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
@@ -110,6 +111,8 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
      * time, and a name shared by two writes lets one rename remove the other's file.
      */
     const writes = yield* Ref.make(0);
+    /** Issue #252: the trees this store has built, so that two built at the same instant name different temporary files. */
+    const trees = yield* Ref.make(0);
     const temporaryOf = (file: string): Effect.Effect<string> =>
       Ref.getAndUpdate(writes, (n) => n + 1).pipe(Effect.map((n) => `${file}.tmp-${process.pid}-${n}`));
     const writeRecordText = (file: string, text: string) =>
@@ -143,7 +146,15 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
     const noteWaiting = (note: WaitingNote | null) => Ref.set(waiting, note).pipe(Effect.andThen(writeCheckpoint));
     /** The file of a reply of a round: the raw save before validation and the accepted value after it are one file (issue #151). */
     const replyArtifact = (subject: SubjectId, round: number, kind: RawReplyKind): Artifact =>
-      kind === "review" ? { kind: "review", subject, round } : kind === "response" ? { kind: "response", subject, round } : "corrective" in kind ? { kind: "correction", subject, round, attempt: kind.corrective } : { kind: "investigation", subject, round, attempt: kind.investigation };
+      kind === "review"
+        ? { kind: "review", subject, round }
+        : kind === "response"
+          ? { kind: "response", subject, round }
+          : "corrective" in kind
+            ? { kind: "correction", subject, round, attempt: kind.corrective }
+            : "investigation" in kind
+              ? { kind: "investigation", subject, round, attempt: kind.investigation }
+              : { kind: "reviewPart", subject, round, part: kind.reviewPart };
     /** One record of the catalog, as JSON. */
     const saveRecord = (artifact: Artifact, value: unknown) => writeJson(at(artifact), value);
     /** The entries of a log file; none when it does not exist. */
@@ -223,7 +234,8 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
      */
     const workingTree = (): Effect.Effect<string, StoreError> =>
       Effect.gen(function* () {
-        const stamp = `${(yield* Clock.currentTimeMillis)}-${process.pid}`;
+        // Issue #252: the parts of a code review build trees at once, so the stamp carries a counter of this store's own.
+        const stamp = `${(yield* Clock.currentTimeMillis)}-${process.pid}-${yield* Ref.getAndUpdate(trees, (n) => n + 1)}`;
         const index = yield* gitPath("index");
         const temporary = yield* gitPath(`plan-review-index-${stamp}`);
         const pathspecs = yield* gitPath(`plan-review-pathspecs-${stamp}`);
@@ -280,12 +292,23 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
     const baselineFile = at({ kind: "baseline" });
     const parkedFile = at({ kind: "parked" });
     const readBaseline = () => readText(baselineFile).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(baselineFile, Baseline, text))));
-    /** The text of the diff from the baseline tree to the current one; null before init wrote the baseline. */
-    const diffText = (): Effect.Effect<string | null, StoreError> =>
+    /** The diff from the baseline tree to the current one, with that tree; null before the baseline was written. */
+    const diffWithTree = (): Effect.Effect<Readonly<{ text: string; tree: string }> | null, StoreError> =>
       Effect.gen(function* () {
         if (!(yield* exists(baselineFile))) return null;
         const baseline = yield* readBaseline();
-        return yield* git(["diff", "--no-color", "--no-ext-diff", baseline.tree, yield* workingTree()]);
+        const tree = yield* workingTree();
+        return { text: yield* git(["diff", "--no-color", "--no-ext-diff", baseline.tree, tree]), tree };
+      });
+    /** The text of the diff from the baseline tree to the current one; null before init wrote the baseline. */
+    const diffText = (): Effect.Effect<string | null, StoreError> => diffWithTree().pipe(Effect.map((d) => (d === null ? null : d.text)));
+    /** A diff file written through a temporary name and renamed into place. */
+    const writeDiff = (file: string, text: string) =>
+      Effect.gen(function* () {
+        yield* mkdir(path.dirname(file));
+        const temporary = yield* temporaryOf(file);
+        yield* writeText(temporary, text);
+        yield* renameInto(temporary, file);
       });
 
     /** A file of an earlier run decoded, or null where it is missing or does not decode; another read failure is a StoreError. */
@@ -607,14 +630,46 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           return (yield* exists(file)) ? yield* readText(file) : "";
         }),
       readUserDecisions: () => exists(decisionsFile).pipe(Effect.flatMap((present) => (present ? readText(decisionsFile) : Effect.succeed("")))),
-      changeRecord: (phase) =>
+      changeRecord: (phase, since) =>
         Effect.gen(function* () {
-          const file = at({ kind: "changes", phase });
-          const text = (yield* diffText()) ?? "";
-          yield* mkdir(path.dirname(file));
-          const temporary = yield* temporaryOf(file);
-          yield* writeText(temporary, text);
-          yield* renameInto(temporary, file);
+          const diff = yield* diffWithTree();
+          yield* writeDiff(at({ kind: "changes", phase }), diff?.text ?? "");
+          if (diff === null) return;
+          // Issue #252: the tree this review read, and the change since the latest earlier review's, from one snapshot.
+          yield* writeJson(at({ kind: "reviewedTree", phase }), { version: VERSION, tree: diff.tree });
+          if (since !== null) yield* writeDiff(at({ kind: "changesSince", phase }), yield* git(["diff", "--no-color", "--no-ext-diff", since.tree, diff.tree]));
+        }),
+      codeReviewRecords: () =>
+        Effect.gen(function* () {
+          const names = (yield* exists(dir)) ? yield* list(dir) : [];
+          const reviews = names.flatMap((n) => {
+            const m = /^work-review-(\d+)$/u.exec(n);
+            return m === null ? [] : [Number(m[1])];
+          }).sort((a, b) => a - b);
+          const records: CodeReviewRecord[] = [];
+          for (const review of reviews) {
+            const diffFile = at({ kind: "changes", phase: review });
+            if (!(yield* exists(diffFile))) continue;
+            const files = (yield* list(path.dirname(diffFile))).flatMap((n) => {
+              const m = /^review-(\d+)\.json$/u.exec(n);
+              return m === null ? [] : [Number(m[1])];
+            }).sort((a, b) => a - b);
+            const findings = new Map<string, string>();
+            for (const round of files) {
+              const decoded = yield* decodedOrNull(at({ kind: "review", subject: { work: review }, round }), EffectReview);
+              for (const i of decoded?.issues ?? []) if (!findings.has(i.id)) findings.set(i.id, i.location);
+            }
+            records.push({ review, diff: yield* readText(diffFile), findings: [...findings].map(([id, location]) => ({ id, location })) });
+          }
+          return records;
+        }),
+      reviewedTreeBefore: (phase) =>
+        Effect.gen(function* () {
+          for (let review = phase - 1; review >= 1; review--) {
+            const recorded = yield* decodedOrNull(at({ kind: "reviewedTree", phase: review }), ReviewedTreeFile);
+            if (recorded !== null && (yield* treeExists(recorded.tree))) return { review, tree: recorded.tree };
+          }
+          return null;
         }),
       /**
        * Keeps a reply that did not match its schema, as plan-review/invalid-replies/<agent>-<n>.json, and returns

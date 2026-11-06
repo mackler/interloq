@@ -54,15 +54,15 @@ test("the execution prompt asks for the report's checks by the schema's field na
 
 test("the work review's first round shows each step's reported checks without their seconds (issue #245)", () => {
   const work = { outcome: outcome([{ step: "S1", command: "npm run test:unit", seconds: 90, selection: false, counts: null }, { step: "S2", command: "npm run test:web", seconds: 20, selection: false, counts: null }, { step: "S1", command: "npm run test:unit", seconds: 90, selection: false, counts: null }]), plan: "the plan" };
-  const review = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued");
-  assert.ok(review.includes(prompts.WORK_CHECK_CRITERION));
+  const review = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued", { _tag: "Whole" }, null);
+  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued", { _tag: "Step", id: "S1", label: "l", text: "t" }, null).includes(prompts.WORK_CHECK_CRITERION), "issue #252: a step's part carries the criterion");
   assert.ok(review.includes("- S1: `npm run test:unit`, `npm run test:unit`"), review.slice(-600));
   assert.ok(review.includes("- S2: `npm run test:web`"));
   const shown = review.slice(review.indexOf("per step:"));
   assert.ok(!/seconds/u.test(shown), shown);
-  const none = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, { outcome: outcome([]), plan: "p" }, "continued");
+  const none = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, { outcome: outcome([]), plan: "p" }, "continued", { _tag: "Whole" }, null);
   assert.match(none, /none reported/u);
-  assert.ok(!prompts.workReviewPrompt(TEST_ROOT, 1, 2, false, work, "continued").includes(prompts.WORK_CHECK_CRITERION), "a later round repeats nothing");
+  assert.ok(!prompts.workReviewPrompt(TEST_ROOT, 1, 2, false, work, "continued", { _tag: "Step", id: "S1", label: "l", text: "t" }, null).includes(prompts.WORK_CHECK_CRITERION), "a later round repeats nothing");
 });
 
 test("checksByStep groups by step in first-seen order, without seconds", () => {
@@ -112,7 +112,7 @@ test("the report's counts are kept, and a negative count becomes null on the rep
 });
 
 test("the work review shows a check's counts and selection, and nothing of counts it does not have", () => {
-  const review = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, { outcome: outcome([counted, build]), plan: "p" }, "continued");
+  const review = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, { outcome: outcome([counted, build]), plan: "p" }, "continued", { _tag: "Whole" }, null);
   assert.ok(review.includes("`node --test test/a.test.ts` (40 passed, 0 failed, 1 skipped; a selection)"), review.slice(-600));
   assert.ok(review.includes("`npm run build`") && !review.includes("`npm run build` ("), "a check with no counts and no selection shows its command alone");
 });

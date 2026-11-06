@@ -364,7 +364,8 @@ test.describe("the tests of the workCorrection server, in order", () => {
     await toHaveEnded(page, "Completed");
     for (const phase of ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]) await expect(rail(page).getByText(phase, { exact: true })).toBeVisible();
     // Issue #14 (G-R1-1): the work review that led to the second planning phase names its corrections due.
-    await expect(rail(page).getByText(loopSummary(1, 1, "revise"), { exact: true })).toBeVisible();
+    // Issue #252: two cycles, the second raising nothing before the review leaves.
+    await expect(rail(page).getByText(loopSummary(2, 1, "revise"), { exact: true })).toBeVisible();
     await expect(right(page).getByText("The step misses its test.")).toBeVisible();
     // Issue #15: every planning phase has the same tone, and so has every work review, apart from the other's. Issue #22:
     // the bands are the right panel's, where an execution phase writes nothing.

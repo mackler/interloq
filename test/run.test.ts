@@ -567,7 +567,7 @@ test("a stopped execution foresees the second iteration at once; a work review t
   everyBeganForeseen(stop.probe.ui.notified);
   const revise = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["W1-R1-1", "accepted"]]) }, { output: noQuestions, plan: "v2" }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
   });
   await runTask(revise.layer);
@@ -674,7 +674,7 @@ const stopWith = (input: string) => ({ status: "needs_input" as const, summary: 
 test("issue #122: two iterations: each planning phase and each work review runs on a session of its own, carrying no other phase", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["W1-R1-1", "accepted"]]) }, { output: noQuestions, plan: "v2" }, { output: respond([["W2-R1-1", "rejected"]]) }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [issue("W2-R1-1")] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [issue("W2-R1-1")] }, { issues: [] }],
     execs: [stopWith("PostgreSQL"), finished],
   });
   assert.equal(await runTask(layer, "The scripted task of item 1"), 2);

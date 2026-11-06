@@ -13,14 +13,14 @@ import { pauseProse } from "./render.ts";
 import { serializeReply } from "./records.ts";
 import * as prompts from "./prompts.ts";
 import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportWhat, repairReplyPrompt, type RespondContext } from "./prompts.ts";
-import { correctiveValidation, investigationValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
+import { correctiveValidation, investigationValidation, partCollisionValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
 import { agentContext, askOffering, type BesideQuestion as BesideHandle, byLine, decisionAnswerOf, limitOptions, numberedOptions, openBeside, positionOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
 import type { OpenDispute } from "./openDisputes.ts";
 import { parseUnchangedAnswer } from "./input.ts";
-import { advance, type Asks, type Beside, type BesideKey, subjectOf, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
+import { advance, type Asks, type Beside, type BesideKey, subjectOf, type DisputesSettledBy, idPrefixOf, initialState, type OnAcceptance, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
-import { type Decider, OpenQuestions, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, type ReviewSchema, RunConfig, RunKind, type Services, Store, type StoreError, type Taken, Ui } from "./services.ts";
+import { type Decider, OpenQuestions, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, type ReviewSchema, type ReviewSession, RunConfig, RunKind, type Services, Store, type StoreError, type Taken, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { ASK, type Exhaustion, FAIL, withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
@@ -63,8 +63,8 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   amend: ((review: Review, response: R, round: number) => Effect.Effect<void, RunError, Services>) | null;
   /** Text of the "p" choice at the round limit; null: no such choice (the work review, Q13). */
   proceed: string | null;
-  /** Q14: a round with a correction due ends the loop with "revise" before the observation. */
-  leaveOnAcceptance: boolean;
+  /** What a round with a correction due does (Q14; issue #252): continue, leave, or collect until a review raises no counted issue. */
+  onAcceptance: OnAcceptance;
   /** G-R1-1: a non-empty decision at a pause ends the loop with "revise" instead of a planning call. */
   leaveOnDecision: boolean;
   /**
@@ -82,6 +82,11 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   disputesSettledBy: DisputesSettledBy;
   /** The schema of Codex's review (issue #183): S.EffectReview for the plan and the work, S.Review otherwise. */
   reviewSchema: ReviewSchema;
+  /**
+   * Issue #252 (requirements Q2): the parts of each cycle's review, one Codex request each, all at once, the whole part
+   * first, resolved once at the loop's start; null for one review from `reviewPrompt` (every subject but the work).
+   */
+  reviewParts: Effect.Effect<readonly ReviewPartPrompt[], RunError, Services> | null;
   /** A decision's subject: the number of the question its analysis is for (S21), which its progress names; absent otherwise. */
   question?: number | null;
   /** Run before every round's Codex turn, before its guard's snapshot (the work review rewrites changes.diff); null otherwise. */
@@ -95,6 +100,36 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
    */
   keepsCorrections: KeepsCorrections<R> | null;
 }>;
+/** Two validations of one reply, the second only where the first passes (issue #252: a repaired part's review). */
+const bothChecks =
+  <T>(first: Validation<T>, second: Validation<T>): Validation<T> =>
+  (reply) => {
+    const a = first(reply);
+    return Result.isFailure(a) ? a : second(a.success.value);
+  };
+/** Issue #252: a part of a code review's cycle with its prompt for a round and the thread it is sent to. */
+export type ReviewPartPrompt = Readonly<{ part: prompts.ReviewPart; prompt: (root: RunRoot, round: number, thread: ReviewThread) => string }>;
+const SEVERITY_RANK: Readonly<Record<Review["issues"][number]["severity"], number>> = { minor: 0, major: 1, blocking: 2 };
+/**
+ * Issue #252: the parts' reviews of one cycle merged, in part order. An id already in the log as the cycle began is kept
+ * once, under its id: the first part's issue, at the highest severity any part gave it, with each later part's evidence
+ * appended. New ids are unique across the parts by then (the collision repair turn).
+ */
+export const mergePartReviews = <T extends Review>(logIds: ReadonlySet<string>, parts: readonly Readonly<{ key: string; review: T }>[]): T => {
+  const issues: T["issues"][number][] = [];
+  for (const { key, review } of parts) {
+    for (const i of review.issues) {
+      const at = logIds.has(i.id) ? issues.findIndex((m) => m.id === i.id) : -1;
+      if (at < 0) {
+        issues.push(i);
+        continue;
+      }
+      const kept = issues[at]!;
+      issues[at] = { ...kept, severity: SEVERITY_RANK[i.severity] > SEVERITY_RANK[kept.severity] ? i.severity : kept.severity, evidence: `${kept.evidence}\nAlso raised by ${key}: ${i.evidence}` };
+    }
+  }
+  return { ...parts[0]!.review, issues } as T;
+};
 export type KeepsCorrections<R> = Readonly<{ textsOf: (response: R) => readonly string[]; entriesOf: (response: R) => readonly S.CorrectionPassages[] }>;
 
 /** Notifies the page of a subject's document as it now stands (issue #86), for a document written outside a review loop. */
@@ -392,11 +427,18 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
     const phase = subject.phase;
     /** The decision this loop works out, whose questions belong to it (issue #57); null for the other subjects. */
     const within = typeof id === "object" && "decision" in id ? id.decision : null;
+    /** The number in the subject's generated ids: the decision's or the verdict's number, the phase otherwise. */
+    const idNumber = typeof id === "object" && "decision" in id ? id.decision : typeof id === "object" && "verdict" in id ? id.verdict : phase;
     // One thread per review loop (behaviour 5): the session is held by this loop, not by the adapter. Issue #165: until a
     // turn's input passes codexTurnInputLimit, after which the next round starts a new thread.
-    const session = yield* Ref.make(yield* reviewer.startPhase);
-    /** The input tokens of the current round's Codex turns, its review and any repair turn of it (issue #165). */
-    const roundInputs = yield* Ref.make<readonly (number | null)[]>([]);
+    // Issue #252: the parts of each cycle, resolved once, since the plan does not change during a code review; each part
+    // holds its own thread and the input tokens of its current round's turns (issue #165).
+    const partPrompts: readonly ReviewPartPrompt[] = subject.reviewParts === null ? [{ part: { _tag: "Whole" }, prompt: subject.reviewPrompt }] : yield* subject.reviewParts;
+    /** One part a cycle: its raw reply in review-<n>.json and its restart line naming no part, as before issue #252. */
+    const single = partPrompts.length === 1;
+    type PartThread = Readonly<{ part: prompts.ReviewPart; prompt: ReviewPartPrompt["prompt"]; key: string; session: Ref.Ref<ReviewSession>; inputs: Ref.Ref<readonly (number | null)[]> }>;
+    const parts: PartThread[] = [];
+    for (const p of partPrompts) parts.push({ part: p.part, prompt: p.prompt, key: prompts.reviewPartKey(p.part), session: yield* Ref.make(yield* reviewer.startPhase), inputs: yield* Ref.make<readonly (number | null)[]>([]) });
     /**
      * The document this loop last showed (issue #86). It is shown before every review, so a loop's first proposal is on
      * the page before Codex's first review and the diff shown is the one Codex reviews, and after every step that may
@@ -416,7 +458,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
     // 11 Oct 2026): an implementation run beside it commits to the project, and a commit landing during a Codex turn
     // halted a refinement mid-review.
     const reviewProjectGuarded = guardsReviewProject((yield* RunKind).mode);
-    const reviewCall = (text: string) =>
+    const reviewCall = (thread: PartThread, text: string) =>
       Effect.gen(function* () {
         const projectBefore = yield* store.projectSnapshot();
         const fileBefore = yield* store.fileHash(id);
@@ -437,10 +479,10 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
         });
         const attempt = () =>
           Effect.gen(function* () {
-            const reply = yield* Effect.result((yield* Ref.get(session)).review(text, subject.reviewSchema));
+            const reply = yield* Effect.result((yield* Ref.get(thread.session)).review(text, subject.reviewSchema));
             yield* check;
             const accepted = yield* Effect.fromResult(reply);
-            yield* Ref.update(roundInputs, (inputs) => [...inputs, accepted.inputTokens]);
+            yield* Ref.update(thread.inputs, (inputs) => [...inputs, accepted.inputTokens]);
             return accepted;
           });
         return yield* withTransportRetry("codex", REVIEW_PURPOSE, transportReviewWhat(heading, prompts.passNoun(subject.id)), attempt, check);
@@ -451,14 +493,14 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
      * starts a new thread when a Codex turn of the round before it passed the limit, said on the page and written to
      * conversation.md, asking nothing. The inputs counted start afresh with every round.
      */
-    const roundThread = (round: number) =>
+    const roundThread = (part: PartThread, round: number) =>
       Effect.gen(function* () {
-        const inputs = yield* Ref.getAndSet(roundInputs, []);
+        const inputs = yield* Ref.getAndSet(part.inputs, []);
         if (round === 1) return "new" satisfies ReviewThread;
         const thread = threadAfter(inputs, config.codexTurnInputLimit);
         if (thread === "new") {
-          yield* Ref.set(session, yield* reviewer.startPhase);
-          const line = prompts.threadRestartLine(heading, round, largestInput(inputs) ?? 0, config.codexTurnInputLimit);
+          yield* Ref.set(part.session, yield* reviewer.startPhase);
+          const line = prompts.threadRestartLine(heading, round, largestInput(inputs) ?? 0, config.codexTurnInputLimit, single ? null : part.part);
           yield* ui.say(line);
           yield* store.converse(line);
         }
@@ -609,15 +651,40 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
             return { kind: "BoundaryReached", answers };
           }
           case "CallReviewer": {
-            const thread = yield* roundThread(command.round);
+            const threads: ReviewThread[] = [];
+            for (const part of parts) threads.push(yield* roundThread(part, command.round));
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
             yield* publishDocument;
-            // Issue #208: the previous response's unexplained change, which this review examines, follows the prompt.
-            const base = subject.reviewPrompt(store.root, command.round, thread);
-            const prompt = command.unexplained === null ? base : `${base}\n\n${prompts.unexplainedChangeReviewNote(command.unexplained)}`;
-            // Issue #151: the review's validation with its repair turn in the review's thread, every reply in review-<n>.json first.
-            const { value: review } = yield* decodeValidating("codex", reviewText, (yield* reviewCall(prompt)).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
+            // Issue #252: every part at once, each in its own thread with its own guard and transport retry; a failure of
+            // one interrupts the others.
+            const replies = yield* Effect.forEach(
+              parts,
+              (part, i) =>
+                Effect.gen(function* () {
+                  // Issue #208: the previous response's unexplained change, which this review examines, follows the prompt.
+                  const base = part.prompt(store.root, command.round, threads[i]!);
+                  const prompt = command.unexplained === null ? base : `${base}\n\n${prompts.unexplainedChangeReviewNote(command.unexplained)}`;
+                  const call = (text: string) => reviewCall(part, text).pipe(Effect.map((reply) => reply.text));
+                  // Issue #151: the review's validation with its repair turn in the part's thread, every reply saved first.
+                  const { value } = yield* decodeValidating("codex", reviewText, yield* call(prompt), (r) => call(r.prompt), reviewValidation, rawSave(command.round, single ? "review" : { reviewPart: part.key }));
+                  return { part, call, review: value };
+                }),
+              { concurrency: "unbounded" },
+            );
+            // Issue #252: a new id an earlier part of the cycle raised gets one collision repair turn in its part's thread.
+            const logIds = new Set(state.current.startLog.map((e) => e.id as string));
+            const used = new Set<string>();
+            const merged: { key: string; review: (typeof replies)[number]["review"] }[] = [];
+            for (const { part, call, review } of replies) {
+              const collides = review.issues.some((i) => !logIds.has(i.id) && used.has(i.id));
+              const repaired = collides
+                ? (yield* decodeValidating("codex", reviewText, JSON.stringify(review), (r) => call(r.prompt), bothChecks(reviewValidation, partCollisionValidation(new Set(used), prompts.idForm(`${idPrefixOf(id)}${idNumber}`, command.round, part.part))), rawSave(command.round, { reviewPart: part.key }))).value
+                : review;
+              for (const i of repaired.issues) if (!logIds.has(i.id)) used.add(i.id);
+              merged.push({ key: part.key, review: repaired });
+            }
+            const review = mergePartReviews(logIds, merged);
             return { kind: "ReviewDecoded", review, validated: yield* Effect.fromResult(validateReview(review)) };
           }
           case "CallPlanner": {
@@ -690,7 +757,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
         return yield* Effect.die(new Error("the review loop ended a batch without an event"));
       });
 
-    const setup: ReviewSetup = { subject: id, heading, fileLabel, dirName: subjectDir(id), phase, idNumber: typeof id === "object" && "decision" in id ? id.decision : typeof id === "object" && "verdict" in id ? id.verdict : phase, proceed: subject.proceed, hasAmend: subject.amend !== null, leaveOnAcceptance: subject.leaveOnAcceptance, leaveOnDecision: subject.leaveOnDecision, onUnchanged: subject.onUnchanged, disputesSettledBy: subject.disputesSettledBy, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor };
+    const setup: ReviewSetup = { subject: id, heading, fileLabel, dirName: subjectDir(id), phase, idNumber, proceed: subject.proceed, hasAmend: subject.amend !== null, onAcceptance: subject.onAcceptance, leaveOnDecision: subject.leaveOnDecision, onUnchanged: subject.onUnchanged, disputesSettledBy: subject.disputesSettledBy, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor };
     const begun = yield* store.observeFile(id);
     return yield* interpret(advance(initialState(setup, config, continueFrom), { kind: "Begin", hash: begun.hash, text: begun.text, log: yield* store.loadLog(id) })).pipe(
       // W2-R2-1: however the loop ends, no answer is accepted once it has, before its scope cancels its questions.

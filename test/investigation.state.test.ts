@@ -12,7 +12,7 @@ import type * as S from "../src/schema.ts";
 import { issue, respond } from "./helpers.ts";
 import { reviewEntry, selfEntry } from "./resolutionFixtures.ts";
 
-const setupOf = (extra: Partial<ReviewSetup> = {}): ReviewSetup => ({ subject: { plan: 1 }, heading: "Planning phase 1", fileLabel: "plan.json", dirName: "planning-1", phase: 1, idNumber: 1, proceed: "proceed", hasAmend: false, leaveOnAcceptance: false, leaveOnDecision: false, onUnchanged: null, disputesSettledBy: "user", maxRounds: 9, maxIdleRounds: 9, countMinor: true, ...extra });
+const setupOf = (extra: Partial<ReviewSetup> = {}): ReviewSetup => ({ subject: { plan: 1 }, heading: "Planning phase 1", fileLabel: "plan.json", dirName: "planning-1", phase: 1, idNumber: 1, proceed: "proceed", hasAmend: false, onAcceptance: "continue", leaveOnDecision: false, onUnchanged: null, disputesSettledBy: "user", maxRounds: 9, maxIdleRounds: 9, countMinor: true, ...extra });
 type TestEvent =
   | Exclude<ReviewEvent, Readonly<{ kind: "ReviewDecoded" | "ResponseDecoded" | "CorrectionDecoded" | "InvestigationDecoded" }>>
   | Readonly<{ kind: "ReviewDecoded"; review: S.Review }>
@@ -179,7 +179,7 @@ test("an agreed resolution is said and asks nothing; one only the developer may 
   assert.ok(kinds(chosen).includes("RecordDecision") && kinds(chosen).includes("AcknowledgeDisputes"));
   assert.equal(last(chosen).kind, "ApplyDecisions");
   // In a subject that leaves on a decision, the resolution chosen makes the loop leave for a revision.
-  const work = run(begin(resolved(["requirement 2"]), { subject: { work: 1 }, leaveOnDecision: true, leaveOnAcceptance: true, proceed: null }), { kind: "ReviewDecoded", review: { issues: [] } });
+  const work = run(begin(resolved(["requirement 2"]), { subject: { work: 1 }, leaveOnDecision: true, onAcceptance: "leave", proceed: null }), { kind: "ReviewDecoded", review: { issues: [] } });
   const [w] = asks(work);
   const left = advance(work.state, { kind: "BoundaryReached", answers: [{ key: w!.key, text: prompts.RESOLUTION_POSITION }] });
   assert.ok(kinds(left).includes("RecordDecision"));

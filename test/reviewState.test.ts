@@ -30,7 +30,7 @@ const initialState = (...args: Parameters<typeof freshState>): ReviewState => ({
 // state machine. The scenario tests of test/run.test.ts remain the behavioural specification; these
 // examples pin each transition.
 
-const setup: ReviewSetup = { subject: { plan: 1 }, heading: "Planning phase 1", fileLabel: "plan.md", dirName: "planning-1", phase: 1, idNumber: 1, proceed: "proceed to execution with the plan as it is", hasAmend: false, leaveOnAcceptance: false, leaveOnDecision: false, onUnchanged: null, disputesSettledBy: "user", maxRounds: 5, maxIdleRounds: 2, countMinor: true };
+const setup: ReviewSetup = { subject: { plan: 1 }, heading: "Planning phase 1", fileLabel: "plan.md", dirName: "planning-1", phase: 1, idNumber: 1, proceed: "proceed to execution with the plan as it is", hasAmend: false, onAcceptance: "continue", leaveOnDecision: false, onUnchanged: null, disputesSettledBy: "user", maxRounds: 5, maxIdleRounds: 2, countMinor: true };
 const start = (config: Partial<{ maxRounds: number; maxIdleRounds: number; countMinor: boolean }> = {}, log: LogEntry[] = []): Transition =>
   advance(initialState(setup, { maxRounds: 5, maxIdleRounds: 2, countMinor: true, ...config }), { kind: "Begin", hash: "h0", text: "", log });
 // Notify commands are pinned by their own tests below; the sequences of the other commands ignore them.
@@ -388,7 +388,7 @@ test("Notify: proceeding at the round limit finishes the loop with proceed", () 
 });
 
 // Plan step 2.4: the policies of a work review (Q13, Q14, G-R1-1; P1-R1-1 of the earlier run, P1-R1-1 of this one).
-const workSetup: ReviewSetup = { ...setup, subject: { work: 1 }, heading: "Work review 1", fileLabel: "changes.diff", dirName: "work-review-1", proceed: null, leaveOnAcceptance: true, leaveOnDecision: true };
+const workSetup: ReviewSetup = { ...setup, subject: { work: 1 }, heading: "Work review 1", fileLabel: "changes.diff", dirName: "work-review-1", proceed: null, onAcceptance: "leave", leaveOnDecision: true };
 const workStart = (config: Partial<{ maxRounds: number; maxIdleRounds: number }> = {}, log: LogEntry[] = []): Transition =>
   advance(initialState(workSetup, { maxRounds: 5, maxIdleRounds: 2, countMinor: true, ...config }), { kind: "Begin", hash: "h0", text: "", log });
 const allKinds = (t: Transition): string[] => t.commands.map((c) => (c.kind === "Notify" ? `Notify:${c.event._tag}` : c.kind === "Checkpoint" ? `Checkpoint:${c.point.stage}` : c.kind));
@@ -793,7 +793,7 @@ test("issue #156: a corrective reply that marks a settled reversal asks it; one 
 
 // ---- issue #183: each agent's statement of a disputed point's effect on the work ------------------------------------
 
-const workEffects: ReviewSetup = { ...setup, subject: { work: 1 }, heading: "Work review 1", fileLabel: "changes.diff", dirName: "work-review-1", leaveOnAcceptance: true, leaveOnDecision: true, disputesSettledBy: "noWorkEffect" };
+const workEffects: ReviewSetup = { ...setup, subject: { work: 1 }, heading: "Work review 1", fileLabel: "changes.diff", dirName: "work-review-1", onAcceptance: "leave", leaveOnDecision: true, disputesSettledBy: "noWorkEffect" };
 const planEffects: ReviewSetup = { ...setup, disputesSettledBy: "noWorkEffect" };
 const startWith = (s: ReviewSetup, log: LogEntry[] = []): Transition => advance(initialState(s, { maxRounds: 5, maxIdleRounds: 5, countMinor: true }), { kind: "Begin", hash: "h0", text: "", log });
 const NONE = { kind: "none" } as const;
@@ -1120,7 +1120,7 @@ test("#243: a Codex-position dispute answer during the final review is applied a
   const applied = advance(final.state, { kind: "BoundaryReached", answers: [{ key, text: prompts.REVIEWER_POSITION }] } as TestEvent);
   assert.ok(kinds(applied).includes("AcknowledgeDisputes"));
   assert.equal(last(applied).kind, "ApplyDecisions");
-  const work: ReviewSetup = { ...setup, subject: { work: 1 }, leaveOnDecision: true, leaveOnAcceptance: true, proceed: null };
+  const work: ReviewSetup = { ...setup, subject: { work: 1 }, leaveOnDecision: true, onAcceptance: "leave", proceed: null };
   const w = disputed(work);
   const wkey = keyOf(w, "dispute");
   const leaving = run(w, response([["A", "accepted"]]));

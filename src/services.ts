@@ -28,9 +28,13 @@ import type { ItemText, Refinement } from "./refinement.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
 import type { OutputEvent } from "./liveOutput.ts";
 import type { WaitHandle } from "./waits.ts";
+import type { CodeReviewRecord } from "./lateFindings.ts";
 
 /** Which reply of a round a raw save holds: the review, the response, or corrective turn k (issue #151). */
-export type RawReplyKind = "review" | "response" | Readonly<{ corrective: number }> | Readonly<{ investigation: number }>;
+/** Issue #252: `reviewPart`, the raw reply of one part of a code review's cycle, by its key (`reviewPartKey` of src/prompts.ts). */
+export type RawReplyKind = "review" | "response" | Readonly<{ corrective: number }> | Readonly<{ investigation: number }> | Readonly<{ reviewPart: string }>;
+/** Issue #252: the tree code review `review` last read, which the change since it starts from. */
+export type ReviewedTree = Readonly<{ review: number; tree: string }>;
 export type StoreError = FileSystemError | StateFileInvalid | GitError;
 /** The question a decision analyzes (decision support): its text and options, the phase in which it was asked and that phase's label (W1-R1-2). */
 /**
@@ -386,7 +390,18 @@ export interface StoreShape {
   /** The hash of the bytes of the reviewed artifact on disk (the guard of behaviour 5); equal to fileHash but for a work review. */
   recordHash(subject: SubjectId): Effect.Effect<string, StoreError>;
   /** Writes work-review-<phase>/changes.diff: the diff of the project from the baseline tree to the current one (Q7). */
-  changeRecord(phase: number): Effect.Effect<void, StoreError>;
+  /**
+   * Issue #252: also writes work-review-<phase>/tree.json, the tree the diff ends at, and, where `since` is given, the
+   * diff from its tree to that tree in work-review-<phase>/since-previous.diff.
+   */
+  changeRecord(phase: number, since: ReviewedTree | null): Effect.Effect<void, StoreError>;
+  /**
+   * Issue #252: every code review of the run that has a changes.diff, with its findings read from its merged reviews
+   * (review-<n>.json, each id once, at its first location), for the late-findings measure; none where there is no review.
+   */
+  codeReviewRecords(): Effect.Effect<readonly CodeReviewRecord[], StoreError>;
+  /** Issue #252: the latest code review before `phase` whose recorded tree git still has; null where none. */
+  reviewedTreeBefore(phase: number): Effect.Effect<ReviewedTree | null, StoreError>;
   /** The text of work-review-<phase>/changes.diff, for the prompt of a read-only work response ("" when it does not exist). */
   readChangeRecord(phase: number): Effect.Effect<string, StoreError>;
   /** The text of user-decisions.md, for the prompt of a read-only work response (issue #122; "" when it does not exist). */

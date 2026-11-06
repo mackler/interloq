@@ -4,7 +4,7 @@
 
 import { Result, Schema } from "effect";
 import { CorrectionInvalid, InvestigationInvalid, RoundInvalid } from "./errors.ts";
-import { correctionRepairPrompt, investigationRepairPrompt, reviewRepairPrompt, roundRepairPrompt } from "./prompts.ts";
+import { correctionRepairPrompt, investigationRepairPrompt, partCollisionRepairPrompt, reviewRepairPrompt, roundRepairPrompt } from "./prompts.ts";
 import type { Validation } from "./review.ts";
 import type { Action, LogEntry, PlannerResponse, Review, UserQuestion, WorkEffect } from "./schema.ts";
 
@@ -246,6 +246,20 @@ export const investigationValidation =
 
 /** A review's validation with its repair turn (issue #151): unique, non-empty issue ids, or Codex's repair prompt. */
 export const reviewValidation: Validation<Review> = (review) => repairable(review, validateReview(review), reviewRepairPrompt);
+
+/**
+ * Issue #252: a part's review in a cycle of several parts must not raise a new id an earlier part of the cycle raised
+ * (`usedIds`: the new ids of the earlier parts; an id already in the log is merged, never refused). `form` is the part's
+ * id form, which its repair prompt names.
+ */
+export const partCollisionValidation =
+  (usedIds: ReadonlySet<string>, form: string): Validation<Review> =>
+  (review) => {
+    const colliding = unique(review.issues.map((i) => i.id).filter((id) => usedIds.has(id)));
+    return colliding.length === 0
+      ? Result.succeed({ value: review, notes: [] })
+      : Result.fail({ error: roundInvalid({ duplicateIssues: colliding }), repair: partCollisionRepairPrompt(colliding, form) });
+  };
 
 /** A check's result as a Validation's: the reply unchanged, or the failure with the prompt of its repair turn. */
 const repairable = <T>(reply: T, checked: Result.Result<unknown, RoundInvalid>, repair: (error: RoundInvalid) => string): ReturnType<Validation<T>> =>

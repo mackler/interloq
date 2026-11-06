@@ -59,7 +59,8 @@ export const POSITION_RESPONSE_RULE = `On every disposition other than 'accepted
 On a self-correction with new_action 'rejected', state ${CONCERN_FIELD} and ${REMEDY_FIELD} likewise, and look for a resolution that meets your concern and the concern behind the accepted correction: where one changes none of the user's requirements, decisions or decided behavior, carry it out and report that self-correction with new_action 'accepted', keeping the correction as amended, with the resolution in ${RESOLUTION_FIELD}; where it would change one, keep 'rejected' and give the resolution with its changes; otherwise set ${RESOLUTION_FIELD} to null.
 Wherever you give a resolution, whatever the action, state ${CONCERN_FIELD} and ${REMEDY_FIELD} with it, since Codex reviews a resolution against the concern it meets. Elsewhere give ${CONCERN_FIELD} and ${REMEDY_FIELD} as empty strings and ${RESOLUTION_FIELD} as null.`;
 /** Rules for the use of an issue log. They are the same for every reviewed file. */
-function logRules(root: RunRoot, logFile: string, idPrefix: string, round: number): string {
+function logRules(root: RunRoot, logFile: string, idPrefix: string, round: number, part: ReviewPart | null = null): string {
+  const form = idForm(idPrefix, round, part ?? WHOLE_PART);
   return `${runDir(root)}/${logFile} is a JSON object whose 'entries' list every issue raised in earlier rounds with the planner's disposition and rationale, in order.
 Every entry has id, phase, round, source, problem, action, rationale and superseded. An entry with superseded = true has been replaced by a later entry with the same id; use the later entry.
 An entry with source 'review' is an issue you raised: it also has severity, location, evidence, the planner's action ('accepted', 'partially_accepted', 'rejected', 'no_change_needed' or 'clarification_requested'), and duplicate_of and reverses, each the id of an earlier issue or null. ${TASK_DISPUTE_FIELD} is true where the planner marked its disagreement with the issue as about what the task requires, not about how a question is worded; false otherwise. work_effects holds your and the planner's statements of the issue's effect on the work in that round (reviewer and planner, each ${WORK_EFFECT_FIELD} as you and the planner gave it); null where the review carries none or the planner accepted the issue.
@@ -77,13 +78,37 @@ Do not repeat an issue whose action is 'rejected', 'no_change_needed', or 'parti
 Do not raise an issue whose correction would undo the correction made for an accepted issue in the log; if you consider an accepted correction wrong, reuse the id of that issue and state the error in the evidence field.
 ${SEVERITY}
 Return an empty issues array when no issue is found.
-New issues receive ids of the form ${idPrefix}-R${round}-1, ${idPrefix}-R${round}-2, and so on.`;
+New issues receive ids of the form ${form}1, ${form}2, and so on.`;
 }
 
-function laterRound(root: RunRoot, file: string, logFile: string, idPrefix: string, round: number): string {
+function laterRound(root: RunRoot, file: string, logFile: string, idPrefix: string, round: number, part: ReviewPart | null = null): string {
+  const form = idForm(idPrefix, round, part ?? WHOLE_PART);
   return `The planner has answered your issues; the answers are in ${runDir(root)}/${logFile}, and ${runDir(root)}/${file} may have been amended.
-Read both files again and review ${runDir(root)}/${file} again under the same rules as before. New issues receive ids of the form ${idPrefix}-R${round}-1, ${idPrefix}-R${round}-2, and so on.`;
+Read both files again and review ${runDir(root)}/${file} again under the same rules as before. New issues receive ids of the form ${form}1, ${form}2, and so on.`;
 }
+
+/**
+ * Issue #252 (requirements Q2): a part of a code review's cycle, one Codex request each: the whole work, or one step
+ * recorded done.
+ */
+export type ReviewPart = Readonly<{ _tag: "Whole" }> | Readonly<{ _tag: "Step"; id: string; label: string; text: string }>;
+const WHOLE_PART: ReviewPart = { _tag: "Whole" };
+/** Issue #252: the earlier code review whose last-read tree work-review-<k>/since-previous.diff starts from, or none. */
+export type SinceReview = Readonly<{ review: number }> | null;
+/** The first line of a part's review prompt, by which the scripted reviewer routes a request to its part. */
+export const REVIEW_PART_MARKER = "Interloq review part:";
+/**
+ * A part's key, used in file names and to route a part's requests: `whole`, or `step-` and the step's id with every
+ * character outside [A-Za-z0-9-] written as `_<hex code point>_`, so distinct ids give distinct keys.
+ */
+export const reviewPartKey = (part: ReviewPart): string =>
+  part._tag === "Whole" ? "whole" : `step-${[...part.id].map((c) => (/^[A-Za-z0-9-]$/.test(c) ? c : `_${(c.codePointAt(0) ?? 0).toString(16)}_`)).join("")}`;
+export const reviewPartLine = (part: ReviewPart): string => `${REVIEW_PART_MARKER} ${reviewPartKey(part)}.`;
+/**
+ * The form of a part's new issue ids: `<prefix>-R<round>-` for the whole work (the code review's form before issue #252)
+ * and `<prefix>-R<round>-<step id>-` for a step, which cannot equal a generated self-correction id (`<prefix>-S<round>-<k>`).
+ */
+export const idForm = (prefix: string, round: number, part: ReviewPart): string => (part._tag === "Whole" ? `${prefix}-R${round}-` : `${prefix}-R${round}-${part.id}-`);
 
 /**
  * The opening of a later round's prompt in a new Codex thread (issue #165, requirements Q1): the thread has not seen the
@@ -104,8 +129,8 @@ const byThread = (round: number, thread: ReviewThread, logFile: string, root: Ru
  * The line said on the page and written to conversation.md when a review's next round starts a new Codex thread
  * (issue #165, the requirements' open point).
  */
-export const threadRestartLine = (heading: string, round: number, inputTokens: number, limit: number): string =>
-  `${heading}: Codex's last turn took ${inputTokens.toLocaleString("en-US")} input tokens, more than the ${limit.toLocaleString("en-US")} set by codexTurnInputLimit; round ${round} starts a new Codex thread, which reads the issue log instead of the earlier conversation.`;
+export const threadRestartLine = (heading: string, round: number, inputTokens: number, limit: number, part: ReviewPart | null = null): string =>
+  `${heading}${part === null ? "" : ` (${part._tag === "Whole" ? "the whole work" : `step ${part.id}`})`}: Codex's last turn took ${inputTokens.toLocaleString("en-US")} input tokens, more than the ${limit.toLocaleString("en-US")} set by codexTurnInputLimit; round ${round} starts a new Codex thread, which reads the issue log instead of the earlier conversation.`;
 
 /** The heading of the explanations of terms: in conversation.md (decision Q6) and in a relayed question's text (S13). */
 export const TERMS_HEADING = "Terms:";
@@ -1196,7 +1221,7 @@ Return an empty questions_for_user array.`;
 export function planReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, checks: StepChecks, thread: ReviewThread, parkedBranch: string | null = null): string {
   const prefix = `P${phase}`;
   const log = pathOf({ kind: "log", subject: { plan: phase } });
-  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "planFile" }), log, prefix, round), () => planReviewFirst(root, log, prefix, round, withRequirements, checks, parkedBranch));
+  return byThread(round, thread, log, root, () => `${laterRound(root, pathOf({ kind: "planFile" }), log, prefix, round)}\n${laterCycleCompleteness("plan")}`, () => planReviewFirst(root, log, prefix, round, withRequirements, checks, parkedBranch));
 }
 function planReviewFirst(root: RunRoot, log: string, prefix: string, round: number, withRequirements: boolean, checks: StepChecks, parkedBranch: string | null): string {
   const parked = parkedBranch === null ? "" : `The plan writer was given this rule on an earlier run's parked work:
@@ -1219,9 +1244,45 @@ ${PLAN_QUESTIONS_RULE}
 ${PLAN_QUESTIONS_REVIEW_CRITERION}
 ${parked}${workEffectReviewRule("plan")}
 Put the step's id in the location field.
+${completenessDemand("plan")}
 ${logRules(root, log, prefix, round)}`;
 }
 
+/** Issue #252: which review a completeness demand is for, the plan review or the code review. */
+export type CompletenessKind = "plan" | "work";
+/** Issue #252: the cost of a defect a review leaves for later, the same sentence in both reviews. */
+export const DEFECT_LEFT_COST = "Each defect you leave for a later review costs a whole further round: the plan is revised, reviewed again, carried out and reviewed again before the defect is corrected.";
+const COMPLETENESS_SCOPE: Readonly<Record<CompletenessKind, Readonly<{ examine: string; last: string }>>> = {
+  plan: { examine: "Examine every remaining step of the plan against the codebase, the requirements and the rules given above", last: "the last before the plan is carried out" },
+  work: { examine: "Examine every changed file and every hunk of the diff in your part of the review against the plan, the requirements and the code they touch", last: "the last before the work is accepted" },
+};
+/**
+ * Issue #252 (the developer's request of 4 Nov 2026): the first round of the plan review and of the code review asks for
+ * every defect in one review.
+ */
+export const completenessDemand = (kind: CompletenessKind): string => {
+  const scope = COMPLETENESS_SCOPE[kind];
+  return `${scope.examine}. Report every defect you find in this one review, not the first few: treat this review as ${scope.last}. ${DEFECT_LEFT_COST}`;
+};
+/**
+ * Issue #252: in the code review the planner's response cannot modify files, and the plan is revised only after the
+ * review ends, so an accepted defect is still in the diff in the review's later cycles.
+ */
+export const WORK_ACCEPTED_NOT_REPEATED = "An issue accepted earlier in this code review is not corrected yet: the planner's response cannot modify files, and the plan is revised only after this review ends, so the diff still shows the defect. Do not raise it again; in this review this overrides the rule not to repeat an accepted issue unless the file still contains the defect.";
+/** Issue #252: a later round of the plan review or the code review asks for defects not yet reported. */
+export const laterCycleCompleteness = (kind: CompletenessKind): string => {
+  const base = `Report every defect not yet reported in this review. Raise an earlier issue again only where the rules above allow it: a clarification request raised again under its id with the answer, or an issue whose rejection rationale contains a specific error, raised again under its id with that error. ${DEFECT_LEFT_COST}`;
+  return kind === "work" ? `${base}\n${WORK_ACCEPTED_NOT_REPEATED}` : base;
+};
+
+/** Issue #252: a collecting code review that raised no new counted issue leaves for planning with what it accepted. */
+export const collectedLeaveLine = (heading: string, round: number): string =>
+  `${heading} raised no new issue in cycle ${round}; Interloq leaves for planning with the issues accepted in every cycle of this review.`;
+/** Issue #252: a collecting code review that reached its limit of cycles leaves for planning. */
+export const collectedLimitLine = (heading: string, round: number): string =>
+  `${heading} reached its limit of cycles after cycle ${round}; Interloq leaves for planning with every issue of this review, accepted or not, in its log.`;
+/** Issue #252: the late-findings measure, said and written at an implementation run's end. */
+export const lateFindingsLine = (late: number, total: number): string => `Code-review findings in code an earlier code review of this run had read: ${late} of ${total}.`;
 /** Issue #183: Codex's rule on stating each issue's effect on the work, in the plan's and the work's reviews. */
 export const workEffectReviewRule = (kind: "plan" | "work"): string => {
   const work = kind === "plan" ? "the work the plan would produce" : "the work";
@@ -1950,29 +2011,74 @@ export const reportedChecksText = (execution: WorkExecution): string => {
   const groups = checksByStep(execution.outcome.checks);
   return groups.length === 0 ? "none reported" : groups.map((group) => `- ${group.step}: ${group.commands.map(shownCheck).join(", ")}`).join("\n");
 };
-export function workReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, execution: WorkExecution, thread: ReviewThread): string {
+/** Issue #252: the checks one step reported, as `reportedChecksText` shows them. */
+const stepChecksText = (execution: WorkExecution, step: string): string =>
+  reportedChecksText({ ...execution, outcome: { ...execution.outcome, checks: execution.outcome.checks.filter((c) => c.step === step) } });
+/**
+ * Issue #252: where a defect is found in one stage of a thing's lifecycle, the same lifecycle across every path that
+ * shares it, reported together and revised as a whole.
+ */
+export const LIFECYCLE_CHECK = "Where you find a defect in one stage of a thing's lifecycle (its creation, the acceptance of an answer, its cancellation, its completion), check the same lifecycle across every path that shares it: each caller, the page's state and the records. Report every failing case together, and state in the issue that the revision must fix the whole lifecycle, not the case found alone.";
+/** Issue #252: a step's named tests and scenarios checked in one review. */
+export const NAMED_TESTS_CHECK = "Check every test and scenario the step's text names, and raise an issue for each named one that was not written, with the step's id in the location field.";
+/**
+ * Issue #252: the change since the latest earlier code review, given to code review k beside the cumulative diff;
+ * nothing where there is none, as in code review 1.
+ */
+export const sincePreviousText = (root: RunRoot, phase: number, since: SinceReview): string =>
+  since === null
+    ? ""
+    : `${runDir(root)}/${pathOf({ kind: "changesSince", phase })} is the change from the state of the project code review ${since.review} last read to the current project. Check the code those changes touched for defects they introduced, as well as the whole for anything missed.`;
+/** `part` and `since` (issue #252): the part of the cycle this request reviews, and the earlier code review whose change since is given. */
+export function workReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, execution: WorkExecution, thread: ReviewThread, part: ReviewPart, since: SinceReview): string {
   const prefix = `W${phase}`;
   const log = pathOf({ kind: "log", subject: { work: phase } });
   const changes = pathOf({ kind: "changes", phase });
   const later = () => `${runDir(root)}/${changes} has been rewritten from the current project for this round.
-${laterRound(root, changes, log, prefix, round)}`;
-  return byThread(round, thread, log, root, later, () => workReviewFirst(root, { phase, prefix, log, changes }, round, withRequirements, execution));
+${laterRound(root, changes, log, prefix, round, part)}
+${laterCycleCompleteness("work")}`;
+  return `${reviewPartLine(part)}\n${byThread(round, thread, log, root, later, () => workReviewFirst(root, { phase, prefix, log, changes }, round, withRequirements, execution, part, since))}`;
 }
-function workReviewFirst(root: RunRoot, names: Readonly<{ phase: number; prefix: string; log: string; changes: string }>, round: number, withRequirements: boolean, execution: WorkExecution): string {
+function workReviewFirst(root: RunRoot, names: Readonly<{ phase: number; prefix: string; log: string; changes: string }>, round: number, withRequirements: boolean, execution: WorkExecution, part: ReviewPart, since: SinceReview): string {
   const { phase, prefix, log, changes } = names;
   const requirements = withRequirements
     ? `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions. Raise an issue when the work contradicts it or omits something it requires of a completed step.\n`
     : "";
-  return `Review the work done in the project since the run began. ${runDir(root)}/${changes} is the diff of the project against its state at the start of the run (new files in full, committed changes included); read it and the project itself. Do not modify any file.
+  const sinceText = sincePreviousText(root, phase, since);
+  const shared = `${LIFECYCLE_CHECK}
+${sinceText === "" ? "" : `${sinceText}\n`}${workEffectReviewRule("work")}
+${completenessDemand("work")}
+${WORK_ACCEPTED_NOT_REPEATED}
+${logRules(root, log, prefix, round, part)}`;
+  const opening = `Review the work done in the project since the run began. ${runDir(root)}/${changes} is the diff of the project against its state at the start of the run (new files in full, committed changes included); read it and the project itself. Do not modify any file.
 Review the work against the plan in ${runDir(root)}/plan.json. ${planStatuses(root)} Steps with status 'done' are implemented; review their work against the plan. Missing work of a step with another status is not an issue.
-${requirements}Raise an issue for work that does not implement a completed step, contradicts the plan or the requirements, or introduces a defect.
+${requirements}`;
+  if (part._tag === "Whole") {
+    return `${opening}Each step with status 'done' is reviewed by a request of its own, in which its own checks are judged. This request reviews every change that no completed step accounts for, and the defects that span steps.
+Raise an issue for work that does not implement a completed step, contradicts the plan or the requirements, or introduces a defect.
 Put the file path, with a line number where it helps, in the location field.
-${WORK_CHECK_CRITERION}
 The check commands execution phase ${phase} reported, per step:
 ${reportedChecksText(execution)}
-${workEffectReviewRule("work")}
-${logRules(root, log, prefix, round)}`;
+${shared}`;
+  }
+  return `${opening}This request reviews one completed step, ${part.id} (${part.label}). Its text in the plan:
+${part.text}
+Review every hunk of ${runDir(root)}/${changes} that implements or touches this step against its text, ${runDir(root)}/plan.json and the requirements, opening any file you need and following a defect into other code that shares its lifecycle.
+Raise an issue for work that does not implement this step, contradicts the plan or the requirements, or introduces a defect.
+Put the file path, with a line number where it helps, in the location field, except where a criterion below says to put the step's id.
+${WORK_CHECK_CRITERION}
+${NAMED_TESTS_CHECK}
+The check commands execution phase ${phase} reported for step ${part.id}:
+${stepChecksText(execution, part.id)}
+${shared}`;
 }
+
+/** Issue #252: the validation repair turn of a part's review whose new ids an earlier part of the cycle raised. */
+export const partCollisionRepairPrompt = (ids: readonly string[], form: string): string =>
+  validationRepairPrompt(
+    [`another request of this review cycle already raised the new issue ids ${ids.join(", ")}`],
+    [`Give each of your new issues an id of the form ${form}1, ${form}2, and so on. Keep the ids of issues from the log that you raise again.`],
+  );
 
 /**
  * The records a read-only work response is given in its prompt, since it can read no file (decision Q1 of the stage-A
@@ -2100,6 +2206,16 @@ Settle what it needed from the task, the requirements, the codebase and ${runDir
 export function execStopRevisionLine(label: string, status: string): string {
   return `${label} stopped with the status ${status}. After the review of the work, Claude Code revises the plan from its own account of the stop, without a question to you.`;
 }
+/**
+ * Issue #252: a code review collects its findings over its cycles before it leaves, so the revision is given every round
+ * of it and asked to correct every issue accepted in them, and to reconsider those not accepted (a review that left at
+ * its limit may have accepted none).
+ */
+const workReviewRevisedText = (root: RunRoot, phase: number, n: number): string => {
+  const round = (k: number): string => `${runDir(root)}/${pathOf({ kind: "round", subject: { work: phase }, round: k })}`;
+  const rounds = n === 1 ? round(1) : `${round(1)} … ${round(n)}`;
+  return `Work review ${phase} ended after cycle ${n}, at the first cycle that raised no new counted issue, at its limit of cycles, or at a user decision: its rounds are ${rounds}, its entries of phase ${phase} are in ${runDir(root)}/${pathOf({ kind: "log", subject: { work: phase } })}, and the user's decisions are the last entries of ${runDir(root)}/user-decisions.md. Correct every issue accepted in those cycles, and reconsider each issue not accepted whose rationale you now find mistaken.`;
+};
 const revisionCauseText = (root: RunRoot, phase: number, cause: RevisionCause): string => {
   switch (cause._tag) {
     case "ExecutionEnded": {
@@ -2107,7 +2223,7 @@ const revisionCauseText = (root: RunRoot, phase: number, cause: RevisionCause): 
       const review =
         cause.workReview === "converged"
           ? `\nWork review ${phase} found no issue in the work so far.`
-          : `\nWork review ${phase} ended in round ${cause.workReview.revisedInRound} with accepted issues or a user decision: ${runDir(root)}/${pathOf({ kind: "round", subject: { work: phase }, round: cause.workReview.revisedInRound })}, ${runDir(root)}/${pathOf({ kind: "log", subject: { work: phase } })} and the last entries of ${runDir(root)}/user-decisions.md.`;
+          : `\n${workReviewRevisedText(root, phase, cause.workReview.revisedInRound)}`;
       return `${stop}${review}`;
     }
     case "SuiteFailed":

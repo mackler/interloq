@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, isTrackerError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped, type NoAnswer, type SendBackUnanswered, type WriteCheck } from "./errors.ts";
 import { heldTrackerEnv, noTrackerQuestion, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
-import { abandonAfterSendBackLine, abandonedRecord, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
+import { lateFindings } from "./lateFindings.ts";
+import { abandonAfterSendBackLine, abandonedRecord, lateFindingsLine, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { type ImplementationEnd, implementationRun, type RefinementEnd, type RefinementSource, refinementRun, run, type UsedPreparation } from "./run.ts";
 import { preparationOf } from "./preparedComments.ts";
 import type { AgentSdk } from "./sdk.ts";
@@ -285,6 +286,21 @@ const programWith = (
         const usage = yield* records.usageLines().pipe(Effect.map(summarizeUsage), Effect.map((s) => renderUsage(s, recordPath(records.root, { kind: "usage" }))), Effect.catch((e) => Effect.succeed(`unavailable: ${describe(e)}`)));
         yield* ui.say(`Usage: ${usage}`);
       });
+    /**
+     * Issue #252: the late-findings line of an implementation run, said and written before its ending's record; a run with
+     * no code review writes none, and a failure is ignored, so the measure never changes an ending.
+     */
+    const measureLine = (records: StoreShape): Effect.Effect<void> =>
+      mode !== "implementation"
+        ? Effect.void
+        : Effect.gen(function* () {
+            const reviews = yield* records.codeReviewRecords();
+            if (reviews.length === 0) return;
+            const { late, total } = lateFindings(reviews);
+            const line = lateFindingsLine(late.length, total);
+            yield* ui.say(line);
+            yield* records.converse(`${line}\n\n`);
+          }).pipe(Effect.ignore);
     /** What the page is told of a halt: HALTED, its reason and the records' directory, then the last two lines. */
     const sayHalt = (reason: string, sessionId: string | null, records: StoreShape): Effect.Effect<void> =>
       Effect.gen(function* () {
@@ -648,6 +664,7 @@ const programWith = (
         if (Exit.isSuccess(exit)) {
           if (exit.value.mode === "implementation") {
             const end = exit.value.end;
+            yield* measureLine(records);
             // Issue #186: a send-back is the run doing what it was asked, so it ends with 0; its line was said by sendBack.
             if (end._tag === "Finished") {
               yield* ui.say(taskFinishedLine(end.phases));
@@ -675,6 +692,7 @@ const programWith = (
         // S24 (the user's decision at the stop of execution phase 1): End the run is an interruption, like Ctrl+C.
         if (error.value._tag === "UserStopped") {
           const item = yield* returnItem("stopped", false);
+          yield* measureLine(records);
           yield* interrupted;
           return yield* conclude((park) => ({ _tag: "Interrupted", park, item }));
         }
@@ -684,6 +702,7 @@ const programWith = (
         if (error.value._tag === "NoAnswer" || error.value._tag === "SendBackUnanswered") {
           const failure = error.value;
           const { park, label } = yield* abandonment(failure);
+          yield* measureLine(records);
           yield* abandonedEnding(failure, yield* sessionId, records);
           return yield* conclude(() => ({ _tag: "Abandoned", reason: describe(failure), park, label }), park);
         }
@@ -692,6 +711,7 @@ const programWith = (
         const failure = error.value;
         const parkedEnding = failure._tag === "NotRefinedStopped" || failure._tag === "SendBackNotParked" || failure._tag === "SendBackIncomplete" ? failure : null;
         const item = parkedEnding === null ? yield* returnItem("halted", false) : null;
+        yield* measureLine(records);
         yield* halted(describe(failure), yield* sessionId, records);
         return yield* conclude((park) => haltedEnding(describe(failure), records.dir, park, item), parkedEnding === null ? undefined : parkedEnding.park);
       }),

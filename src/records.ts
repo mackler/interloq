@@ -99,6 +99,9 @@ export const Baseline = Schema.Struct({
   time: Schema.String,
 });
 export type Baseline = typeof Baseline.Type;
+/** Issue #252: work-review-<k>/tree.json, the tree code review k last read. */
+export const ReviewedTreeFile = Schema.Struct({ version: V2, tree: Schema.NonEmptyString });
+export type ReviewedTreeFile = typeof ReviewedTreeFile.Type;
 
 // ---- decision support ------------------------------------------------------------------------------
 

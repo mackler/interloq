@@ -1,6 +1,6 @@
 // The three subjects of the review procedure.
 
-import { Effect, Result } from "effect";
+import { Effect, Option, Result } from "effect";
 import { phaseOf, recordPath, type RunRoot, type SubjectId } from "./artifacts.ts";
 import { interview } from "./conversation.ts";
 import { termsValidation } from "./termsValidation.ts";
@@ -8,6 +8,7 @@ import { termsValidation } from "./termsValidation.ts";
 export { requestedTermsValidation, termsValidation, withTermsEntry } from "./termsValidation.ts";
 import type { RunError } from "./errors.ts";
 import * as prompts from "./prompts.ts";
+import type { ReviewThread } from "./reviewThread.ts";
 import { renderQuestions, renderTerms, subjectHeading } from "./render.ts";
 import type { ShownDocument } from "./reviewedDocument.ts";
 import { bothValidations, questionsValidation, type Subject, userQuestionsValidation, type Validation } from "./review.ts";
@@ -22,7 +23,7 @@ import { questionProblems } from "./question.ts";
 import { validatePlan } from "./plan.ts";
 import { normalizeQuestionList } from "./schemaNormalize.ts";
 import { analysisTexts, planTexts, questionListTexts, termsTexts } from "./keptCorrections.ts";
-import { Store, Ui } from "./services.ts";
+import { type ReviewedTree, Store, Ui } from "./services.ts";
 import type { VerdictRecord } from "./records.ts";
 import { verdictResponseValidation, verdictValidation } from "./verdictValidation.ts";
 import { issueApplyValidation, issueUpdateValidation, protectionAfterDecisions, protectionAfterResponse } from "./issueUpdate.ts";
@@ -72,13 +73,14 @@ const questionListLoop = (task: string, id: prompts.QuestionListSubject, reviewP
   applyDecisions: { prompt: (root) => prompts.questionApplyDecisionsPrompt(root, id), schema: S.QuestionList, after: (output) => writeQuestions(task, output), validate: questionListValidation() },
   amend: null,
   proceed: prompts.PROCEED_TO_CLARIFICATION,
-  leaveOnAcceptance: false,
+  onAcceptance: "continue",
   leaveOnDecision: false,
   onUnchanged: "corrective",
   // Issue #112: a disagreement here about how a question to the user is worded is settled by the agents; one Claude
   // Code marks as about what the task requires is still the user's (issue #156).
   disputesSettledBy: "agents",
   reviewSchema: S.Review,
+  reviewParts: null,
   prepare: null,
   keepsCorrections: { textsOf: (r) => questionListTexts(r.questions), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
   document: Effect.map(Effect.flatMap(Store, (store) => store.loadQuestions()), (file): ShownDocument => ({ _tag: "Markdown", text: renderQuestions(file, "alt") })),
@@ -133,13 +135,14 @@ export function updateSubject(): Subject<S.UpdateResponse, S.UpdateWrite> {
     },
     amend: null,
     proceed: prompts.PROCEED_WITHOUT_UPDATE,
-    leaveOnAcceptance: false,
+    onAcceptance: "continue",
     leaveOnDecision: false,
     onUnchanged: "corrective",
     // Q4: a disagreement about a fact of the code is settled by the agents; one Claude Code marks as about what the
     // developer asked for is his if Codex raises it again (issue #156).
     disputesSettledBy: "agents",
     reviewSchema: S.Review,
+    reviewParts: null,
     prepare: null,
     keepsCorrections: null,
     document: Effect.gen(function* () {
@@ -174,13 +177,14 @@ export function termsSubject(questions: QuestionsFile["questions"]): Subject<Ter
     applyDecisions: { prompt: prompts.termsApplyDecisionsPrompt, schema: S.TermsWrite, after: (output) => saveTerms(output.entries), validate: termsValidation<TermsWrite>(questions) },
     amend: null,
     proceed: prompts.PROCEED_TO_CLARIFICATION_WITH_TERMS,
-    leaveOnAcceptance: false,
+    onAcceptance: "continue",
     leaveOnDecision: false,
     onUnchanged: "corrective",
     // Issue #112: a disagreement here about how a question to the user is worded is settled by the agents; one Claude
     // Code marks as about what the task requires is still the user's (issue #156).
     disputesSettledBy: "agents",
     reviewSchema: S.Review,
+    reviewParts: null,
     prepare: null,
     keepsCorrections: { textsOf: (r) => termsTexts(r.entries), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
     document: Effect.gen(function* () {
@@ -247,13 +251,14 @@ export function requirementsSubject(): Subject<S.RequirementsResponse, S.Require
         );
       }),
     proceed: prompts.PROCEED_TO_PLANNING,
-    leaveOnAcceptance: false,
+    onAcceptance: "continue",
     leaveOnDecision: false,
     // Issue #47: findingsValidation requires a changed document wherever a finding is answered or corrected, so the
     // unchanged pause arises only where the interviewed findings left the file as it was; its Retry is another interview.
     onUnchanged: "pause",
     disputesSettledBy: "user",
     reviewSchema: S.Review,
+    reviewParts: null,
     prepare: null,
     keepsCorrections: null,
     document: Effect.map(Effect.flatMap(Store, (store) => store.readContext()), ({ requirements }): ShownDocument | null => (requirements === null ? null : { _tag: "Markdown", text: requirements })),
@@ -279,11 +284,12 @@ export function planSubject(root: RunRoot, phase: number, withRequirements: bool
     applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, checks, phase), schema: S.PlanWrite, after: (output) => savePlan(phase, output.plan, previous), validate: bothValidations(planField<PlanWrite>(validate), userQuestionsValidation<PlanWrite>()) },
     amend: null,
     proceed: prompts.PROCEED_TO_IMPLEMENTATION,
-    leaveOnAcceptance: false,
+    onAcceptance: "continue",
     leaveOnDecision: false,
     onUnchanged: "corrective",
     disputesSettledBy: "noWorkEffect",
     reviewSchema: S.EffectReview,
+    reviewParts: null,
     prepare: null,
     keepsCorrections: { textsOf: (r) => planTexts(r.plan), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
     document: Effect.map(Effect.flatMap(Store, (store) => store.readContext()), ({ plan }): ShownDocument | null => (plan === null ? null : { _tag: "Markdown", text: plan })),
@@ -341,11 +347,12 @@ export function decisionSubject(k: number, phase: number, format: string, valida
     applyDecisions: { prompt: (root) => prompts.decisionApplyDecisionsPrompt(root, k), schema: S.DecisionApplied, after: (output) => save(output.analysis), validate: validatingField(validate) },
     amend: null,
     proceed: prompts.PROCEED_TO_CHOICE,
-    leaveOnAcceptance: false,
+    onAcceptance: "continue",
     leaveOnDecision: false,
     onUnchanged: "corrective",
     disputesSettledBy: "user",
     reviewSchema: S.Review,
+    reviewParts: null,
     prepare: null,
     keepsCorrections: { textsOf: (r) => analysisTexts(r.analysis), entriesOf: (r) => r[S.CORRECTION_PASSAGES_FIELD] },
     document: Effect.map(Effect.flatMap(Store, (store) => store.loadAnalysis(k)), (analysis): ShownDocument => ({ _tag: "Analysis", analysis })),
@@ -357,27 +364,44 @@ export function decisionSubject(k: number, phase: number, format: string, valida
  * issue or a user decision leaves for a planning phase; there is no proceed choice; changes.diff is rewritten before
  * every round's review.
  */
-export function workSubject(task: string, phase: number, withRequirements: boolean, execution: prompts.WorkExecution, checks: S.StepChecks): Subject<S.WorkResponse, PlanWrite> {
+/** Issue #252: the earlier code review a code review's change since starts from, as its prompt names it. */
+const sinceOf = (since: ReviewedTree | null): prompts.SinceReview => (since === null ? null : { review: since.review });
+/**
+ * `since` (issue #252): the tree the latest earlier code review read, from which work-review-<phase>/since-previous.diff
+ * is written; null for code review 1 or where none is left. Each cycle is one Codex request over the whole work and one
+ * per step recorded done in plan.json, in plan order.
+ */
+export function workSubject(task: string, phase: number, withRequirements: boolean, execution: prompts.WorkExecution, checks: S.StepChecks, since: ReviewedTree | null): Subject<S.WorkResponse, PlanWrite> {
   const id = { work: phase };
+  const promptOf = (part: prompts.ReviewPart) => (root: RunRoot, round: number, thread: ReviewThread) => prompts.workReviewPrompt(root, phase, round, withRequirements, execution, thread, part, sinceOf(since));
   return {
     id,
     phase: phaseOf(id),
     heading: subjectHeading(id),
     fileLabel: "changes.diff",
-    reviewPrompt: (root, round, thread) => prompts.workReviewPrompt(root, phase, round, withRequirements, execution, thread),
+    reviewPrompt: promptOf({ _tag: "Whole" }),
     respond: { prompt: (root, round, context) => prompts.workRespondPrompt(root, phase, round, context, execution, task), schema: S.WorkResponse, after: null, capability: "readOnly", validate: userQuestionsValidation() },
     // Never issued: leaveOnDecision ends the loop instead of a planning call (G-R1-1); typed as the plan's.
     applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, checks), schema: S.PlanWrite, after: null, validate: null },
     amend: null,
     proceed: null,
-    leaveOnAcceptance: true,
+    // Issue #252 (requirements Q1): every finding of every cycle before it leaves.
+    onAcceptance: "collect",
     leaveOnDecision: true,
     onUnchanged: null,
     disputesSettledBy: "noWorkEffect",
     reviewSchema: S.EffectReview,
+    // Issue #252 (requirements Q2): the whole work first, then each step recorded done; an execution that completed no
+    // step is still reviewed by the whole-work request.
+    reviewParts: Effect.gen(function* () {
+      const plan = yield* (yield* Store).loadPlan();
+      const done = Option.match(plan, { onNone: () => [], onSome: (p) => p.stages.flatMap((stage) => stage.steps.filter((st) => st.status === "done")) });
+      const parts: readonly prompts.ReviewPart[] = [{ _tag: "Whole" }, ...done.map((st): prompts.ReviewPart => ({ _tag: "Step", id: st.id, label: st.label, text: st.text }))];
+      return parts.map((part) => ({ part, prompt: promptOf(part) }));
+    }),
     prepare: Effect.gen(function* () {
       const store = yield* Store;
-      yield* store.changeRecord(phase);
+      yield* store.changeRecord(phase, since);
     }),
     keepsCorrections: null,
     document: Effect.map(Effect.flatMap(Store, (store) => store.readChangeRecord(phase)), (text): ShownDocument => ({ _tag: "Diff", text })),
@@ -412,11 +436,12 @@ export function verdictSubject(n: number, phase: number, phaseRecord: VerdictRec
     applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, S.NO_STEP_CHECKS), schema: S.PlanOnly, after: null, validate: null },
     amend: null,
     proceed: null,
-    leaveOnAcceptance: true,
+    onAcceptance: "leave",
     leaveOnDecision: true,
     onUnchanged: null,
     disputesSettledBy: "user",
     reviewSchema: S.Review,
+    reviewParts: null,
     prepare: null,
     keepsCorrections: null,
     document: Effect.map(Effect.flatMap(Store, (store) => store.loadVerdict(n)), (record): ShownDocument => ({ _tag: "Markdown", text: record.missing })),

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { test } from "node:test";
-import { Cause, Effect, Exit, Option, Result } from "effect";
+import { Cause, Clock, Effect, Exit, Option, Result } from "effect";
 import { branchNameOf, type ParkRecord } from "../src/park.ts";
 import { GitError } from "../src/errors.ts";
 import * as prompts from "../src/prompts.ts";
@@ -13,7 +13,7 @@ import type { StoreShape } from "../src/services.ts";
 import { allocateRunRoot, makeStore } from "../src/store.ts";
 import { compareRecords } from "../src/snapshot.ts";
 import { pathOf, type RunRoot, runRootOf } from "../src/artifacts.ts";
-import { tempRepo , TEST_ROOT } from "./helpers.ts";
+import { steppingClock, tempRepo, TEST_ROOT } from "./helpers.ts";
 
 // Plan step 2.3 (decision Q7; P1-R1-5, P1-R2-1, P1-R2-2, P4-R1-1): the baseline tree at init, the change
 // record before each work-review turn, and the two hashes of the work subject.
@@ -46,7 +46,7 @@ test("init records the baseline tree, and the change record holds new, modified 
   write(repo, "a.txt", "x\nmodified\n");
   write(repo, "b.txt", "b\ncommitted later\n");
   commit(repo, "after init");
-  await run(store.changeRecord(1));
+  await run(store.changeRecord(1, null));
   const diff = changes(repo);
   assert.match(diff, /\+brand new/, "the new file is not in the diff");
   assert.match(diff, /\+modified/);
@@ -71,7 +71,7 @@ test("the change record leaves out ignorePaths literally and keeps tracked files
   write(repo, "src/[rs]*.ts", "literal\nchanged\n");
   write(repo, "tracked.log", "log\nchanged\n");
   write(repo, ".devcontainer/claude.json", "{}\n");
-  await run(store.changeRecord(1));
+  await run(store.changeRecord(1, null));
   const diff = changes(repo);
   assert.match(diff, /src\/run\.ts/, "a file matching the ignorePaths entry as a pattern was left out");
   assert.doesNotMatch(diff, /\[rs\]\*/, "the literal ignorePaths entry is in the diff");
@@ -87,12 +87,12 @@ test("changeRecord rewrites the file; fileHash of the work subject follows the p
   await run(store.writeBaseline());
   const before = await run(store.fileHash({ work: 1 }));
   write(repo, "a.txt", "x\nfirst\n");
-  await run(store.changeRecord(1));
+  await run(store.changeRecord(1, null));
   const first = await run(store.fileHash({ work: 1 }));
   assert.notEqual(first, before);
   assert.equal(await run(store.recordHash({ work: 1 })), await run(store.recordHash({ work: 1 })));
   write(repo, "a.txt", "x\nsecond\n");
-  await run(store.changeRecord(1));
+  await run(store.changeRecord(1, null));
   assert.match(changes(repo), /\+second/);
   // An edit of changes.diff itself changes recordHash but not fileHash (P1-R2-2).
   const hashes = { file: await run(store.fileHash({ work: 1 })), record: await run(store.recordHash({ work: 1 })) };
@@ -344,7 +344,7 @@ test("every write of the Store to a guarded record is in its journal, with the e
     ["converse", store.converse("a line\n")],
     ["recordUsage", store.recordUsage({ agent: "codex", thread: "t", inputTokens: 1, outputTokens: 1 })],
     ["checkpoint", store.checkpoint({ subject: "run", phase: 0, round: 0, stage: "started" })],
-    ["changeRecord", store.changeRecord(1)],
+    ["changeRecord", store.changeRecord(1, null)],
     ["saveInvalidReply", store.saveInvalidReply("claude", "x")],
     ["openDecision", store.openDecision({ phase: { kind: "planning", n: 1 }, label: "Planning", question: "q?", options: [] } as never)],
     ["saveAnalysisWrite", store.saveAnalysisWrite(1, {} as never)],
@@ -794,4 +794,76 @@ test("concurrent writes of one record each succeed, the record ending as one of 
   }
   const leftovers = fs.readdirSync(path.join(repo, "plan-review", TEST_ROOT)).filter((f) => f.includes(".tmp-"));
   assert.deepEqual(leftovers, []);
+});
+
+// Issue #252, S5: the tree a code review read, the change since the latest earlier one, a part's raw reply, and trees
+// built at once.
+const recordFile = (repo: string, name: string): string => path.join(repo, "plan-review", TEST_ROOT, name);
+test("issue #252: changeRecord writes the tree it diffed to, and with no earlier review no since-previous.diff", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  await run(store.writeBaseline());
+  write(repo, "a.txt", "x\nfirst\n");
+  await run(store.changeRecord(1, null));
+  const recorded = JSON.parse(fs.readFileSync(recordFile(repo, "work-review-1/tree.json"), "utf8"));
+  assert.equal(recorded.version, 2);
+  const baseline = JSON.parse(fs.readFileSync(recordFile(repo, "baseline.json"), "utf8"));
+  assert.equal(git(repo, "diff", "--no-color", "--no-ext-diff", baseline.tree, recorded.tree), changes(repo));
+  assert.ok(!fs.existsSync(recordFile(repo, "work-review-1/since-previous.diff")));
+});
+
+test("issue #252: reviewedTreeBefore finds code review 1's tree, and the change since it holds the later edit alone", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  await run(store.writeBaseline());
+  write(repo, "a.txt", "x\nfirst\n");
+  await run(store.changeRecord(1, null));
+  write(repo, "b.txt", "second\n");
+  const since = await run(store.reviewedTreeBefore(2));
+  const tree1 = JSON.parse(fs.readFileSync(recordFile(repo, "work-review-1/tree.json"), "utf8")).tree;
+  assert.deepEqual(since, { review: 1, tree: tree1 });
+  await run(store.changeRecord(2, since));
+  const sinceDiff = fs.readFileSync(recordFile(repo, "work-review-2/since-previous.diff"), "utf8");
+  assert.match(sinceDiff, /\+second/);
+  assert.doesNotMatch(sinceDiff, /\+first/);
+  assert.match(changes(repo, 2), /\+first/);
+  assert.match(changes(repo, 2), /\+second/);
+});
+
+test("issue #252: a recorded tree git lacks is skipped for an older review; with none the result is null", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  await run(store.writeBaseline());
+  await run(store.changeRecord(1, null));
+  const tree1 = JSON.parse(fs.readFileSync(recordFile(repo, "work-review-1/tree.json"), "utf8")).tree;
+  fs.mkdirSync(recordFile(repo, "work-review-2"), { recursive: true });
+  fs.writeFileSync(recordFile(repo, "work-review-2/tree.json"), JSON.stringify({ version: 2, tree: "0".repeat(40) }));
+  assert.deepEqual(await run(store.reviewedTreeBefore(3)), { review: 1, tree: tree1 });
+  fs.writeFileSync(recordFile(repo, "work-review-1/tree.json"), "not json");
+  assert.equal(await run(store.reviewedTreeBefore(3)), null);
+  assert.equal(await run(store.reviewedTreeBefore(1)), null);
+});
+
+test("issue #252: a part's raw reply is written beside the cycle's review", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  await run(store.saveRawReply({ work: 1 }, 1, { reviewPart: "step-S2" }, { issues: [] }));
+  assert.ok(fs.existsSync(recordFile(repo, "work-review-1/review-1-step-S2.json")));
+});
+
+test("issue #252: two trees built at the same instant share no temporary file", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  await run(store.writeBaseline());
+  write(repo, "a.txt", "x\nchanged\n");
+  const { clock } = steppingClock(1_000);
+  const [a, b] = await run(Effect.all([store.fileHash({ work: 1 }), store.fileHash({ work: 1 })], { concurrency: "unbounded" }).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(a, b);
+  assert.notEqual(a, "");
+  assert.deepEqual(fs.readdirSync(path.join(repo, ".git")).filter((n) => n.startsWith("plan-review-index") || n.startsWith("plan-review-pathspecs")), []);
 });

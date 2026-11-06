@@ -18,12 +18,15 @@ test("issue #245: a step's check reported at 137 s, with nothing else wrong, lea
     steps: [{ output: { questions_for_user: [] }, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [{ ...finished, checks: [{ step: "S1", command: "npm run check", seconds: 137, selection: false, counts: null }] }],
+    // Issue #252: the step recorded done, so its own part of the code review judges its checks.
+    execScripts: [{ reports: [["S1", "started"], ["S1", "done"]] }],
   });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
   assert.equal(probe.ui.notified.filter((e) => e._tag === "PhaseBegan" && e.phase.kind === "planning").length, 1);
   assert.deepEqual(presentedQuestions(probe.ui), []);
   assert.equal(probe.reviewer.prompts.length, 2);
-  const workReview = probe.reviewer.prompts[1];
+  assert.equal(probe.reviewer.partPrompts.length, 1, "issue #252: one request for the step S1");
+  const workReview = probe.reviewer.partPrompts[0]!;
   assert.ok(workReview.includes(WORK_CHECK_CRITERION));
   assert.ok(workReview.includes("`npm run check`"));
   assert.ok(!workReview.includes("137"), workReview.slice(-800));

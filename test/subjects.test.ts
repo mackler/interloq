@@ -24,7 +24,7 @@ test("the type of a subject's handler follows the type of its schema (compile-ti
     applyDecisions: { prompt: "p", schema: S.QuestionList, after: (output: S.ExecOutcome) => Effect.sync(() => void output), validate: null },
     amend: null,
     proceed: "go",
-    leaveOnAcceptance: false,
+    onAcceptance: "continue",
     leaveOnDecision: false,
     prepare: null,
   };
@@ -46,19 +46,19 @@ test("the question subject's handlers receive the decoded list and write questio
 
 // Plan step 2.7: the work subject carries the work review's policies; the other subjects keep today's behaviour.
 test("the work subject: its id, file, prompts and policies", () => {
-  const work = workSubject("t", 2, true, workExecution, NO_STEP_CHECKS);
+  const work = workSubject("t", 2, true, workExecution, NO_STEP_CHECKS, null);
   assert.deepEqual(work.id, { work: 2 });
   assert.equal(work.heading, "Work review 2");
   assert.equal(work.fileLabel, "changes.diff");
   assert.match(work.reviewPrompt(TEST_ROOT, 1, "continued"), /work-review-2\/changes\.diff/);
   assert.match(work.respond.prompt(TEST_ROOT, 1, { review: { issues: [] }, log: [], records: { changes: "", requirements: null, decisions: "" } }), /work-review-2\/review-1\.json/);
-  assert.deepEqual([work.proceed, work.leaveOnAcceptance, work.leaveOnDecision, work.amend], [null, true, true, null]);
+  assert.deepEqual([work.proceed, work.onAcceptance, work.leaveOnDecision, work.amend], [null, "collect", true, null]);
   assert.notEqual(work.prepare, null);
   assert.equal(work.respond.capability, "readOnly", "a work response is read-only (finding 1 of docs/gui-review.md)");
   for (const other of [planSubject(TEST_ROOT, 1, true, null, NO_STEP_CHECKS), questionSubject("t"), requirementsSubject()]) {
     assert.equal(other.respond.capability, "records");
     assert.equal(typeof other.proceed, "string");
-    assert.deepEqual([other.leaveOnAcceptance, other.leaveOnDecision, other.prepare], [false, false, null]);
+    assert.deepEqual([other.onAcceptance, other.leaveOnDecision, other.prepare], ["continue", false, null]);
   }
 });
 
@@ -71,5 +71,5 @@ test("the proceed choices name the clarification and implementation", () => {
 
 // Decision support, plan step 1.3: a subject carries the phase its loop records (a decision's is where it took place).
 test("every subject carries its phase", () => {
-  assert.deepEqual([questionSubject("t").phase, requirementsSubject().phase, planSubject(TEST_ROOT, 3, false, null, NO_STEP_CHECKS).phase, workSubject("t", 2, false, workExecution, NO_STEP_CHECKS).phase], [0, 0, 3, 2]);
+  assert.deepEqual([questionSubject("t").phase, requirementsSubject().phase, planSubject(TEST_ROOT, 3, false, null, NO_STEP_CHECKS).phase, workSubject("t", 2, false, workExecution, NO_STEP_CHECKS, null).phase], [0, 0, 3, 2]);
 });

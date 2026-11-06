@@ -40,6 +40,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Effect.forkChild` | 16373 | `(self) => Effect<Fiber<A, E>, never, R>` (v3 `fork`; there is no `Effect.fork` in v4) |
 | `Effect.forkDetach` (read 26 Sep, web GUI stage 3.3) | 16529 | `forkDetach(options?: { startImmediately?, uninterruptible? })` or `forkDetach(effect, options?)` → `Effect<Fiber<A, E>, never, R>`: the fiber is attached to the global scope and outlives the fiber that forked it (the run manager's runs). **Observed**: without `startImmediately: true`, a fiber interrupted before it first ran never runs its `onExit`; the manager starts it at once |
 | `Effect.forEach(items, f, { discard: true })` (read 26 Sep, web GUI stage 3.3) | 939 | runs `f` for every item in order; with `discard: true` the result is `void` (the run manager's broadcast) |
+| `Effect.forEach(items, f, { concurrency: "unbounded" })` (read 6 Nov 2026, issue #252) | 939 | runs `f` for every item at once and returns the results in the items' order; a failure of one interrupts the others: the parts of a code review's cycle in `reviewLoop` (src/review.ts) |
 | `Effect.asVoid` (read 26 Sep, web GUI stage 3.3) | 3823 | `(self) => Effect<void, E, R>` |
 | `Effect.runFork` | 16662 | `(effect: Effect<A, E, never>, options?: RunOptions) => Fiber<A, E>` |
 | `Effect.runPromise` | 16833 | `(effect: Effect<A, E>, options?: RunOptions) => Promise<A>` |

@@ -383,7 +383,7 @@ test("every subject's response, as its own schema decodes it, survives the round
     { subject: "requirements" as const, schema: requirementsSubject().respond.schema, example: { ...plannerResponse, findings: [], requirements: null } },
     // Issue #6: the plan's response carries the whole plan.
     { subject: { plan: 1 }, schema: planSubject(TEST_ROOT, 1, true, null, NO_STEP_CHECKS).respond.schema, example: { ...effectResponse, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "x" }] }] } } },
-    { subject: { work: 1 }, schema: workSubject("t", 1, true, workExecution, NO_STEP_CHECKS).respond.schema, example: effectResponse },
+    { subject: { work: 1 }, schema: workSubject("t", 1, true, workExecution, NO_STEP_CHECKS, null).respond.schema, example: effectResponse },
     // W2-R1-1: a decision's response carries the amended analysis.
     { subject: { decision: 1 }, schema: decisionResponseSchema, example: { ...plannerResponse, analysis: decisionAnalysis } },
     // Issue #216: Bring Up to Date's response carries the issue brought up to date; the page stopped on it, 2 Nov 2026.

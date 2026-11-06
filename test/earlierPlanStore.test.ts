@@ -86,7 +86,7 @@ test("an adopted baseline: the change record holds what was committed since it, 
   await run(store.init("task"));
   await run(store.adoptBaseline(baseline));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(store.dir, "baseline.json"), "utf8")), { ...baseline, start_commit: git(repo, "rev-parse", "HEAD").trim() });
-  await run(store.changeRecord(1));
+  await run(store.changeRecord(1, null));
   const diff = fs.readFileSync(path.join(store.dir, "work-review-1", "changes.diff"), "utf8");
   assert.ok(diff.includes("committed between the runs") && diff.includes("left by the earlier run"), diff);
   assert.deepEqual(await run(store.uncommittedSinceStart()), { _tag: "Uncommitted", paths: ["left.txt"] });

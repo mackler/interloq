@@ -261,8 +261,8 @@ test("seam: the plan's and the work's subjects review with the effect review, ev
   const { planSubject, workSubject, questionSubject, termsSubject, requirementsSubject, decisionSubject } = await import("../src/subjects.ts");
   const execution = { outcome: { status: "finished" as const, summary: "s", question: "", remainingWork: "", userInput: null, checks: [] }, plan: "p" };
   assert.equal(planSubject(TEST_ROOT, 1, false, null, S.NO_STEP_CHECKS).reviewSchema, S.EffectReview);
-  assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS).reviewSchema, S.EffectReview);
-  assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS).respond.schema, S.WorkResponse);
+  assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS, null).reviewSchema, S.EffectReview);
+  assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS, null).respond.schema, S.WorkResponse);
   for (const subject of [questionSubject("t"), termsSubject([]), requirementsSubject(), decisionSubject(1, 1, "f", (a) => Effect.succeed({ value: a, notes: [] }) as never)]) assert.equal(subject.reviewSchema, S.Review, subject.heading);
 });
 

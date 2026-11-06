@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Result } from "effect";
 import { platformLayer } from "../src/platform.ts";
-import { limitNoProceedPrompt, execStopRevisionLine, planApplyDecisionsPrompt, withOffer, UNEXPLAINED_CHANGE_HEADING } from "../src/prompts.ts";
+import { collectedLimitLine, limitNoProceedPrompt, execStopRevisionLine, planApplyDecisionsPrompt, withOffer, UNEXPLAINED_CHANGE_HEADING } from "../src/prompts.ts";
 import { readCheckpoint } from "../src/records.ts";
 import { subjectHeading } from "../src/render.ts";
 import type { ExecOutcome } from "../src/schema.ts";
@@ -66,17 +66,18 @@ test("(b) an accepted work issue leads to planning 2, execution 2 and a second w
   const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
   });
   assert.equal(await runTask(layer), 2);
-  assert.match(probe.planner.prompts[2], /Work review 1 ended in round 1/);
+  assert.match(probe.planner.prompts[2], /Work review 1 ended after cycle 2/);
   assert.match(probe.planner.prompts[2], /work-review-1\/round-1\.json/);
   assert.ok(!probe.planner.prompts.includes(planApplyDecisionsPrompt(TEST_ROOT, NO_STEP_CHECKS)), "a work review applied decisions with a planning call");
   assert.deepEqual(workLog(probe.dir).map((e) => [e.id, e.action]), [["W1-R1-1", "accepted"]]);
   // Issue #31, Q7: the work review is not measured.
   assert.deepEqual(json(probe.dir, "work-review-log.json").entries.map((e: { file_change: unknown }) => e.file_change), [null]);
-  assert.equal((await capture.verify())?.stage, "logged");
+  // Issue #252: the review collects, and leaves after cycle 2, which raised nothing.
+  assert.equal((await capture.verify())?.stage, "reviewed");
 });
 
 // Issue #117: the execution ran in a session of its own; the work response, in another of its own (issue #122), is given its report.
@@ -84,7 +85,7 @@ test("issue #117: the work response's prompt carries the summary the execution, 
   const done: ExecOutcome = { ...finished, summary: "the scripted summary of execution 1", remainingWork: "nothing left" };
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, planWrite("v2")],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [done, finished],
   });
   assert.equal(await runTask(layer), 2);
@@ -104,12 +105,12 @@ test("(b2) an accepted self-correction of an earlier work issue leaves for plann
   const self = { self_corrections: [{ id: "W1-R1-1", new_action: "accepted" as const, explanation: "the earlier issue is valid", concern: "c", remedy: "r", resolution: null }] };
   const { layer, probe } = testLayer(repo, {
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]], self) }, { ...planWrite("v2"), onCall: capture.onCall }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
   });
   assert.equal(await runTask(layer), 2);
   assert.ok(workLog(probe.dir).some((e) => e.source === "self_correction" && e.id === "W1-R1-1" && e.action === "accepted"));
-  assert.equal((await capture.verify())?.stage, "logged");
+  assert.equal((await capture.verify())?.stage, "reviewed");
 });
 
 test("(b3) changes.diff is rewritten for every round: an outside change, recorded and not asked (issue #208), is in round 2's file", async () => {
@@ -201,17 +202,16 @@ test("(d) an empty decision at the idle pause continues the work review", async 
   assert.equal(probe.reviewer.prompts.length, 3);
 });
 
-test("(e) the round limit of a work review has no p, and p stops the run", async () => {
+test("(e) issue #252: a work review at its round limit leaves for planning with no question, extending nothing", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: [{ beside: "p" }],
     config: { maxRounds: 1, maxIdleRounds: 5 },
-    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]]) }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }],
-    execs: [finished],
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, planWrite("v2")],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
   });
-  await runFails(layer, "RoundLimitStop", /Work review 1/);
-  // Decision support (decision Q6): Stop or more cycles is a choice, so it carries the offer.
-  assert.equal(probe.ui.asked[0], withOffer(limitNoProceedPrompt));
+  assert.equal(await runTask(layer), 2);
+  assert.ok(!probe.ui.asked.includes(withOffer(limitNoProceedPrompt)), "no limit question");
+  assert.ok(read(probe.dir, "conversation.md").includes(collectedLimitLine("Work review 1", 1)));
 });
 
 test("(f) a Codex turn of the work review that changes the project halts with ProjectChanged", async () => {
@@ -270,12 +270,12 @@ test("(j) an aborted execution asks nothing: the work review runs, then planning
 test("(k) a stop and a work review that leaves with revise: planning 2's prompt names both", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, planWrite("v2")],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [stop("needs_input", "PostgreSQL"), finished],
   });
   assert.equal(await runTask(layer), 2);
   assert.match(probe.planner.prompts[2], /user's input for this stop/);
-  assert.match(probe.planner.prompts[2], /Work review 1 ended in round 1/);
+  assert.match(probe.planner.prompts[2], /Work review 1 ended after cycle 2/);
 });
 
 // Stage A (finding 1 of docs/gui-review.md): a work response is read-only. The hook denies the edit (test/claude.test.ts);
@@ -389,7 +389,7 @@ test("(h, #26) a read-only work response whose retries are exhausted, then Retry
   // Issue #243: the exhaustion's question is beside further tries, without Help me decide.
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [planWrite("v1"), rejectingResponse({ fault }), rejectingResponse({ fault }), rejectingResponse()],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     answers: [{ beside: prompts.TRANSPORT_ANSWERS.retry }],
     config: quick,
@@ -433,7 +433,7 @@ test("issue #122: the work response's prompt carries the task, the run's require
   const requirements = Result.getOrThrow(refinementOf("# Requirements\n\nThe confirmed requirement R1."));
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, planWrite("v2")],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [stop("needs_input", "PostgreSQL"), finished],
   });
   assert.deepEqual(await Effect.runPromise(implementationRun(task, scriptedItem.id, requirements, NO_STEP_CHECKS).pipe(Effect.provide(layer))), { _tag: "Finished", phases: 2 });

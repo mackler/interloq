@@ -227,7 +227,8 @@ export const SCENARIOS: Record<string, TestOptions> = {
   // review run a second time, and the second work review converges.
   workCorrection: {
     steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }, { output: respond([["W1-R1-1", "accepted"]]) }, { output: noQuestions, plan: "1. [x] the step\n2. [ ] the fix\n" }],
-    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1", "The step misses its test.")] }, { issues: [] }, { issues: [] }],
+    // Issue #252: the work review collects, so a cycle that raises nothing follows the accepted one before it leaves.
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1", "The step misses its test.")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
   },
   // Two decisions in a row, for two tabs and a dropped connection.

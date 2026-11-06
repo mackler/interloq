@@ -803,7 +803,9 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       const work = yield* Effect.gen(function* () {
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "work", n: k } });
         yield* ui.say(workReviewBeganLine(label("work", k)));
-        return yield* reviewLoop(workSubject(task, k, withRequirements, execution.work, checks));
+        // Issue #252: the tree the latest earlier code review read, from which this review's change since is written.
+        const since = yield* store.reviewedTreeBefore(k);
+        return yield* reviewLoop(workSubject(task, k, withRequirements, execution.work, checks, since));
       }).pipe(ownSession, inPhase({ kind: "work", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: work.result });
       // The run is finished only when Claude Code reported finished and the work review converged, then, where the

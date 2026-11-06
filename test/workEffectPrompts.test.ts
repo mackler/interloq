@@ -9,7 +9,7 @@ import * as S from "../src/schema.ts";
 import { TEST_ROOT, workExecution, issue } from "./helpers.ts";
 
 const KINDS = S.WorkEffectReply.members.map((m) => m.fields.kind.literal);
-const work = (round: number, thread: "continued" | "new") => prompts.workReviewPrompt(TEST_ROOT, 1, round, false, workExecution, thread);
+const work = (round: number, thread: "continued" | "new") => prompts.workReviewPrompt(TEST_ROOT, 1, round, false, workExecution, thread, { _tag: "Whole" }, null);
 const plan = (round: number, thread: "continued" | "new") => prompts.planReviewPrompt(TEST_ROOT, 1, round, false, S.NO_STEP_CHECKS, thread);
 
 test("the rules name the field and both kinds as the schema has them", () => {

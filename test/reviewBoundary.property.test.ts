@@ -40,7 +40,7 @@ const arbSetup: fc.Arbitrary<ReviewSetup> = fc
     idNumber: 1,
     proceed: leave ? null : "proceed",
     hasAmend: onUnchanged === "pause",
-    leaveOnAcceptance: leave,
+    onAcceptance: leave ? "leave" : "continue",
     leaveOnDecision: leave,
     onUnchanged: leave ? null : onUnchanged,
     disputesSettledBy,
@@ -163,7 +163,7 @@ test("property: with no answer given, nothing waits, and the loop ends converged
     fc.property(arbSetup, fc.array(arbRound, { minLength: 1, maxLength: 25 }), (setup, rounds) => {
       const { finished, last, problems } = drive(setup, rounds, null);
       assert.deepEqual(problems, []);
-      if (setup.leaveOnAcceptance && finished === "revise") return;
+      if (setup.onAcceptance === "leave" && finished === "revise") return;
       assert.equal(finished, "converged");
       assert.equal(last, rounds.length + 1, "converged at the review with no counted issue");
     }),

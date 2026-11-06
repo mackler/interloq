@@ -345,12 +345,13 @@ const WA = "W1-R2-1";
 const workLog = (dir: string): S.LogEntry[] => JSON.parse(read(dir, "work-review-log.json")).entries;
 const workRejects = (resolution: { text: string; changes: string[] } | null) => ({ ...respond([[W, "rejected"]]), dispositions: respond([[W, "rejected"]]).dispositions.map((d) => ({ ...d, resolution })) });
 
-test("(13) an investigated work dispute beside an accepted correction leaves for planning, and the next work review asks it at once", async () => {
+// Issue #252: the work review collects, so a dispute beside an accepted correction is asked in the same review's next cycle.
+test("(13) an investigated work dispute beside an accepted correction is asked when the next cycle raises it again, and the review then leaves for planning", async () => {
   const round2 = { ...respond([[W, "rejected"], [WA, "accepted"]]), dispositions: [...workRejects({ text: "keep it behind a check", changes: [] }).dispositions, ...respond([[WA, "accepted"]]).dispositions] };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: [{ beside: "2" }],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: workRejects(null) }, { output: round2 }, { output: noQuestions, plan: "v2" }, { output: workRejects(null) }],
-    reviews: [{ issues: [] }, { issues: [issue(W)] }, { issues: [issue(W), issue(WA)] }, { issues: [] }, { issues: [{ ...issue(W), evidence: "the check does not meet the concern" }] }, { issues: [] }, { issues: [] }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: workRejects(null) }, { output: round2 }, { output: workRejects(null) }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [issue(W)] }, { issues: [issue(W), issue(WA)] }, { issues: [{ ...issue(W), evidence: "the check does not meet the concern" }] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
     config: { maxIdleRounds: 9 },
   });
@@ -359,7 +360,7 @@ test("(13) an investigated work dispute beside an accepted correction leaves for
   const recorded = workLog(probe.dir).find((e) => e.id === W && e.source === "review" && e.round === 2);
   assert.deepEqual(recorded?.source === "review" ? recorded.investigations : null, [{ pause: "reraised", other: null }]);
   const asked = disputes(probe.ui);
-  assert.equal(asked.length, 1, "asked once, in work review 2");
+  assert.equal(asked.length, 1, "asked once, in cycle 3 of work review 1");
   assert.equal(pauseOf(asked[0]), "reraised");
   assert.equal(asked[0]!.options.length, 3, "with the third option from the entry's resolution");
   assert.ok(blocksText(asked[0]!.attached?.blocks ?? []).join("\n").includes("the check does not meet the concern"), "with that review's evidence");

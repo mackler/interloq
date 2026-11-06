@@ -69,7 +69,8 @@ const ITEM_81 = {
   rationale: "The step's text runs every script test that names a changed file, and it did; running them cost only time.",
 };
 
-test("item #81 (W1-R1-4): raised again in the next work review with no effect stated by either agent, it is settled without a pause", async () => {
+// Issue #252: the work review collects, so the point is raised again in the same review's next cycle.
+test("item #81 (W1-R1-4): raised again in the next cycle of the work review with no effect stated by either agent, it is settled without a pause", async () => {
   const defect = stated("W1-R1-1", "The token check accepts an expired token.", "e", differs("gateway/check.ts changes"));
   const point = stated("W1-R1-4", ITEM_81.problem, ITEM_81.evidence, NONE);
   const { wiring, probe } = testWiring(tempRepo(), {
@@ -77,10 +78,10 @@ test("item #81 (W1-R1-4): raised again in the next work review with no effect st
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: response(disposed("W1-R1-1", "accepted", "Correct it.", differs("x")), disposed("W1-R1-4", "rejected", ITEM_81.rationale, NONE)) },
-      { output: noQuestions, plan: "v2" },
       { output: response(disposed("W1-R1-4", "rejected", ITEM_81.rationale, NONE)) },
+      { output: noQuestions, plan: "v2" },
     ],
-    reviews: [{ issues: [] }, { issues: [defect, point] }, { issues: [] }, { issues: [point] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [defect, point] }, { issues: [point] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished],
   });
   assert.equal(await runOf(wiring, probe.project), 0);
