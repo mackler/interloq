@@ -819,8 +819,13 @@ const holdingClock = (held: (ms: number) => boolean) => {
 };
 /** The usage-limit wait, an hour away: the only sleep of these scripts longer than ten minutes. */
 const LONG_SLEEP = (ms: number) => ms > 600_000;
+// The four W1-R1-1 tests' bound exists to catch a wait that never ends: each wait is held
+// on the clock and ends only by the answer, and a test that hangs without a bound would run
+// to the runner's own limit. It is sized for the whole suite's load, since in issue #219's
+// suite run 3 this group ran at two to three times its idle time and one test passed 5 s.
+const LOADED_TIMEOUT_MS = 30_000;
 
-test("W1-R1-1: Stop answered during a usage-limit wait after the question opened: AgentUnreachable at once, no further attempt, the wait recorded interrupted", { timeout: 5_000 }, async () => {
+test("W1-R1-1: Stop answered during a usage-limit wait after the question opened: AgentUnreachable at once, no further attempt, the wait recorded interrupted", { timeout: LOADED_TIMEOUT_MS }, async () => {
   const { clock, reached } = holdingClock(LONG_SLEEP);
   const { layer, conversation, usage } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop, when: () => reached.promise }]);
   const { calls, attempt } = openThen(limited(START + 3_600_000));
@@ -832,7 +837,7 @@ test("W1-R1-1: Stop answered during a usage-limit wait after the question opened
   assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => l.outcome), ["interrupted"]);
 });
 
-test("W1-R1-1: Stop answered during a network wait after the question opened: AgentUnreachable at once, no further attempt", { timeout: 5_000 }, async () => {
+test("W1-R1-1: Stop answered during a network wait after the question opened: AgentUnreachable at once, no further attempt", { timeout: LOADED_TIMEOUT_MS }, async () => {
   const { clock, reached } = holdingClock((ms) => ms === networkMs(1));
   const { layer } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.stop, when: () => reached.promise }]);
   const { calls, attempt } = openThen(fault("read ECONNRESET", "ECONNRESET"));
@@ -841,7 +846,7 @@ test("W1-R1-1: Stop answered during a network wait after the question opened: Ag
   assert.deepEqual(calls, [1, 2, 3, 4]);
 });
 
-test("W1-R1-1: q answered during a usage-limit wait after the question opened: UserStopped at once", { timeout: 5_000 }, async () => {
+test("W1-R1-1: q answered during a usage-limit wait after the question opened: UserStopped at once", { timeout: LOADED_TIMEOUT_MS }, async () => {
   const { clock, reached } = holdingClock(LONG_SLEEP);
   const { layer } = await setup([{ beside: "q", when: () => reached.promise }]);
   const { calls, attempt } = openThen(limited(START + 3_600_000));
@@ -850,7 +855,7 @@ test("W1-R1-1: q answered during a usage-limit wait after the question opened: U
   assert.deepEqual(calls, [1, 2, 3, 4]);
 });
 
-test("W1-R1-1: Retry again answered during a usage-limit wait: the question closed, the counters reset, the next attempt at once", { timeout: 5_000 }, async () => {
+test("W1-R1-1: Retry again answered during a usage-limit wait: the question closed, the counters reset, the next attempt at once", { timeout: LOADED_TIMEOUT_MS }, async () => {
   const { clock, reached } = holdingClock(LONG_SLEEP);
   const { layer, ui, conversation } = await setup([{ beside: prompts.TRANSPORT_ANSWERS.retry, when: () => reached.promise }]);
   const { calls, attempt } = openThen(limited(START + 3_600_000), ["fault", "ok"]);
