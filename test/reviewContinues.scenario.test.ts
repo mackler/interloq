@@ -235,9 +235,14 @@ test("(10) Stop at the limit answered during the final review, which raises noth
 
 /** The run's Asked events with the given field set. */
 const askedWith = (events: readonly RunEvent[], field: "beside" | "deciding") => events.flatMap((e) => (e._tag === "Asked" && e[field] !== null ? [e] : []));
-const until = async (condition: () => boolean): Promise<void> => {
-  for (let i = 0; i < 2000 && !condition(); i++) await sleep(5);
-  if (!condition()) throw new Error("the condition never held");
+/** Polls until the condition holds, giving up only after a deadline generous enough for the whole suite's load. */
+const UNTIL_DEADLINE_MS = 120_000;
+const until = async (condition: () => boolean, what = "the condition"): Promise<void> => {
+  const deadline = Date.now() + UNTIL_DEADLINE_MS;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`${what} never held within ${UNTIL_DEADLINE_MS} ms`);
+    await sleep(5);
+  }
 };
 /** A plan review at its limit after cycle 1, its cycle 2 held, the limit answered Help me decide and its analysis held. */
 const decidingAtLimit = async () => {
@@ -257,11 +262,11 @@ const decidingAtLimit = async () => {
     config: { maxRounds: 1 },
   });
   const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
-  await until(() => askedWith(events, "beside").length > 0);
+  await until(() => askedWith(events, "beside").length > 0, "the limit's question beside the review");
   const limit = askedWith(events, "beside")[0]!;
   assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/decide")), "taken");
   await analysisCalled.promise;
-  await until(() => askedWith(events, "deciding").length > 0);
+  await until(() => askedWith(events, "deciding").length > 0, "the analysis's deciding prompt");
   return { events, ui, review2, fiber, probe, analysisPrompt: askedWith(events, "deciding")[0]!.prompt };
 };
 
@@ -271,14 +276,14 @@ test("(15) with the web Ui: 0 answered while the limit's analysis is prepared, t
   d.review2.resolve();
   const exit = await Effect.runPromise(Fiber.await(d.fiber));
   assert.ok(exit._tag === "Failure" && String(exit.cause).includes("RoundLimitStop"), String(exit));
-  await until(() => fs.existsSync(path.join(d.probe.dir, "decision-1", "chosen.json")));
+  await until(() => fs.existsSync(path.join(d.probe.dir, "decision-1", "chosen.json")), "decision 1's chosen.json");
   assert.ok(conversation(d.probe.dir).includes(prompts.decisionAbandonedLine(1)));
 });
 
 test("(16) review P1-R6-1: the plan review ending while the limit's analysis is prepared cancels the analysis's prompt; the page then has no pending prompt and no deciding entry", async () => {
   const d = await decidingAtLimit();
   d.review2.resolve();
-  await until(() => d.events.some((e) => e._tag === "Notified" && e.event._tag === "PhaseBegan" && e.event.phase.kind === "execution"));
+  await until(() => d.events.some((e) => e._tag === "Notified" && e.event._tag === "PhaseBegan" && e.event.phase.kind === "execution"), "execution phase 1's start");
   assert.ok(d.events.some((e) => e._tag === "PromptCancelled" && e.prompt === d.analysisPrompt));
   const view = d.events.reduce((r, event) => foldEvent(r, { time: "2026-11-04T00:00:00.000Z", event }), emptyRun(1));
   assert.equal(view.pending, null);
@@ -308,13 +313,13 @@ test("(16a) W2-R2-2: the plan review ending after the limit's analysis finished,
     config: { maxRounds: 1 },
   });
   const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
-  await until(() => askedWith(events, "beside").length > 0);
+  await until(() => askedWith(events, "beside").length > 0, "the limit's question beside the review");
   const limit = askedWith(events, "beside")[0]!;
   assert.equal(await Effect.runPromise(webUi.answer(limit.prompt, "/decide")), "taken");
-  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "DecisionAnalyzed"));
+  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "DecisionAnalyzed"), "the decision's analysis");
   assert.ok(events.some((e) => e._tag === "PromptWithdrawn"), "the deciding prompt was withdrawn");
   review2.resolve();
-  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "PhaseBegan" && e.event.phase.kind === "execution"));
+  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "PhaseBegan" && e.event.phase.kind === "execution"), "execution phase 1's start");
   assert.ok(events.some((e) => e._tag === "PromptCancelled" && e.prompt === limit.prompt), "the beside prompt is cancelled");
   const view = events.reduce((r, event) => foldEvent(r, { time: "2026-11-04T00:00:00.000Z", event }), emptyRun(1));
   assert.equal(view.analysis, null);
@@ -395,7 +400,7 @@ test("(18) W2-R2-1, P3-R1-1: a final boundary whose Retry resumes the loop reope
   };
   const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
   await reached2.promise;
-  await until(() => askedWith(events, "beside").length >= 2);
+  await until(() => askedWith(events, "beside").length >= 2, "a second question beside the run");
   assert.equal(await Effect.runPromise(ui.answer(besidePrompt("unchanged"), "retry")), "taken");
   review2.resolve();
   await reached3.promise;
@@ -441,10 +446,10 @@ test("(19) W4-R2-1: with the web Ui, /terms at the limit's question is rejected 
     reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("C")], gate: () => review3.promise }, { issues: [] }, { issues: [] }],
   });
   const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
-  await until(() => askedWith(events, "beside").length > 0);
+  await until(() => askedWith(events, "beside").length > 0, "the limit's question beside the review");
   const limit = askedWith(events, "beside")[0]!;
   assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/terms")), "taken");
-  await until(() => askedWith(events, "beside").length > 1);
+  await until(() => askedWith(events, "beside").length > 1, "a second question beside the run");
   const again = askedWith(events, "beside")[1]!;
   assert.equal(again.beside, limit.beside);
   assert.equal(await Effect.runPromise(ui.answer(again.prompt, "p")), "taken");
@@ -471,7 +476,7 @@ test("(14) W4-R2-4: Help me decide at the limit; the analysis finishes while the
       { output: respond([["B", "accepted"]]), plan: "v3" },
       { output: limitAnalysis },
       // Cycle 3's response waits until both answers are taken: the decision's review then ran beside the plan review.
-      { output: respond([["C", "accepted"]]), plan: "v4", gate: () => until(() => answersTaken() >= 2) },
+      { output: respond([["C", "accepted"]]), plan: "v4", gate: () => until(() => answersTaken() >= 2, "both answers taken") },
     ],
     reviews: [{ issues: [issue("A")] }, { issues: [issue("B")] }, { issues: [issue("C")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -512,14 +517,14 @@ test("(21) W5-R1-1: with the web Ui, /terms at the limit's question after its an
     config: { maxRounds: 2 },
   });
   const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
-  await until(() => askedWith(events, "beside").length > 0);
+  await until(() => askedWith(events, "beside").length > 0, "the limit's question beside the review");
   const limit = askedWith(events, "beside")[0]!;
   assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/decide")), "taken");
-  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "DecisionAnalyzed") && askedWith(events, "beside").length > 1);
+  await until(() => events.some((e) => e._tag === "Notified" && e.event._tag === "DecisionAnalyzed") && askedWith(events, "beside").length > 1, "the decision's analysis and a second question beside the run");
   const again = askedWith(events, "beside")[1]!;
   assert.equal(again.beside, limit.beside);
   assert.equal(await Effect.runPromise(ui.answer(again.prompt, "/terms")), "taken");
-  await until(() => askedWith(events, "beside").length > 2);
+  await until(() => askedWith(events, "beside").length > 2, "a third question beside the run");
   assert.ok(events.some((e) => e._tag === "Notified" && e.event._tag === "AnswerRejected"), "the server rejected /terms");
   const third = askedWith(events, "beside")[2]!;
   assert.equal(third.beside, limit.beside);
@@ -545,7 +550,7 @@ test("(20) W4-R2-4: a dispute opened inside the limit's decision is withdrawn an
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"]]), plan: "v2" },
       // Cycle 2's response waits until the decision's dispute is open beside the run.
-      { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(() => disputeOpen() && conversation(probe.dir).includes(prompts.DISPUTE_PUT_TO_YOU_HEADING))) },
+      { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(() => disputeOpen() && conversation(probe.dir).includes(prompts.DISPUTE_PUT_TO_YOU_HEADING), "the decision's dispute open and recorded")) },
       { output: limitAnalysis },
       { output: decisionResponse(limitAnalysis) },
       // Issue #38: the response that investigates D1-R1-1 raised again, before it is opened beside the run.
@@ -560,10 +565,10 @@ test("(20) W4-R2-4: a dispute opened inside the limit's decision is withdrawn an
   const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
   // Help me decide only once cycle 2's response holds its step, so the decision's calls take the steps after it.
   await response2.promise;
-  await until(() => askedWith(events, "beside").length > 0);
+  await until(() => askedWith(events, "beside").length > 0, "the limit's question beside the review");
   const limit = askedWith(events, "beside")[0]!;
   assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/decide")), "taken");
-  await until(disputeOpen);
+  await until(disputeOpen, "the decision's dispute open");
   const dispute = askedWith(events, "beside").find((e) => e.beside !== limit.beside)!;
   const analysisPrompt = askedWith(events, "deciding")[0]!.prompt;
   const exit = await Effect.runPromise(Fiber.await(fiber));
@@ -607,7 +612,7 @@ test("(22) W7-R1-1: the limit's decision cancelled while its dispute's question 
       { output: noQuestions, plan: "v1" },
       { output: respond([["A", "accepted"]]), plan: "v2" },
       // Cycle 2's response waits until the dispute's question record write is held.
-      { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(() => held)) },
+      { output: respond([["B", "accepted"]]), plan: "v3", gate: () => (response2.resolve(), until(() => held, "the held question record write")) },
       { output: limitAnalysis },
       { output: decisionResponse(limitAnalysis) },
       // Issue #38: the response that investigates D1-R1-1 raised again, before it is opened beside the run.
@@ -620,11 +625,11 @@ test("(22) W7-R1-1: the limit's decision cancelled while its dispute's question 
   });
   const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
   await response2.promise;
-  await until(() => askedWith(events, "beside").length > 0);
+  await until(() => askedWith(events, "beside").length > 0, "the limit's question beside the review");
   const limit = askedWith(events, "beside")[0]!;
   assert.equal(await Effect.runPromise(ui.answer(limit.prompt, "/decide")), "taken");
   // The plan review ends while the dispute's record write is held; the decision's disputes are withdrawn.
-  await until(() => conversation(probe.dir).includes(prompts.disputeWithdrawnByDecisionLine(1, "Decision 1")));
+  await until(() => conversation(probe.dir).includes(prompts.disputeWithdrawnByDecisionLine(1, "Decision 1")), "the dispute's withdrawal line");
   const before = events.length;
   release.resolve();
   await sleep(200);
