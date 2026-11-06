@@ -13,7 +13,8 @@
 // one that file records, else the CLI's last `error` notice, before the exit's text. The file is Codex's and its format
 // may change, so it is read leniently, a failure to find or read it changing nothing; and only the bytes this
 // invocation appended are read (the file's size is taken before a resumed turn starts), so an earlier turn's failure is
-// never reused.
+// never reused. Issue #251: the same lines give the reset of an exhausted limit window (`rate_limits`), and the turn
+// then fails with a `RecordedFailure` carrying it, so a usage limit or a quota waits until it.
 
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
@@ -25,7 +26,8 @@ import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { ThreadEvent, ThreadOptions, TurnOptions } from "@openai/codex-sdk";
 import { Result } from "effect";
-import { type CliExit, codexArgs, codexEnv, recordedFailureText, sessionFailureOf, streamFailureOf, turnEnd } from "./codexArgs.ts";
+import { type CliExit, codexArgs, codexEnv, RecordedFailure, recordedFailureText, sessionFailureOf, sessionLimitResetOf, streamFailureOf, turnEnd } from "./codexArgs.ts";
+import type { LimitReset } from "./limitReset.ts";
 import type { SdkThread } from "./sdk.ts";
 
 /** The CLI's executable and the directories its package puts first on PATH. */
@@ -256,19 +258,23 @@ export const codexThread = (
       }
     } catch (e) {
       if (!(e instanceof CliExited)) throw e;
-      const cause = await recordedCause(seen, mark);
-      throw cause === null ? e : new Error(recordedFailureText(cause, e.text));
+      const { cause, reset } = await recorded(seen, mark);
+      if (cause === null && reset === null) throw e;
+      throw new RecordedFailure(cause === null ? e.text : recordedFailureText(cause, e.text), reset);
     } finally {
       await schema.remove();
     }
   }
-  /** The cause Codex recorded for a turn whose CLI exited: what it streamed, else its session file, else its last notice. */
-  const recordedCause = async (seen: readonly ThreadEvent[], mark: SessionMark): Promise<string | null> => {
+  /**
+   * What Codex recorded for a turn whose CLI exited, from one read of the lines this invocation appended to its session
+   * file: the cause (what it streamed, else its session file, else its last notice) and the reset of an exhausted limit
+   * window (issue #251), each null where none.
+   */
+  const recorded = async (seen: readonly ThreadEvent[], mark: SessionMark): Promise<Readonly<{ cause: string | null; reset: LimitReset | null }>> => {
     const streamed = streamFailureOf(seen);
-    if (streamed.failed !== null) return streamed.failed;
     const file = mark.file ?? (id === null ? null : await findSessionFile(env, id));
-    const recorded = file === null ? null : sessionFailureOf(await appendedLines(file, mark.offset));
-    return recorded ?? streamed.notice;
+    const lines = file === null ? [] : await appendedLines(file, mark.offset);
+    return { cause: streamed.failed ?? sessionFailureOf(lines) ?? streamed.notice, reset: sessionLimitResetOf(lines) };
   };
   return {
     get id() {

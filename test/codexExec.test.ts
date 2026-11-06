@@ -323,3 +323,32 @@ test("a session file that already ends with a 429 before a resumed turn that app
   await consume((await thread.runStreamed("first")).events);
   assert.equal(await failedWith(thread), `${PLAIN_EXIT}\n`);
 });
+
+// Issue #251: a CLI that records a usage limit and an exhausted window fails the turn with a RecordedFailure carrying
+// the window's reset; with no rate_limits its reset is null.
+import { RecordedFailure } from "../src/codexArgs.ts";
+const USAGE = "You've hit your usage limit. Try again later.";
+const USAGE_REFUSED = sessionLine({ type: "task_complete", last_agent_message: null, error: { message: USAGE } });
+const exhaustedAt = (resetsAt: number) => sessionLine({ type: "token_count", info: null, rate_limits: { primary: { used_percent: 100, window_minutes: 300, resets_at: resetsAt } } });
+const failure = async (thread: ReturnType<typeof codexThread>): Promise<unknown> =>
+  consume((await thread.runStreamed("p")).events).then(
+    () => assert.fail("the turn succeeded"),
+    (e: unknown) => e,
+  );
+
+test("a recorded usage limit with an exhausted window fails the turn with a RecordedFailure carrying its reset", async () => {
+  const home = codexHome();
+  const exe = sessionCli({ lines: [threadStarted("t-251")], append: { file: rollout(home, "2026/11/03", "t-251"), records: [STARTED, exhaustedAt(1793990000), USAGE_REFUSED] }, exit: 1 });
+  const e = await failure(codexThread(Result.succeed(exe), OPTIONS, { ...process.env, CODEX_HOME: home }));
+  assert.ok(e instanceof RecordedFailure);
+  assert.ok(e.message.startsWith(USAGE), e.message);
+  assert.deepEqual(e.reset, { kind: "instant", atMs: 1793990000 * 1000 });
+});
+
+test("a recorded usage limit with no rate_limits fails the turn with a RecordedFailure whose reset is null", async () => {
+  const home = codexHome();
+  const exe = sessionCli({ lines: [threadStarted("t-251b")], append: { file: rollout(home, "2026/11/03", "t-251b"), records: [STARTED, USAGE_REFUSED] }, exit: 1 });
+  const e = await failure(codexThread(Result.succeed(exe), OPTIONS, { ...process.env, CODEX_HOME: home }));
+  assert.ok(e instanceof RecordedFailure);
+  assert.equal(e.reset, null);
+});

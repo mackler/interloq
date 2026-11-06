@@ -9,6 +9,7 @@
 // before the exit's text (`recordedFailureText`).
 
 import type { ThreadEvent, ThreadOptions } from "@openai/codex-sdk";
+import type { LimitReset } from "./limitReset.ts";
 
 /** What one turn's command line is built from: the thread's options, its id once known, the output schema's file. */
 export type CodexArgsInput = Readonly<{
@@ -122,3 +123,40 @@ export const sessionFailureOf = (lines: readonly string[]): string | null => {
 
 /** The text of a turn's failure where Codex recorded a cause: the cause, then the exit's text as evidence. */
 export const recordedFailureText = (recorded: string, exit: string): string => `${recorded} (${exit.trim()})`;
+
+/**
+ * The reset of a limit Codex recorded in its session file (issue #251), from the lines this invocation appended: the
+ * last body with an object `rate_limits`, whose windows (`primary`, `secondary`, any other key holding an object) each
+ * carry `used_percent` and `resets_at` (Unix seconds), and which may name the window reached in
+ * `rate_limit_reached_type`. A window is exhausted at `used_percent` 100 or more, or where that field names it; the reset
+ * is the latest finite positive `resets_at` of the exhausted windows, else null. Lenient: a malformed line or field is
+ * skipped, never thrown. The shape is taken from Codex 0.155.1's protocol, not observed in a record.
+ */
+export const sessionLimitResetOf = (lines: readonly string[]): LimitReset | null => {
+  const limits = lines
+    .map(bodyOf)
+    .flatMap((b) => (b === null ? [] : [objectOf(b.rate_limits)]))
+    .filter((l): l is Readonly<Record<string, unknown>> => l !== null)
+    .at(-1);
+  if (limits === undefined) return null;
+  const reached = limits.rate_limit_reached_type;
+  const resets = Object.entries(limits).flatMap(([key, value]) => {
+    const window = objectOf(value);
+    if (window === null) return [];
+    const used = window.used_percent;
+    const exhausted = (typeof used === "number" && used >= 100) || key === reached;
+    const at = window.resets_at;
+    return exhausted && typeof at === "number" && Number.isFinite(at) && at > 0 ? [at] : [];
+  });
+  return resets.length === 0 ? null : { kind: "instant", atMs: Math.max(...resets) * 1000 };
+};
+
+/** The failure of a turn whose CLI exited, with the reset Codex's session file recorded, or null (issue #251). */
+export class RecordedFailure extends Error {
+  readonly reset: LimitReset | null;
+  constructor(message: string, reset: LimitReset | null) {
+    super(message);
+    this.name = "RecordedFailure";
+    this.reset = reset;
+  }
+}

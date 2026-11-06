@@ -324,3 +324,12 @@ test("turn.failed at capacity fails the review with UsageLimited of the capacity
 test("a 401 still fails with CodexCallFailed", async () => {
   assert.equal((await failureOf(turnFailed("unexpected status 401 Unauthorized")))._tag, "CodexCallFailed");
 });
+
+// Issue #251: a turn that throws a RecordedFailure with a reset fails the review with UsageLimited carrying that reset.
+import { RecordedFailure } from "../src/codexArgs.ts";
+import { CODEX_USAGE_LIMIT_TYPE } from "../src/limitReset.ts";
+test("a RecordedFailure of a usage limit with a reset fails the review with UsageLimited carrying it", async () => {
+  const reset = { kind: "instant", atMs: Date.UTC(2026, 10, 3, 20) } as const;
+  const u = (await failureOf(new RecordedFailure("You've hit your usage limit. Try again later.", reset))) as unknown as { _tag: string; reset: unknown; limitType: string | null };
+  assert.deepEqual({ _tag: u._tag, reset: u.reset, limitType: u.limitType }, { _tag: "UsageLimited", reset, limitType: CODEX_USAGE_LIMIT_TYPE });
+});

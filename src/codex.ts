@@ -4,6 +4,7 @@ import type { ThreadEvent } from "@openai/codex-sdk";
 import { Effect, Exit, Layer, Ref } from "effect";
 import { CodexCallFailed, TransportFault, UsageLimited } from "./errors.ts";
 import type { LimitReset } from "./limitReset.ts";
+import { RecordedFailure } from "./codexArgs.ts";
 import { classifyCodex, errorCode, networkCodeOf } from "./transport.ts";
 import { thrownText } from "./prompts.ts";
 import { agentJsonSchema } from "./jsonSchema.ts";
@@ -29,12 +30,13 @@ export const turnFailure = (message: string, code: string | null = null, reset: 
       return new CodexCallFailed({ message });
   }
 };
-/** A thrown value's text, with its code where the text does not name it (W1-R1-2). */
+const UNKNOWN_RESET: LimitReset = { kind: "unknown" };
+/** A thrown value's text, with its code where the text does not name it (W1-R1-2), and the reset Codex's session file recorded (issue #251). */
 const turnFailedWith = (e: unknown): CodexCallFailed | TransportFault | UsageLimited => {
   const code = errorCode(e);
   const message = typeof e === "object" && e !== null ? (e as { message?: unknown }).message : undefined;
   const text = typeof message === "string" ? message : typeof e === "object" && e !== null ? "" : String(e);
-  return turnFailure(thrownText(text, code), code);
+  return turnFailure(thrownText(text, code), code, e instanceof RecordedFailure ? (e.reset ?? UNKNOWN_RESET) : UNKNOWN_RESET);
 };
 
 /**

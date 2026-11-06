@@ -190,3 +190,46 @@ test("property: recordedFailureText begins with the cause, contains the trimmed 
     { numRuns: 200 },
   );
 });
+
+// Issue #251: the reset of a Codex limit read from its session file's rate_limits.
+import { sessionLimitResetOf } from "../src/codexArgs.ts";
+const tokenCount = (rate_limits: unknown): string => JSON.stringify({ timestamp: "2026-11-03T19:13:00.000Z", type: "event_msg", payload: { type: "token_count", info: null, rate_limits } });
+const RESET_S = 1793990000;
+test("sessionLimitResetOf: an exhausted window's reset, the later of two, and one named by rate_limit_reached_type", () => {
+  assert.deepEqual(sessionLimitResetOf([tokenCount({ primary: { used_percent: 100, window_minutes: 300, resets_at: RESET_S } })]), { kind: "instant", atMs: RESET_S * 1000 });
+  assert.deepEqual(
+    sessionLimitResetOf([tokenCount({ primary: { used_percent: 100, resets_at: RESET_S }, secondary: { used_percent: 101, resets_at: RESET_S + 60 } })]),
+    { kind: "instant", atMs: (RESET_S + 60) * 1000 },
+  );
+  assert.deepEqual(
+    sessionLimitResetOf([tokenCount({ primary: { used_percent: 40, resets_at: RESET_S }, secondary: { used_percent: 99, resets_at: RESET_S + 7 }, rate_limit_reached_type: "secondary" })]),
+    { kind: "instant", atMs: (RESET_S + 7) * 1000 },
+  );
+  assert.deepEqual(
+    sessionLimitResetOf([tokenCount({ primary: { used_percent: 100, resets_at: 1 } }), tokenCount({ primary: { used_percent: 100, resets_at: RESET_S } })]),
+    { kind: "instant", atMs: RESET_S * 1000 },
+  );
+});
+
+test("sessionLimitResetOf: no exhausted window, no rate_limits, malformed JSON or a non-numeric resets_at gives null", () => {
+  assert.equal(sessionLimitResetOf([tokenCount({ primary: { used_percent: 99, resets_at: RESET_S } })]), null);
+  assert.equal(sessionLimitResetOf([JSON.stringify({ type: "event_msg", payload: { type: "token_count" } })]), null);
+  assert.equal(sessionLimitResetOf(["{", "not json"]), null);
+  assert.equal(sessionLimitResetOf([tokenCount({ primary: { used_percent: 100, resets_at: "soon" } })]), null);
+  assert.equal(sessionLimitResetOf([tokenCount({ primary: { used_percent: 100, resets_at: -5 } })]), null);
+  assert.equal(sessionLimitResetOf([]), null);
+});
+
+test("property: the reset is null exactly when no window is exhausted with a finite positive resets_at, else the largest", () => {
+  const window = fc.record({ used_percent: fc.oneof(fc.integer({ min: 0, max: 120 }), fc.constant("x")), resets_at: fc.oneof(fc.integer({ min: -10, max: 2_000_000_000 }), fc.constant(null)) });
+  fc.assert(
+    fc.property(fc.dictionary(fc.constantFrom("primary", "secondary", "tertiary"), window), fc.option(fc.constantFrom("primary", "secondary", "tertiary"), { nil: undefined }), (windows, reached) => {
+      const limits = reached === undefined ? windows : { ...windows, rate_limit_reached_type: reached };
+      const exhausted = Object.entries(windows).filter(([k, w]) => (typeof w.used_percent === "number" && w.used_percent >= 100) || k === reached);
+      const resets = exhausted.map(([, w]) => w.resets_at).filter((r): r is number => typeof r === "number" && r > 0);
+      const expected = resets.length === 0 ? null : { kind: "instant", atMs: Math.max(...resets) * 1000 };
+      assert.deepEqual(sessionLimitResetOf([tokenCount(limits)]), expected);
+    }),
+    { numRuns: 200 },
+  );
+});
