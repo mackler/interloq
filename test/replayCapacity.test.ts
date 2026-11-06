@@ -21,6 +21,12 @@ import { OFF_SETTINGS } from "../src/chain.ts";
 const EVENTS = 10_000;
 const REPLAY_LIMIT_MS = 1000;
 const RETAINED_LIMIT_BYTES = 50 * 1024 * 1024;
+// Issue #18's suite run 2: a machine loaded for the whole of one round of five replays failed the bound although the
+// replay was unchanged. Where a round has no replay under the bound, the test pauses and measures another round, up to
+// REPLAY_EXTRA_ROUNDS more; the bound is asserted on the best replay of all rounds. A failing run takes at most four
+// pauses of 15 s and twenty more replays, about 70 s on a machine as loaded as that suite run, nothing on a quiet one.
+const REPLAY_PAUSE_MS = 15_000;
+const REPLAY_EXTRA_ROUNDS = 4;
 
 v8.setFlagsFromString("--expose-gc");
 const gc = vm.runInNewContext("gc") as () => void;
@@ -89,9 +95,10 @@ test("measurement: a run of 10,000 events, its retained size, and the time to re
   const retained = heap() - before;
   const size = JSON.stringify({ type: "replay", runs }).length;
 
-  // Five replays to one client each: a regression in the code slows every sample, a burst of load on the machine only
-  // some, so the best of five measures the code and the bound holds on a loaded machine (a shared CI runner).
-  const samples: number[] = [];
+  // Rounds of five replays to one client each: a regression in the code slows every sample of every round, a burst of
+  // load on the machine only some, so the best sample measures the code and the bound holds on a loaded machine (a shared
+  // CI runner). A further round is measured, after a pause, only where a round had no sample under the bound.
+  const rounds: number[][] = [];
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -100,36 +107,43 @@ test("measurement: a run of 10,000 events, its retained size, and the time to re
         yield* Effect.addFinalizer(() => web.closeAll);
         const address = (yield* HttpServer.HttpServer).address;
         const port = address._tag === "UnixPathAddress" ? 0 : address.port;
-        for (let sample = 0; sample < 5; sample++) {
-          samples.push(
-            yield* Effect.promise(
-              () =>
-                new Promise<number>((resolve, reject) => {
-                  const began = performance.now();
-                  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-                  ws.onmessage = (e) => {
-                    const m = JSON.parse(String(e.data)) as ServerMessage;
-                    if (m.type !== "replay") return;
-                    ws.close();
-                    resolve(performance.now() - began);
-                  };
-                  ws.onerror = () => reject(new Error("the WebSocket failed"));
-                }),
-            ),
+        const replayOnce = () =>
+          Effect.promise(
+            () =>
+              new Promise<number>((resolve, reject) => {
+                const began = performance.now();
+                const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+                ws.onmessage = (e) => {
+                  const m = JSON.parse(String(e.data)) as ServerMessage;
+                  if (m.type !== "replay") return;
+                  ws.close();
+                  resolve(performance.now() - began);
+                };
+                ws.onerror = () => reject(new Error("the WebSocket failed"));
+              }),
           );
+        for (let round = 0; round <= REPLAY_EXTRA_ROUNDS; round++) {
+          if (round > 0) yield* Effect.promise(() => sleep(REPLAY_PAUSE_MS));
+          const samples: number[] = [];
+          for (let sample = 0; sample < 5; sample++) samples.push(yield* replayOnce());
+          rounds.push(samples);
+          if (Math.min(...samples) < REPLAY_LIMIT_MS) break;
         }
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
-  const replayMs = Math.min(...samples);
+  const replayMs = Math.min(...rounds.flat());
+  const roundsShown = rounds.map((r) => r.map(Math.round));
 
-  const figures = { events: count, replayBytes: size, replayMs: Math.round(replayMs), replaySamplesMs: samples.map(Math.round), retainedBytes: retained, publishMs: Math.round(publishMs) };
+  const figures = { events: count, replayBytes: size, replayMs: Math.round(replayMs), replayRounds: roundsShown, retainedBytes: retained, publishMs: Math.round(publishMs) };
   t.diagnostic(`replay capacity: ${JSON.stringify(figures)}`);
   console.log(`replay capacity: ${JSON.stringify(figures)}`);
   assert.ok(count >= EVENTS, `only ${count} events`);
   // Measured 26 Sep 2026 (E5): about 10,030 events, a 1.55 MB replay delivered in about 50 ms, about 4 MB retained,
   // about 230 ms to publish them all, copying included: well within the criterion, so chunked storage was not built
   // (E6). The criterion stays as the regression bound, on the best of five replays (27 Sep 2026: tolerant of load).
-  assert.ok(replayMs < REPLAY_LIMIT_MS, `the best of five replays took ${replayMs} ms (samples: ${samples.map(Math.round).join(", ")})`);
+  // Issue #18: suite run 1, 185 ms best at a publish of 2 s; suite run 2, 2,003 ms best at a publish of 11 s, the same
+  // 3.7 MB payload, so the machine and not the code was slower; the best is now taken over further rounds after a pause.
+  assert.ok(replayMs < REPLAY_LIMIT_MS, `the best replay of ${rounds.length} round(s) took ${replayMs} ms (rounds: ${roundsShown.map((r) => `[${r.join(", ")}]`).join(", ")})`);
   assert.ok(retained < RETAINED_LIMIT_BYTES, `${retained} bytes retained`);
 });
