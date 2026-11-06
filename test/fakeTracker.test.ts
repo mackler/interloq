@@ -121,3 +121,26 @@ test("the fake's listMarked gives the marked open items of the state in the reve
   assert.deepEqual((await run(tracker.listMarked("unrefined"))).map((i) => i.id), ["3", "1"]);
   assert.equal("marked" in (await run(tracker.listMarked("unrefined")))[0]!, false);
 });
+
+// Issue #219: the fake gives each item its comment activity, changed by every comment, deletion and write of that item.
+test("a comment, a deletion and a write change the item's activity; another item's is unchanged", async () => {
+  const { tracker } = await run(makeFakeTracker(ITEMS));
+  const activity = async (item: string) => (await run(tracker.read(id(item)))).activity;
+  const before = await activity("1");
+  assert.ok(Option.isSome(before));
+  assert.equal(before.value.count, 0);
+  await run(tracker.comment(id("1"), "a comment"));
+  const commented = await activity("1");
+  assert.ok(Option.isSome(commented));
+  assert.equal(commented.value.count, 1);
+  assert.notEqual(commented.value.updated, before.value.updated);
+  assert.deepEqual(await activity("4"), Option.some({ updated: before.value.updated, count: 0 }));
+  const [comment] = await run(tracker.comments(id("1")));
+  await run(tracker.deleteComment(id("1"), comment!.id));
+  const deleted = await activity("1");
+  assert.ok(Option.isSome(deleted) && deleted.value.count === 0 && deleted.value.updated !== commented.value.updated);
+  await run(tracker.setState(id("1"), "refined"));
+  const relabeled = await activity("1");
+  assert.ok(Option.isSome(relabeled) && relabeled.value.updated !== deleted.value.updated);
+  assert.deepEqual((await run(tracker.list("unrefined"))).map((i) => Option.isSome(i.activity)), [true]);
+});

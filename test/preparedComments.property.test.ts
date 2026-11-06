@@ -34,7 +34,7 @@ const prepared = (id: string): fc.Arbitrary<PreparedQuestion> =>
     terms: withTerms ? ({ id: e.id, explanations, context: e.context, history: e.history, question: e.question, reason: e.reason, proposed_answers: e.proposed_answers } satisfies TermsEntry) : null,
   }));
 const questions = fc.integer({ min: 0, max: 3 }).chain((n) => fc.tuple(...Array.from({ length: n }, (_, i) => prepared(`Q${i + 1}`))));
-const item = fc.record({ title: text, body: text }).map(({ title, body }): TrackerItem => ({ id: "131" as ItemId, title, body, state: "unrefined", url: Option.none() }));
+const item = fc.record({ title: text, body: text }).map(({ title, body }): TrackerItem => ({ id: "131" as ItemId, title, body, state: "unrefined", url: Option.none(), activity: Option.none() }));
 const asComments = (texts: readonly string[]): ItemComment[] => texts.map((body, i) => ({ id: seededId(`c-${i + 1}`), body, created: "2026-10-30T00:00:00Z" }));
 const record = (i: TrackerItem, count: number): PreparationRecord => ({ _tag: "Prepared", key: KEY, digest: digestOf(i), count, generation: 2, date: "2026-10-30" });
 const write = (i: TrackerItem, qs: readonly PreparedQuestion[]) => Result.getOrThrow(preparedComments(KEY, qs, record(i, qs.length))).map((c) => c.text);

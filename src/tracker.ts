@@ -54,7 +54,20 @@ export const itemUrlFrom = (text: string | undefined): Option.Option<ItemUrl> =>
  * own page in its tracker as the tracker's response gives it (issue #125), none where the response has none or it is
  * not an https address.
  */
-export type TrackerItem = Readonly<{ id: ItemId; title: string; body: string; state: ItemState; url: Option.Option<ItemUrl> }>;
+/**
+ * Issue #219: what the tracker's issue object says of an item's comments, so a listing reads again only the comments of
+ * an item that changed: its update time and its comment count, as the tracker gives them. Neither is read from the
+ * comments themselves.
+ */
+export type CommentActivity = Readonly<{ updated: string; count: number }>;
+/**
+ * Issue #219: `activity`, none where the tracker's response did not carry both fields, and then the item's comments are
+ * read every time.
+ */
+export type TrackerItem = Readonly<{ id: ItemId; title: string; body: string; state: ItemState; url: Option.Option<ItemUrl>; activity: Option.Option<CommentActivity> }>;
+/** Issue #219: the comment activity of an issue object's two optional fields, some only where both are present. */
+export const activityFrom = (updated: string | undefined, count: number | undefined): Option.Option<CommentActivity> =>
+  updated === undefined || count === undefined ? Option.none() : Option.some({ updated, count });
 
 /**
  * An issue an item cites (issue #216, requirements Q6): its title, its whole body and its tracker's own open or closed

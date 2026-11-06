@@ -44,6 +44,7 @@ import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.
 import { type AnswerTiming, makeWebUi, type WebUi } from "./webUi.ts";
 import type { OutputEvent } from "./liveOutput.ts";
 import { makeWaits, unendableWait, waitCounter } from "./waits.ts";
+import { cachedComments, type CommentCache, EMPTY_COMMENT_CACHE, trackerKeyOf, withComments } from "./commentCache.ts";
 
 /** One event of a run as it is broadcast: the run's id, the event's sequence number in that run (from 0) and the time of its publication. */
 export type EventBroadcast = Readonly<{ _tag: "event"; run: number; seq: number; time: string; event: RunEvent }>;
@@ -404,13 +405,34 @@ export const makeRunManager = (
         return Result.mapError(used, trackerFailureText);
       });
 
+    /** Issue #219: the comments of every listing, kept by each item's comment activity for the server's life. */
+    const commentCache = yield* Ref.make<CommentCache>(EMPTY_COMMENT_CACHE);
+    /**
+     * Issue #219: the listed items with their comments, read only where the cache cannot give them (four at a time, as
+     * before), each read stored, so an unchanged listing reads no comments. A start's read and a run's reads stay fresh.
+     */
+    const listedComments = (t: TrackerShape, config: Config, items: readonly TrackerItem[]): Effect.Effect<readonly Readonly<{ item: TrackerItem; comments: readonly ItemComment[] }>[], TrackerError> => {
+      const key = trackerKeyOf(config.tracker);
+      return Effect.flatMap(Ref.get(commentCache), (cache) =>
+        Effect.forEach(
+          items,
+          (item) =>
+            Option.match(cachedComments(cache, key, item), {
+              onSome: (comments) => Effect.succeed({ item, comments }),
+              onNone: () => t.comments(item.id).pipe(Effect.tap((comments) => Ref.update(commentCache, (c) => withComments(c, key, item, comments))), Effect.map((comments) => ({ item, comments }))),
+            }),
+          { concurrency: 4 },
+        ),
+      );
+    };
+
     /** Issue #142: the Refinement tab's listing carries the configured choice of terms, read with the configuration. */
     const listItems = (mode: RunMode, onWait: (wait: RateLimitWait) => Effect.Effect<void> = () => Effect.void): Effect.Effect<ItemsAnswer> =>
       // Issue #186 (F1): each item's comments read, the server's own requests (not repeated, as the listing is not), and
       // its send-backs counted; a failure of any of them answers the listing with its notice.
       withTracker((t, config) =>
         t.list(listedState(mode)).pipe(
-          Effect.flatMap((items) => Effect.forEach(items, (item) => Effect.map(t.comments(item.id), (comments) => ({ item, comments })), { concurrency: 4 })),
+          Effect.flatMap((items) => listedComments(t, config, items)),
           // Issue #131 (requirements Q6): each Refinement item's mark, from the State and the pass as they are now.
           Effect.flatMap((listed) =>
             Effect.map(Effect.all([Ref.get(state), pass.current]), ([s, preparing]) =>
@@ -474,9 +496,7 @@ export const makeRunManager = (
     const pass: PreparationPass = yield* makePreparationPass({
       kept: Effect.map(Ref.get(state), (s) => s.preparation),
       closing: Effect.map(Ref.get(state), (s) => s.closing),
-      candidates: withTracker((t) =>
-        t.listMarked("unrefined").pipe(Effect.flatMap((items) => Effect.forEach(items, (item) => Effect.map(t.comments(item.id), (comments): Candidate => ({ item, comments })), { concurrency: 4 }))),
-      ),
+      candidates: withTracker((t, config) => t.listMarked("unrefined").pipe(Effect.flatMap((items) => listedComments(t, config, items)), Effect.map((listed): readonly Candidate[] => listed))),
       refining: Effect.map(Ref.get(state), (s) => s.runs.refinement.current.map((r) => r.item)),
       prepare: (item, comments, generation) => Effect.flatMap(unattendedUi, ({ ui }) => prepareItem({ project: cwd, item, comments, generation }, wiring(ui, "refinement"))),
       recordFailure: (failure) => Effect.andThen(preparationStep((k) => withFailure(k, failure)), Effect.asVoid(persist)),

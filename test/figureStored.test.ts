@@ -16,7 +16,7 @@ const plain = (text: string) => [{ text, ref: "", code: false }];
 const oldOption = (label: string) => ({ label: plain(label), description: plain(`${label}, described.`) });
 
 test("a prepared comment written before figures decodes, each answer with no picture", () => {
-  const item: TrackerItem = { id: "98" as ItemId, title: "Figures", body: "Text.", state: "unrefined", url: Option.none() };
+  const item: TrackerItem = { id: "98" as ItemId, title: "Figures", body: "Text.", state: "unrefined", url: Option.none(), activity: Option.none() };
   const key = runCommentKey("2026-11-03T00-00-00-000Z-preparation-98");
   const entry = { id: "Q1", context: [], history: [], question: plain("Which?"), reason: [], proposed_answers: [{ ...oldOption("A"), figure: null }, { ...oldOption("B"), figure: null }], default_answer: "A", skip_if: null };
   const pq: PreparedQuestion = { entry, terms: { id: "Q1", explanations: [], context: [], history: [], question: entry.question, reason: [], proposed_answers: entry.proposed_answers } };

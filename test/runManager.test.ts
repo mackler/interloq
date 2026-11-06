@@ -636,6 +636,8 @@ test("listItems counts each item's send-backs from its comments; a failed commen
   assert.ok(listed.result._tag === "Listed");
   const counts = listed.result._tag === "Listed" ? listed.result.items.map((i) => i.sentBack) : [];
   assert.deepEqual(counts, twice.filter((i) => i.state === "unrefined").map((i) => (i.comments === undefined ? 0 : 2)));
+  // Issue #219: the comments are read again only where the item's activity changed, so the item is edited first.
+  await run(tracker.edit(twice.find((i) => i.comments !== undefined)!.id, (i) => i));
   await run(tracker.failNext("comments", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset", status: null })));
   assert.deepEqual(await run(h.manager.listItems("refinement")), { mode: "refinement", result: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: connection reset" } });
 });

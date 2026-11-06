@@ -12,7 +12,7 @@ import type { ItemComment, ItemId, TrackerItem } from "../src/tracker.ts";
 import { seededId } from "./fakeTracker.ts";
 
 const run = <A, E>(e: Effect.Effect<A, E>) => Effect.runPromise(e);
-const itemOf = (id: string, title = `item ${id}`): TrackerItem => ({ id: id as ItemId, title, body: "", state: "unrefined", url: Option.none() });
+const itemOf = (id: string, title = `item ${id}`): TrackerItem => ({ id: id as ItemId, title, body: "", state: "unrefined", url: Option.none(), activity: Option.none() });
 const ON: PreparationKept = switched(PREPARATION_KEPT_OFF, true);
 const commentsOf = (record: PreparationRecord): ItemComment[] => Result.getOrThrow(preparedComments(runCommentKey(record.key), [], record)).map((c, i) => ({ id: seededId(`${record.key}-${i}`), body: c.text, created: "t" }));
 const setAside = (item: TrackerItem, generation: number, key = `k-${item.id}`): ItemComment[] => commentsOf({ _tag: "SetAside", key, digest: digestOf(item), generation, date: "d", cause: { _tag: "Paused", phase: "questions", question: "?" } });

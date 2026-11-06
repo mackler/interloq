@@ -10,7 +10,7 @@ import { type Headers, rateLimitResetOf } from "./trackerRateLimit.ts";
 import { type ItemText, type Refinement, type SectionMalformed, withDeveloperText, withRefinement } from "./refinement.ts";
 import type { TrackerError } from "./services.ts";
 import { errorCode } from "./transport.ts";
-import { type CitedItem, ITEM_STATES, type ItemComment, type ItemId, type ItemState, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, itemUrlFrom, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type CitedItem, ITEM_STATES, type ItemComment, type ItemId, type ItemState, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, itemUrlFrom, activityFrom, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 const TRACKER = "GitLab";
 
@@ -23,6 +23,9 @@ export const GitlabIssue = Schema.Struct({
   labels: Schema.Array(Schema.String),
   // The issue's page on gitlab.com (issue #125), optional so that a response without it still lists the issue.
   web_url: Schema.optionalKey(Schema.String),
+  // Issue #219: the count of the issue's user notes (its comments, system notes excluded) and when it was last updated.
+  user_notes_count: Schema.optionalKey(Schema.Int),
+  updated_at: Schema.optionalKey(Schema.String),
 });
 export type GitlabIssue = typeof GitlabIssue.Type;
 
@@ -48,7 +51,7 @@ export const stateOfIssue = (labels: StageLabels, issue: Pick<GitlabIssue, "stat
 
 /** The item of an issue: its id the issue's number in decimal, a null description the empty string, its address its web_url. */
 export const itemOfIssue = (labels: StageLabels, issue: GitlabIssue): Result.Result<TrackerItem, NoStateLabel | Ambiguous> =>
-  Result.map(stateOfIssue(labels, issue), (state) => ({ id: String(issue.iid) as ItemId, title: issue.title, body: issue.description ?? "", state, url: itemUrlFrom(issue.web_url) }));
+  Result.map(stateOfIssue(labels, issue), (state) => ({ id: String(issue.iid) as ItemId, title: issue.title, body: issue.description ?? "", state, url: itemUrlFrom(issue.web_url), activity: activityFrom(issue.updated_at, issue.user_notes_count) }));
 
 /** The body of a state change: the target's label added and every other state label removed, in one request. */
 export const relabelBody = (labels: StageLabels, to: Exclude<ItemState, "deployed">): Result.Result<Readonly<{ add_labels: string; remove_labels: string }>, NoObsoleteLabel> =>

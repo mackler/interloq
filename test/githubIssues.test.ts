@@ -36,7 +36,15 @@ test("stateOf: two stage labels are ambiguous, naming them", () => {
 
 test("itemOf: the id is the decimal number, a null body the empty string", () => {
   const item = itemOf(LABELS, decode({ number: 42, title: "title", body: null, state: "open", labels: [] }));
-  assert.deepEqual(item, Result.succeed({ id: id("42"), title: "title", body: "", state: "unrefined", url: Option.none() }));
+  assert.deepEqual(item, Result.succeed({ id: id("42"), title: "title", body: "", state: "unrefined", url: Option.none(), activity: Option.none() }));
+});
+
+// Issue #219: an issue's comment count and update time are its comment activity, so a listing knows which comments changed.
+test("itemOf: comments and updated_at are the comment activity; without both, none", () => {
+  const of = (more: Record<string, unknown>) => Result.getOrThrow(itemOf(LABELS, decode({ number: 42, title: "title", body: null, state: "open", labels: [], ...more }))).activity;
+  assert.deepEqual(of({ comments: 3, updated_at: "2026-11-05T12:00:00Z" }), Option.some({ updated: "2026-11-05T12:00:00Z", count: 3 }));
+  assert.deepEqual(of({ comments: 3 }), Option.none());
+  assert.deepEqual(of({ updated_at: "2026-11-05T12:00:00Z" }), Option.none());
 });
 
 test("itemOf: an issue's html_url is its address; none without one or with an address that is not https, and the item stands", () => {

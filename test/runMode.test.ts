@@ -18,7 +18,7 @@ const id = Result.getOrThrow(itemIdOf("120"));
 const section = Result.getOrThrow(refinementOf("The confirmed requirements."));
 const developerText = "Make the page two tabs.";
 const refinedBody = Result.getOrThrow(withRefinement(developerText, section));
-const item = (body: string): TrackerItem => ({ id, title: "Two modes", body, state: "refined", url: Option.none() });
+const item = (body: string): TrackerItem => ({ id, title: "Two modes", body, state: "refined", url: Option.none(), activity: Option.none() });
 
 test("taskTextOf: the title, a blank line and the body; a refinement run without the section, an implementation run with it", () => {
   assert.deepEqual(taskTextOf("refinement", item(refinedBody), []), Result.succeed(`Two modes\n\n${developerText}`));
@@ -29,7 +29,7 @@ test("taskTextOf: the title, a blank line and the body; a refinement run without
 test("taskTextOf: a malformed section is SectionMalformed for a refinement run; a blank text is BlankTask", () => {
   const malformed = taskTextOf("refinement", item("## Refined using Interloq\nno closing line"), []);
   assert.ok(Result.isFailure(malformed) && malformed.failure._tag === "SectionMalformed");
-  const blank = taskTextOf("implementation", { id, title: " ", body: " \n\t", state: "refined", url: Option.none() }, []);
+  const blank = taskTextOf("implementation", { id, title: " ", body: " \n\t", state: "refined", url: Option.none(), activity: Option.none() }, []);
   assert.ok(Result.isFailure(blank) && blank.failure._tag === "BlankTask");
 });
 

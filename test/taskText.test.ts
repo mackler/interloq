@@ -7,7 +7,7 @@ import { itemTextOf, refinementOf, withRefinement } from "../src/refinement.ts";
 import { itemIdOf, type TrackerItem } from "../src/tracker.ts";
 
 const body = Result.getOrThrow(withRefinement("The developer's text.", Result.getOrThrow(refinementOf("the requirements"))));
-const item: TrackerItem = { id: Result.getOrThrow(itemIdOf("5")), title: "Title", body, state: "refined", url: Option.none() };
+const item: TrackerItem = { id: Result.getOrThrow(itemIdOf("5")), title: "Title", body, state: "refined", url: Option.none(), activity: Option.none() };
 
 test("an implementation item whose body holds a section gives a task that still contains the whole section", () => {
   assert.equal(Result.getOrThrow(taskTextOf("implementation", item, [])), `Title\n\n${body}`);

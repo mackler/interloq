@@ -12,7 +12,7 @@ import { seededId } from "./fakeTracker.ts";
 
 const ITEMS = ["1", "2", "3", "4"];
 const KEYS = ["ka", "kb", "kc"];
-const itemOf = (id: string): TrackerItem => ({ id: id as ItemId, title: `t${id}`, body: "", state: "unrefined", url: Option.none() });
+const itemOf = (id: string): TrackerItem => ({ id: id as ItemId, title: `t${id}`, body: "", state: "unrefined", url: Option.none(), activity: Option.none() });
 
 type Marked = Readonly<{ key: string; question: number | null }>;
 const markedArb: fc.Arbitrary<Marked | null> = fc.option(fc.record({ key: fc.constantFrom(...KEYS), question: fc.option(fc.integer({ min: 1, max: 3 }), { nil: null }) }), { nil: null });

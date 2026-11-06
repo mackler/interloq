@@ -42,10 +42,17 @@ test("an open issue with two state labels is Ambiguous, naming both in the issue
 test("an issue's item: its iid in decimal, its title, its description or the empty string, its state", () => {
   const item = itemOfIssue(GITLAB_LABELS, issue({ labels: ["Refined"] }));
   assert.ok(Result.isSuccess(item));
-  assert.deepEqual(item.success, { id: "42", title: "A task", body: "The text.", state: "refined", url: Option.some(PAGE) });
+  assert.deepEqual(item.success, { id: "42", title: "A task", body: "The text.", state: "refined", url: Option.some(PAGE), activity: Option.none() });
   const nullBody = itemOfIssue(GITLAB_LABELS, issue({ description: null, state: "closed" }));
   assert.ok(Result.isSuccess(nullBody));
-  assert.deepEqual(nullBody.success, { id: "42", title: "A task", body: "", state: "deployed", url: Option.some(PAGE) });
+  assert.deepEqual(nullBody.success, { id: "42", title: "A task", body: "", state: "deployed", url: Option.some(PAGE), activity: Option.none() });
+});
+
+// Issue #219: user_notes_count and updated_at are the comment activity; without both, none.
+test("an issue's user_notes_count and updated_at are its comment activity; without both, none", () => {
+  const of = (more: Record<string, unknown>) => Result.map(itemOfIssue(GITLAB_LABELS, issue({ labels: ["Refined"], ...more })), (i) => i.activity);
+  assert.deepEqual(of({ user_notes_count: 2, updated_at: "2026-11-05T12:00:00.000Z" }), Result.succeed(Option.some({ updated: "2026-11-05T12:00:00.000Z", count: 2 })));
+  assert.deepEqual(of({ user_notes_count: 2 }), Result.succeed(Option.none()));
 });
 
 test("an issue's item has no address without web_url or with one that is not https, and is still an item", () => {

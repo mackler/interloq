@@ -273,7 +273,7 @@ test("an items frame whose item's address is not https does not decode; one with
 });
 
 test("listedItemOf: the id, the title, the excerpt of the body, and the address or null", () => {
-  const item = { id: Result.getOrThrow(itemIdOf("7")), title: "Seven", body: "The body.", state: "refined" as const };
+  const item = { id: Result.getOrThrow(itemIdOf("7")), title: "Seven", body: "The body.", state: "refined" as const, activity: Option.none() };
   const page = Result.getOrThrow(itemUrlOf("https://github.com/mackler/interloq/issues/7"));
   assert.deepEqual(listedItemOf({ ...item, url: Option.some(page) }, 0), { id: "7", title: "Seven", excerpt: excerptOf("The body."), url: page, sentBack: 0, preparation: null });
   assert.deepEqual(listedItemOf({ ...item, url: Option.none() }, 2), { id: "7", title: "Seven", excerpt: excerptOf("The body."), url: null, sentBack: 2, preparation: null });

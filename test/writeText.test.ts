@@ -108,7 +108,7 @@ const arbItem = fc.record({ title: fc.string({ minLength: 1, maxLength: 8 }).fil
 test("landed of a writeText succeeds on the item withDeveloperText produced, and fails with otherText on any other title or text", () => {
   fc.assert(fc.property(arbItem, arbItem, (a, b) => {
     const t = text(a.title, a.body);
-    const item = (title: string, body: string): TrackerItem => ({ id: id("1"), title, body, state: "unrefined", url: Option.none() });
+    const item = (title: string, body: string): TrackerItem => ({ id: id("1"), title, body, state: "unrefined", url: Option.none(), activity: Option.none() });
     const write = { kind: "writeText" as const, item: id("1"), text: t };
     const ok = Result.isSuccess(landed(write, item(t.title, Result.getOrThrow(withDeveloperText(SECTION, t)))));
     const other = landed(write, item(b.title, b.body));

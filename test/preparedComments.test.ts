@@ -22,7 +22,7 @@ import type { StoredQuestion, TermsEntry } from "../src/schema.ts";
 import { type ItemComment, type ItemId, type TrackerItem } from "../src/tracker.ts";
 import { seededId } from "./fakeTracker.ts";
 
-const ITEM: TrackerItem = { id: "131" as ItemId, title: "Prepare questions", body: "The developer's text.", state: "unrefined", url: Option.none() };
+const ITEM: TrackerItem = { id: "131" as ItemId, title: "Prepare questions", body: "The developer's text.", state: "unrefined", url: Option.none(), activity: Option.none() };
 const KEY = runCommentKey("2026-10-30T00-00-00-000Z-preparation-131");
 const plain = (text: string) => [{ text, ref: "", code: false }];
 const question = (id: string, text = `Question ${id}?`): StoredQuestion => ({

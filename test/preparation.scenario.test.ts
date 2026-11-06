@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Effect, Fiber, Layer, Result } from "effect";
+import { Effect, Fiber, Layer, Option, Result } from "effect";
 import { TrackerUnreachable } from "../src/errors.ts";
 import { runCommentKey } from "../src/itemComments.ts";
 import { digestOf, preparationOf, preparedComments } from "../src/preparedComments.ts";
@@ -23,7 +23,7 @@ const FAST = { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 };
 const setup = (options: TestOptions, tracker: FakeTracker = fakeTrackerOf([ITEM]), trackerOf?: (t: TrackerShape) => TrackerShape) => {
   const { wiring, probe } = testWiring(tempRepo(), { ...options, tracker, config: { ...FAST, ...options.config } });
   const wired = trackerOf === undefined ? wiring : { ...wiring, tracker: () => Result.succeed(Layer.succeed(Tracker, trackerOf(tracker.tracker))) };
-  const prepare = (comments = ITEM.comments ?? []) => Effect.scoped(prepareItem({ project: probe.project, item: ITEM, comments, generation: 1 }, wired));
+  const prepare = (comments = ITEM.comments ?? []) => Effect.scoped(prepareItem({ project: probe.project, item: { ...ITEM, activity: Option.none() }, comments, generation: 1 }, wired));
   const held = async () => (await Effect.runPromise(tracker.items)).find((i) => i.id === ITEM.id)!;
   return { probe, tracker, prepare, held };
 };

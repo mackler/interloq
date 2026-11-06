@@ -1,7 +1,7 @@
 // What the GitHub adapter decides without I/O (issue #120, part 1): an issue's state from its labels, the label set of
 // a state change, the next page of a listing and an id's issue number. Pure; the edge is src/github.ts.
 import { Option, Result, Schema } from "effect";
-import { type CitedItem, ITEM_STATES, type ItemComment, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, type ItemId, itemUrlFrom, type ItemState, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type CitedItem, ITEM_STATES, type ItemComment, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, type ItemId, itemUrlFrom, activityFrom, type ItemState, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 /**
  * The fields of GitHub's issue object the adapter reads; the many others are ignored. A label is an object with a
@@ -16,6 +16,9 @@ export const GithubIssue = Schema.Struct({
   pull_request: Schema.optionalKey(Schema.Unknown),
   // The issue's page on github.com (issue #125), not the API address src/github.ts PATCHes.
   html_url: Schema.optionalKey(Schema.String),
+  // Issue #219: the count of the issue's comments and when it was last updated, its comment activity.
+  comments: Schema.optionalKey(Schema.Int),
+  updated_at: Schema.optionalKey(Schema.String),
 });
 export type GithubIssue = typeof GithubIssue.Type;
 
@@ -59,6 +62,7 @@ export const itemOf = (labels: StageLabels, issue: GithubIssue): Result.Result<T
     body: issue.body ?? "",
     state,
     url: itemUrlFrom(issue.html_url),
+    activity: activityFrom(issue.updated_at, issue.comments),
   }));
 
 /** Issue #216: a cited issue whatever its labels (a pull request too, since a cited number may name one); open from GitHub's own state. */

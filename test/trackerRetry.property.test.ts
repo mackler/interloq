@@ -49,7 +49,7 @@ const hasMarker = (s: string): boolean => s.split(/\r\n|\r|\n/u).some((l) => l =
 const arbRefinement: fc.Arbitrary<Refinement> = text.filter((s) => s.trim() !== "" && !hasMarker(s) && !s.endsWith("\r")).map((s) => Result.getOrThrow(refinementOf(s)));
 const plainBody = text.filter((s) => !hasMarker(s));
 const arbBody = fc.oneof(plainBody, fc.tuple(plainBody, arbRefinement).map(([b, r]) => Result.getOrThrow(withRefinement(b, r))));
-const itemOf = (body: string, state: ItemState = "unrefined"): TrackerItem => ({ id: ID, title: "t", body, state, url: Option.none() });
+const itemOf = (body: string, state: ItemState = "unrefined"): TrackerItem => ({ id: ID, title: "t", body, state, url: Option.none(), activity: Option.none() });
 
 test("the seam with the section writer: an item whose body withRefinement wrote has landed, the body before it has not unless it held the same", () => {
   fc.assert(

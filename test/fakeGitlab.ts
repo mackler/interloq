@@ -29,6 +29,8 @@ export type GitlabServer = Readonly<{
    * PUT 98 of 14 Oct 2026) or without applying it, once.
    */
   failNextPut: (field: string, applied: boolean) => void;
+  /** Issue #219: a user adds a note to an issue in GitLab, without a request of the adapter's. */
+  note: (iid: number, body: string) => void;
 }>;
 
 const PAGE_SIZE_DEFAULT = 20;
@@ -45,8 +47,18 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
     noteIds += 1;
     const created: ServerNote = { id: noteIds, body, created_at: new Date(Date.UTC(2026, 9, 29, 0, 0, noteIds)).toISOString(), system };
     notes.set(iid, [...(notes.get(iid) ?? []), created]);
+    touch(iid);
     return created;
   };
+  // Issue #219: GitLab's updated_at, advanced by every change of the issue or its notes, and user_notes_count, sent with
+  // every issue as GitLab sends them.
+  const updates = new Map<number, number>();
+  const touch = (iid: number): void => void updates.set(iid, (updates.get(iid) ?? 0) + 1);
+  const sent = (issue: ServerIssue) => ({
+    ...issue,
+    user_notes_count: (notes.get(issue.iid) ?? []).filter((n) => !n.system).length,
+    updated_at: new Date(Date.UTC(2026, 9, 29) + (updates.get(issue.iid) ?? 0) * 1000).toISOString(),
+  });
   const putFailures: { field: string; applied: boolean }[] = [];
   const handler = (r: SentRequest): Answer => {
     const parts = r.url.pathname.split("/");
@@ -58,7 +70,7 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
       const page = Number(r.url.searchParams.get("page") ?? "1");
       const matching = [...issues.values()].filter((i) => (state === null || i.state === state) && wanted.every((l) => i.labels.includes(l)));
       const more = page * size < matching.length;
-      return json(matching.slice((page - 1) * size, page * size), 200, { "x-next-page": more ? String(page + 1) : "" });
+      return json(matching.slice((page - 1) * size, page * size).map(sent), 200, { "x-next-page": more ? String(page + 1) : "" });
     }
     if (parts.at(-2) === "notes" && r.method === "DELETE") {
       // Issue #131: a note deleted; one already gone is GitLab's 404.
@@ -67,6 +79,7 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
       const kept = all.filter((n) => n.id !== Number(last));
       if (kept.length === all.length) return json({ message: "404 Not found" }, 404);
       notes.set(iid, kept);
+      touch(iid);
       return new Response(null, { status: 204 });
     }
     if (last === "notes") {
@@ -82,7 +95,7 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
     }
     const issue = issues.get(Number(last));
     if (issue === undefined) return json({ message: "404 Not found" }, 404);
-    if (r.method === "GET") return json(issue);
+    if (r.method === "GET") return json(sent(issue));
     if (r.method === "PUT") {
       const body = JSON.parse(r.body ?? "{}") as Record<string, unknown>;
       const failing = putFailures.findIndex((f) => Object.hasOwn(body, f.field));
@@ -98,8 +111,9 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
         state: body.state_event === "close" ? "closed" : body.state_event === "reopen" ? "opened" : issue.state,
       };
       issues.set(issue.iid, next);
+      touch(issue.iid);
       if (next.labels.join(",") !== issue.labels.join(",") || next.state !== issue.state) addNote(issue.iid, "changed the labels or state", true);
-      return failure !== null ? json({ message: "500 Internal Server Error" }, 500) : json(next);
+      return failure !== null ? json({ message: "500 Internal Server Error" }, 500) : json(sent(next));
     }
     return json({ message: "405 Method Not Allowed" }, 405);
   };
@@ -107,9 +121,11 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
     handler,
     issues: () => new Map(issues),
     failNextPut: (field, applied) => void putFailures.push({ field, applied }),
+    note: (iid, body) => void addNote(iid, body, false),
     close: (iid) => {
       const issue = issues.get(iid);
       if (issue !== undefined) issues.set(iid, { ...issue, state: "closed" });
+      touch(iid);
     },
   };
 };
