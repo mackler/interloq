@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
 import { type ClaudeFailure, classifyClaude, classifyCodex, isNetworkCode, NETWORK_CODES, networkCodeOf, PERMANENT_ASSISTANT_ERRORS, processEndOf, type Rejection } from "../src/transport.ts";
-import { timeOfDayIn } from "../src/limitReset.ts";
+import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, timeOfDayIn } from "../src/limitReset.ts";
 
 // Issue #68 (issue #66 applies): the classification of a failed Claude Code call over arbitrary facts.
 const RUNS = { numRuns: 500, seed: 20261007 };
@@ -241,16 +241,32 @@ test("property: networkCodeOf finds a code named as a whole word, never inside a
   );
 });
 
-// Issue #233: any text around a 429 status is rateLimited, unless a usage limit or a quota is named anywhere in it.
+// Issue #233 and #251: any text around a 429 status is limited with the rate type, and a usage limit or quota named
+// anywhere in it makes it limited with that limit's type.
 const plainWord = fc.constantFrom("the", "request", "was", "refused", "after", "retry", "exceeded", "last", "turn", "of", "codex", "12", "3");
 const plainText = fc.array(plainWord, { maxLength: 6 }).map((ws) => ws.join(" "));
-test("property: a 429 is rateLimited, and a usage limit or quota named anywhere makes it permanent", () => {
+const limitedAs = (limitType: string) => ({ kind: "limited", reset: { kind: "unknown" }, limitType });
+test("property: a 429 is limited with the rate type, and a usage limit or quota named anywhere gives its own type", () => {
   fc.assert(
-    fc.property(plainText, plainText, fc.constantFrom(" usage limit ", " quota "), fc.nat(), (prefix, suffix, permanent, at) => {
+    fc.property(plainText, plainText, fc.constantFrom([" usage limit ", CODEX_USAGE_LIMIT_TYPE], [" quota ", CODEX_QUOTA_TYPE]), fc.nat(), (prefix, suffix, [words, limitType], at) => {
       const text = `${prefix} status 429 ${suffix}`;
-      assert.deepEqual(classifyCodex(text), { kind: "rateLimited" });
+      assert.deepEqual(classifyCodex(text), limitedAs(CODEX_RATE_LIMIT_TYPE));
       const i = at % (text.length + 1);
-      assert.deepEqual(classifyCodex(text.slice(0, i) + permanent + text.slice(i)), { kind: "permanent" });
+      assert.deepEqual(classifyCodex(text.slice(0, i) + words + text.slice(i)), limitedAs(limitType));
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("property: the capacity text anywhere is limited with the capacity type, and a refused credential anywhere is permanent", () => {
+  const capacity = " Selected model is at capacity. Please try a different model. ";
+  const limitWords = fc.constantFrom("", " usage limit ", " quota ", " status 429 ", capacity);
+  fc.assert(
+    fc.property(plainText, plainText, limitWords, fc.nat(), (prefix, suffix, extra, at) => {
+      assert.deepEqual(classifyCodex(`${prefix}${capacity}${suffix}`), limitedAs(CODEX_CAPACITY_TYPE));
+      const text = `${prefix}${extra}${suffix}`;
+      const i = at % (text.length + 1);
+      assert.deepEqual(classifyCodex(text.slice(0, i) + " unexpected status 401 Unauthorized " + text.slice(i)), { kind: "permanent" });
     }),
     { numRuns: 200 },
   );

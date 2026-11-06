@@ -1,12 +1,13 @@
 // Issue #233 (the developer's decision of 2 Nov 2026): a Codex turn refused with 429 Too Many Requests is waited out
-// and tried again, with nothing asked, like a Claude Code limit with no known end; it never stops the run. A quota is
-// not a 429 and still halts. The scripted turns fail by the adapter's own mapping (turnFailure of src/codex.ts).
+// and tried again, with nothing asked, like a Claude Code limit with no known end; it never stops the run. Since issue
+// #251 a 429 naming a usage limit waits too, as a usage limit. The scripted turns fail by the adapter's own mapping
+// (turnFailure of src/codex.ts).
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Clock, Effect, Fiber } from "effect";
-import { CODEX_RATE_LIMIT_TYPE, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
+import { CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import { exitCodeOf, program } from "../src/program.ts";
 import * as prompts from "../src/prompts.ts";
 import { REVIEW_PURPOSE } from "../src/services.ts";
@@ -100,11 +101,13 @@ test("the developer ends the wait early: the review is made again at once and th
   assert.deepEqual(usageWaits(probe.dir).map((w) => w.outcome), ["ended"]);
 });
 
-test("a review refused with a 429 naming a usage limit halts with 1: a quota is not retried", async () => {
-  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [], failure: "429 Too Many Requests: You've hit your usage limit" }] });
+test("a review refused with a 429 naming a usage limit waits as a usage limit and the run ends 0, nothing asked", async () => {
+  const usage: ReviewStep = { issues: [], failure: "429 Too Many Requests: You've hit your usage limit" };
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [usage, { issues: [] }, { issues: [] }], execs: [finished] });
   const { clock, sleeps } = steppingClock(START);
   const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
-  assert.equal(code, 1);
-  assert.deepEqual(sleeps, []);
-  assert.match(read(probe.dir, "conversation.md"), /Codex review failed: 429 Too Many Requests: You've hit your usage limit/);
+  assert.equal(code, 0);
+  assert.deepEqual(probe.ui.asked, []);
+  assert.deepEqual(sleeps, [RETRY_MS]);
+  assert.deepEqual(waitingOf(probe.ui.notified).map((w) => [w.limitType, w.basis]), [[CODEX_USAGE_LIMIT_TYPE, { kind: "noKnownEnd", attempt: 1 }]]);
 });

@@ -122,6 +122,12 @@ export const USAGE_LIMIT_RETRY_SECONDS = 300;
 
 /** The limit type of a Codex turn refused with 429 Too Many Requests (issue #233), in `limit_type` of usage.jsonl. */
 export const CODEX_RATE_LIMIT_TYPE = "codex_too_many_requests";
+/** Issue #251: the limit type of a Codex model at capacity ("Selected model is at capacity. Please try a different model.") or overloaded. */
+export const CODEX_CAPACITY_TYPE = "codex_model_at_capacity";
+/** Issue #251: the limit type of a Codex usage limit ("You've hit your usage limit. … Try again later."). */
+export const CODEX_USAGE_LIMIT_TYPE = "codex_usage_limit";
+/** Issue #251: the limit type of a Codex quota ("Quota exceeded. Check your plan and billing details.", "exceeded your current quota"). */
+export const CODEX_QUOTA_TYPE = "codex_quota";
 
 /**
  * What a usage limit's wait rests on: a stated reset (from a rate-limit event or the error result's text); a time of

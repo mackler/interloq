@@ -69,7 +69,7 @@ test("review passes agentJsonSchema(Review) as outputSchema and records usage", 
 });
 
 test("a failed turn fails with CodexCallFailed", async () => {
-  const fake = await reviewer([new Error("the model is overloaded")]);
+  const fake = await reviewer([new Error("something went wrong")]);
   const session = await run(fake.reviewer.startPhase);
   await assert.rejects(run(session.review("review the plan", S.Review)), (e: unknown) => tag(e) === "CodexCallFailed");
 });
@@ -212,10 +212,10 @@ test("a notice followed by turn.failed with a stream-disconnected message is Tra
   await assert.rejects(run(session.review("review", S.Review)), (e: unknown) => (e as { _tag: string; agent: string })._tag === "TransportFault" && (e as { agent: string }).agent === "codex");
 });
 
-test("turn.failed with a usage limit is CodexCallFailed", async () => {
+test("turn.failed with a usage limit is UsageLimited (issue #251)", async () => {
   const fake = await reviewer([turnFailed("You've hit your usage limit.")]);
   const session = await run(fake.reviewer.startPhase);
-  await assert.rejects(run(session.review("review", S.Review)), (e: unknown) => tag(e) === "CodexCallFailed");
+  await assert.rejects(run(session.review("review", S.Review)), (e: unknown) => tag(e) === "UsageLimited");
 });
 
 test("a rejected runStreamed with ECONNRESET is TransportFault", async () => {
@@ -297,7 +297,7 @@ test("two turns that reuse an item id give two Started and Finished pairs under 
 });
 
 // Issue #233: a turn refused with 429 Too Many Requests is UsageLimited with no known end; a quota stays CodexCallFailed.
-import { CODEX_RATE_LIMIT_TYPE } from "../src/limitReset.ts";
+import { CODEX_CAPACITY_TYPE, CODEX_RATE_LIMIT_TYPE } from "../src/limitReset.ts";
 const TOO_MANY = "exceeded retry limit, last status: 429 Too Many Requests";
 const rateLimitedAs = (message: string) => (e: unknown): boolean => {
   const u = e as { _tag: string; agent: string; reset: unknown; limitType: string | null; message: string };
@@ -314,6 +314,13 @@ test("turn.failed with a 429 fails the review with UsageLimited", async () => {
   assert.ok(rateLimitedAs(TOO_MANY)(await failureOf(turnFailed(TOO_MANY))));
 });
 
-test("a 429 naming a quota still fails with CodexCallFailed", async () => {
-  assert.equal((await failureOf(turnFailed("429 Too Many Requests: exceeded your current quota")))._tag, "CodexCallFailed");
+// Issue #251: a turn refused at capacity is UsageLimited with no known end; a refused credential stays CodexCallFailed.
+test("turn.failed at capacity fails the review with UsageLimited of the capacity type", async () => {
+  const message = "Selected model is at capacity. Please try a different model.";
+  const u = (await failureOf(turnFailed(message))) as unknown as { _tag: string; agent: string; reset: unknown; limitType: string | null };
+  assert.deepEqual({ _tag: u._tag, agent: u.agent, reset: u.reset, limitType: u.limitType }, { _tag: "UsageLimited", agent: "codex", reset: { kind: "unknown" }, limitType: CODEX_CAPACITY_TYPE });
+});
+
+test("a 401 still fails with CodexCallFailed", async () => {
+  assert.equal((await failureOf(turnFailed("unexpected status 401 Unauthorized")))._tag, "CodexCallFailed");
 });

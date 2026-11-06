@@ -1,6 +1,6 @@
 // The classification of the agents' failures (issue #26): the one place where an SDK's failure is inspected to decide
 // whether a retry could fix it. Pure: no I/O, no Effect.
-import { type LimitReset, timeOfDayIn } from "./limitReset.ts";
+import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, type LimitReset, timeOfDayIn } from "./limitReset.ts";
 
 /**
  * What src/claudeEvents.ts keeps of a failed Claude Code call. The terminal facts (the result's status, reason and
@@ -146,8 +146,20 @@ const statusesIn = (message: string): readonly number[] => [
   ...[...message.matchAll(/\b([45]\d\d)\s+[A-Z][A-Za-z-]*(?:\s+[A-Z][A-Za-z-]*)*\b/g)].map((m) => Number(m[1])),
 ];
 
-/** A Codex usage limit or quota, or a schema Codex refused: permanent whatever else the message says. */
-const codexPermanent = /usage limit|quota|invalid_json_schema|outputSchema/i;
+const UNKNOWN_RESET: LimitReset = { kind: "unknown" };
+
+/**
+ * A Codex refusal no wait can fix (issue #251): a schema Codex refused, a refused credential, a model that does not
+ * exist, or a plan that does not include Codex. Permanent whatever else the message says. "Selected model is at
+ * capacity" names a model but says nothing of its existence, so none of these matches it.
+ */
+const codexNoWaitFixes = /invalid_json_schema|outputSchema|unauthorized|invalid api key|not logged in|log in again|model_not_found|does not exist or you do not have access|unknown model|to use codex with your chatgpt plan/i;
+/** A Codex usage limit (issue #251), waited out until its reset where the session file records one. */
+const codexUsageLimit = /usage limit|hit your limit/i;
+/** A Codex quota (issue #251). */
+const codexQuota = /quota/i;
+/** A Codex model at capacity or overloaded (issue #251): always waited out with no known end. */
+const codexCapacity = /at capacity|overloaded/i;
 /** Codex refused the request for too many at once (issue #233), named in words where no status is given. */
 const codexRateLimited = /rate limit|too many requests/i;
 const codexTransport = new RegExp(`stream disconnected|connection reset|connection closed|timed out|timeout|WebSocket protocol error|Reconnecting|socket hang up|${NETWORK_CODES.join("|")}`, "i");
@@ -159,18 +171,25 @@ export const errorCode = (e: unknown): string | null => {
 };
 
 /**
- * What a failed Codex turn is, by its message and the code of the thrown value if any. The evidence is read in this
- * order: a usage limit, a quota or a refused schema is permanent; then a 429 status or a rate limit named in words is
- * `rateLimited` (issue #233), waited out and tried again; then any other 4xx is permanent; then a network code, a
- * transport pattern or a 5xx is a transport fault a retry could fix; anything else is permanent.
+ * What a failed Codex turn is, by its message, the code of the thrown value if any, and the reset Codex's session file
+ * recorded (issue #251, `unknown` where none). The evidence is read in this order: a refusal no wait can fix
+ * (`codexNoWaitFixes`), a 401 or a 403 is permanent; then a usage limit, a quota, a model at capacity or overloaded, and
+ * a 429 or a rate limit named in words are each `limited` with their limit type, waited out and tried again (issues
+ * #233 and #251), the session file's reset kept for all but capacity, since a usage window's reset says nothing of the
+ * model's capacity; then any other 4xx is permanent; then a network code, a transport pattern or a 5xx is a transport
+ * fault a retry could fix; anything else is permanent.
  */
-export type CodexFailureKind = Readonly<{ kind: "permanent" }> | Readonly<{ kind: "transport" }> | Readonly<{ kind: "rateLimited" }>;
+export type CodexFailureKind = Readonly<{ kind: "permanent" }> | Readonly<{ kind: "transport" }> | Readonly<{ kind: "limited"; reset: LimitReset; limitType: string }>;
 const CODEX_PERMANENT: CodexFailureKind = { kind: "permanent" };
-export const classifyCodex = (message: string, code: string | null = null): CodexFailureKind => {
+export const classifyCodex = (message: string, code: string | null = null, reset: LimitReset = UNKNOWN_RESET): CodexFailureKind => {
   const statuses = statusesIn(message);
   const inRange = (from: number, to: number): boolean => statuses.some((s) => s >= from && s <= to);
-  if (codexPermanent.test(message)) return CODEX_PERMANENT;
-  if (statuses.includes(429) || codexRateLimited.test(message)) return { kind: "rateLimited" };
+  const limited = (limitType: string, kept: LimitReset): CodexFailureKind => ({ kind: "limited", reset: kept, limitType });
+  if (codexNoWaitFixes.test(message) || statuses.includes(401) || statuses.includes(403)) return CODEX_PERMANENT;
+  if (codexUsageLimit.test(message)) return limited(CODEX_USAGE_LIMIT_TYPE, reset);
+  if (codexQuota.test(message)) return limited(CODEX_QUOTA_TYPE, reset);
+  if (codexCapacity.test(message)) return limited(CODEX_CAPACITY_TYPE, UNKNOWN_RESET);
+  if (statuses.includes(429) || codexRateLimited.test(message)) return limited(CODEX_RATE_LIMIT_TYPE, reset);
   if (inRange(400, 499)) return CODEX_PERMANENT;
   return (code !== null && isNetworkCode(code)) || codexTransport.test(message) || inRange(500, 599) ? { kind: "transport" } : CODEX_PERMANENT;
 };
@@ -196,7 +215,6 @@ const is5xx = (s: number | null): boolean => s !== null && s >= 500 && s <= 599;
 const PERMANENT: FailureKind = { kind: "permanent" };
 const TRANSPORT: FailureKind = { kind: "transport" };
 const CONTEXT_TOO_LONG: FailureKind = { kind: "contextTooLong" };
-const UNKNOWN_RESET: LimitReset = { kind: "unknown" };
 
 /** A rate limit's evidence: a 429, or the rate_limit error. */
 const isRateLimit = (status: number | null, error: string | null): boolean => status === 429 || error === "rate_limit";

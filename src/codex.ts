@@ -3,7 +3,7 @@
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { Effect, Exit, Layer, Ref } from "effect";
 import { CodexCallFailed, TransportFault, UsageLimited } from "./errors.ts";
-import { CODEX_RATE_LIMIT_TYPE } from "./limitReset.ts";
+import type { LimitReset } from "./limitReset.ts";
 import { classifyCodex, errorCode, networkCodeOf } from "./transport.ts";
 import { thrownText } from "./prompts.ts";
 import { agentJsonSchema } from "./jsonSchema.ts";
@@ -13,17 +13,18 @@ import { REVIEW_PURPOSE, Reviewer, type ReviewerShape, type ReviewSession, RunCo
 
 const failedWith = (e: unknown): CodexCallFailed => new CodexCallFailed({ message: e instanceof Error ? e.message : String(e) });
 /**
- * A failure of a turn, by src/transport.ts: TransportFault for a transport fault (issue #26), UsageLimited with no known
- * end for a 429 or a rate limit (issue #233), waited out like a Claude Code limit with no known end, CodexCallFailed
+ * A failure of a turn, by src/transport.ts: TransportFault for a transport fault (issue #26), UsageLimited for a limit
+ * a wait can fix (a 429 or a rate limit, issue #233; a model at capacity, a usage limit or a quota, issue #251), with
+ * its limit type and the reset Codex's session file recorded, waited out like a Claude Code limit; CodexCallFailed
  * otherwise. Exported so that the scripted reviewer of the tests fails a turn by this mapping.
  */
-export const turnFailure = (message: string, code: string | null = null): CodexCallFailed | TransportFault | UsageLimited => {
-  const kind = classifyCodex(message, code).kind;
-  switch (kind) {
+export const turnFailure = (message: string, code: string | null = null, reset: LimitReset = { kind: "unknown" }): CodexCallFailed | TransportFault | UsageLimited => {
+  const kind = classifyCodex(message, code, reset);
+  switch (kind.kind) {
     case "transport":
       return new TransportFault({ agent: "codex", message, status: null, networkCode: networkCodeOf(code, [message]) });
-    case "rateLimited":
-      return new UsageLimited({ agent: "codex", message, reset: { kind: "unknown" }, limitType: CODEX_RATE_LIMIT_TYPE });
+    case "limited":
+      return new UsageLimited({ agent: "codex", message, reset: kind.reset, limitType: kind.limitType });
     case "permanent":
       return new CodexCallFailed({ message });
   }

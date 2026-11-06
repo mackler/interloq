@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CONTEXT_TOO_LONG_PATTERN, type ClaudeFailure, classifyClaude, classifyCodex, processEndOf, rejectionOf } from "../src/transport.ts";
-import { timeOfDayIn } from "../src/limitReset.ts";
+import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, timeOfDayIn } from "../src/limitReset.ts";
 
 const isRetried = (failure: ClaudeFailure | null): boolean => classifyClaude(failure).kind === "transport";
 
@@ -20,20 +20,56 @@ test("Codex: transport patterns are retried", () => {
 });
 
 test("Codex: permanent evidence is not retried, and wins over transport evidence", () => {
-  for (const m of ["You've hit your usage limit. Upgrade to Pro", "exceeded your current quota", "unexpected status 400 Bad Request: invalid_json_schema", "Invalid outputSchema", "unexpected status 401 Unauthorized"]) {
+  for (const m of ["unexpected status 400 Bad Request: invalid_json_schema", "Invalid outputSchema", "unexpected status 401 Unauthorized", "stream disconnected: unexpected status 403 Forbidden"]) {
     assert.deepEqual(classifyCodex(m), { kind: "permanent" }, m);
   }
 });
 
 // Issue #233 (the developer's decision of 2 Nov 2026): a 429 waits and tries again; a quota stays permanent.
-test("Codex: a 429 or a rate limit is rateLimited", () => {
+const limited = (limitType: string, reset: unknown = { kind: "unknown" }) => ({ kind: "limited", reset, limitType });
+test("Codex: a 429 or a rate limit is limited with the rate type", () => {
   for (const m of ["exceeded retry limit, last status: 429 Too Many Requests", "stream disconnected: unexpected status 429 Too Many Requests", "rate limit reached", "Too Many Requests", "Codex Exec exited with code 1: exceeded retry limit, last status: 429 Too Many Requests"]) {
-    assert.deepEqual(classifyCodex(m), { kind: "rateLimited" }, m);
+    assert.deepEqual(classifyCodex(m), limited(CODEX_RATE_LIMIT_TYPE), m);
   }
 });
 
-test("Codex: a 429 naming a usage limit or a quota stays permanent", () => {
-  for (const m of ["429 Too Many Requests: usage limit reached", "status 429: insufficient_quota", "rate limit: you exceeded your current quota"]) {
+// Issue #251 (the developer's instruction of 3 Nov 2026): every Codex refusal a later attempt can succeed past waits.
+const CAPACITY = "Selected model is at capacity. Please try a different model.";
+test("Codex: a model at capacity or overloaded is limited with the capacity type", () => {
+  for (const m of [CAPACITY, `${CAPACITY} (Codex Exec exited with code 1: Reading prompt from stdin...)`, "The server is overloaded, please try again", "unexpected status 503: model overloaded"]) {
+    assert.deepEqual(classifyCodex(m), limited(CODEX_CAPACITY_TYPE), m);
+  }
+});
+
+test("Codex: a usage limit and a quota are limited with their types, a 429 naming one included", () => {
+  for (const m of ["You've hit your usage limit. Upgrade to Pro", "You've hit your usage limit. Try again later.", "429 Too Many Requests: usage limit reached"]) {
+    assert.deepEqual(classifyCodex(m), limited(CODEX_USAGE_LIMIT_TYPE), m);
+  }
+  for (const m of ["exceeded your current quota", "Quota exceeded. Check your plan and billing details.", "status 429: insufficient_quota", "rate limit: you exceeded your current quota"]) {
+    assert.deepEqual(classifyCodex(m), limited(CODEX_QUOTA_TYPE), m);
+  }
+});
+
+test("Codex: the session file's reset is kept for a usage limit, a quota and a rate limit, never for capacity", () => {
+  const reset = { kind: "instant", atMs: Date.UTC(2026, 10, 3, 20) } as const;
+  assert.deepEqual(classifyCodex("You've hit your usage limit.", null, reset), limited(CODEX_USAGE_LIMIT_TYPE, reset));
+  assert.deepEqual(classifyCodex("exceeded your current quota", null, reset), limited(CODEX_QUOTA_TYPE, reset));
+  assert.deepEqual(classifyCodex("429 Too Many Requests", null, reset), limited(CODEX_RATE_LIMIT_TYPE, reset));
+  assert.deepEqual(classifyCodex(CAPACITY, null, reset), limited(CODEX_CAPACITY_TYPE));
+});
+
+test("Codex: a refusal no wait can fix stays permanent whatever limit words it holds", () => {
+  for (const m of [
+    "unexpected status 401 Unauthorized",
+    "unexpected status 401 Unauthorized: usage limit",
+    "invalid_json_schema: quota",
+    "Invalid outputSchema",
+    "model_not_found: The model `gpt-9` does not exist or you do not have access to it.",
+    "unknown model gpt-9",
+    "invalid api key",
+    "You are not logged in. Please log in again.",
+    "To use Codex with your ChatGPT plan, upgrade to Plus",
+  ]) {
     assert.deepEqual(classifyCodex(m), { kind: "permanent" }, m);
   }
 });
@@ -47,6 +83,7 @@ test("Codex: an exec exit is retried only when its stderr shows a transport faul
   assert.equal(classifyCodex("Codex Exec exited with code 1: error: stream disconnected before completion").kind === "transport", true);
   assert.equal(classifyCodex("Codex Exec exited with code 1: error: unknown flag").kind === "transport", false);
   assert.equal(classifyCodex("Codex Exec exited with code 1: stream disconnected; usage limit").kind === "transport", false);
+  assert.equal(classifyCodex("Codex Exec exited with code 1: stream disconnected; invalid_json_schema").kind === "transport", false);
 });
 
 const none: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null, processEnd: null };

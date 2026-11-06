@@ -138,6 +138,7 @@ test("turnEnd: a kept error wins over a nonzero exit; otherwise the exit's text 
 // Issue #233: the failure Codex recorded when its CLI exits without printing it.
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { classifyCodex } from "../src/transport.ts";
+import { CODEX_RATE_LIMIT_TYPE } from "../src/limitReset.ts";
 import { recordedFailureText, sessionFailureOf, streamFailureOf } from "../src/codexArgs.ts";
 
 const TOO_MANY = "exceeded retry limit, last status: 429 Too Many Requests";
@@ -174,14 +175,17 @@ test("recordedFailureText: the recorded cause first, the exit kept as evidence, 
   assert.equal(recordedFailureText(TOO_MANY, "Codex Exec exited with code 1: Reading prompt from stdin...\n"), `${TOO_MANY} (Codex Exec exited with code 1: Reading prompt from stdin...)`);
 });
 
-test("property: recordedFailureText begins with the cause, contains the trimmed exit, and a recorded 429 is rateLimited", () => {
+// Issue #251: a recorded 429 is limited with the rate type, unless the text also names a limit of another type or a
+// refusal no wait can fix.
+const OTHER_EVIDENCE = /usage limit|hit your limit|quota|at capacity|overloaded|invalid_json_schema|outputSchema|unauthorized|forbidden|invalid api key|not logged in|log in again|model_not_found|does not exist or you do not have access|unknown model|to use codex with your chatgpt plan|\b4\d\d\b/gi;
+test("property: recordedFailureText begins with the cause, contains the trimmed exit, and a recorded 429 is limited", () => {
   fc.assert(
     fc.property(fc.string(), fc.string(), (exitTail, extra) => {
       const exit = `Codex Exec exited with code 1: ${exitTail}`;
-      const text = recordedFailureText(`${TOO_MANY}${extra.replace(/usage limit|quota|invalid_json_schema|outputSchema/gi, "")}`, exit);
+      const text = recordedFailureText(`${TOO_MANY}${extra.replace(OTHER_EVIDENCE, "")}`, exit);
       assert.ok(text.startsWith(TOO_MANY));
       assert.ok(text.includes(exit.trim()));
-      if (!/usage limit|quota|invalid_json_schema|outputSchema/i.test(text)) assert.deepEqual(classifyCodex(text), { kind: "rateLimited" });
+      if (text.replace(TOO_MANY, "").match(OTHER_EVIDENCE) === null) assert.deepEqual(classifyCodex(text), { kind: "limited", reset: { kind: "unknown" }, limitType: CODEX_RATE_LIMIT_TYPE });
     }),
     { numRuns: 200 },
   );
