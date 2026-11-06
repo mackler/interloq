@@ -6,6 +6,7 @@
 
 import { AGENT_DISPLAY, type Agent } from "../../src/agents.ts";
 import { type Ending, endsAtItsEnd } from "../../src/ending.ts";
+import { elapsedMs } from "./time.ts";
 import { type PreparationMark, type PreparationView, preparingItemOf } from "../../src/preparationSwitch.ts";
 import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
@@ -251,8 +252,10 @@ export type RunView = Readonly<{
   /** A wait for a usage limit while it lasts (issue #68): from its start to its scheduled end, both known. */
   limitWait: LimitWait | null;
   timeline: readonly TimelineEntry[];
-  /** Issue #44: the run's ending as the program concluded it, null while it runs. */
-  ended: Ending | null;
+  /** Issue #18: the envelope time of the run's Started, the moment it was started; null before it is folded. */
+  startedAt: string | null;
+  /** Issue #44: the run's ending as the program concluded it, null while it runs; issue #18: with its run time. */
+  ended: EndedRun | null;
   /** Internal to the fold: the lines said for the last clarification turn still to absorb, and the options of the last question presented (S5). */
   absorb: readonly string[];
   questionOptions: readonly Choice[];
@@ -545,7 +548,7 @@ export const runTabs = (state: ViewState, mode: RunMode, unseen: ReadonlySet<num
   ...tabRuns(state, mode).map((r): RunTab => {
     const name = runTabName(r.item ?? { id: `${r.id}`, title: "" });
     if (waits(r)) return { value: `run-${r.id}`, name: waitingTabName(name), plain: name, ending: null };
-    if (r.ended !== null && unseen.has(r.id)) return { value: `run-${r.id}`, name: endedTabName(name, r.ended), plain: name, ending: r.ended };
+    if (r.ended !== null && unseen.has(r.id)) return { value: `run-${r.id}`, name: endedTabName(name, r.ended.ending), plain: name, ending: r.ended.ending };
     return { value: `run-${r.id}`, name, plain: name, ending: null };
   }),
 ];
@@ -559,6 +562,9 @@ const modeOfRun = (run: RunView): RunMode | null => run.mode;
 const sameSubject = (a: SubjectId, b: SubjectId): boolean => JSON.stringify(a) === JSON.stringify(b);
 const isDecision = (subject: SubjectId): boolean => typeof subject === "object" && "decision" in subject;
 const samePhase = (a: Phase, b: Phase): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** Issue #18: the run's ending and how long the run took, from its Started to its Ended; null where no Started was folded. */
+export type EndedRun = Readonly<{ ending: Ending; runTimeMs: number | null }>;
 
 export const emptyRun = (id: number): RunView => ({
   id,
@@ -579,6 +585,7 @@ export const emptyRun = (id: number): RunView => ({
   retry: null,
   limitWait: null,
   timeline: [],
+  startedAt: null,
   ended: null,
   absorb: [],
   questionOptions: [],
@@ -1193,7 +1200,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
   const next = ((): RunView => {
     switch (event._tag) {
       case "Started":
-        return { ...r, project: event.project, location: event.location, task: event.task, mode: event.mode, item: event.item };
+        return { ...r, project: event.project, location: event.location, task: event.task, mode: event.mode, item: event.item, startedAt: time };
       case "Said":
         return event.text.trim() === "" ? r : withInterloqLine(r, event.text);
       case "Asked": {
@@ -1309,7 +1316,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         return notifiedEvent(r, event.event, time);
       case "Ended": {
         const quiet = withoutHelp(withActivity(r, ""));
-        const ended: RunView = { ...quiet, dashboard: { ...quiet.dashboard, draft: null, preparing: null }, explaining: null, deciding: [], termsRequested: [], ended: event.ending, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.ending, time), r.plan) : endEntry(e, event.ending, time))) };
+        const ended: RunView = { ...quiet, dashboard: { ...quiet.dashboard, draft: null, preparing: null }, explaining: null, deciding: [], termsRequested: [], ended: { ending: event.ending, runTimeMs: r.startedAt === null ? null : elapsedMs(r.startedAt, Date.parse(time)) }, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.ending, time), r.plan) : endEntry(e, event.ending, time))) };
         return reshow(ended);
       }
     }

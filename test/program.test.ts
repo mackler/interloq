@@ -55,11 +55,12 @@ const rootOf = (probe: WiringProbe): RunRoot => path.relative(path.join(probe.pr
 const sessionLine = (probe: WiringProbe, id: string | null, mode: RunMode = "implementation"): string => sessionsLine(rootOf(probe), mode, id);
 /** The session line of a run halted before its records directory was allocated: its words before the path it names. */
 const noSession = (line: string): boolean => (["implementation", "refinement"] as const).some((mode) => line.startsWith(sessionsLine("unallocated" as RunRoot, mode, null).split("plan-review/")[0]));
-/** The lines every ending prints last: the Claude Code sessions and the usage summary. */
+/** The lines every ending prints last: the run time (issue #18), the Claude Code sessions and the usage summary. */
 const assertTail = (probe: WiringProbe, mode: RunMode = "implementation"): void => {
   const lines = probe.ui.said.flatMap((text) => text.split("\n"));
   assert.ok([sessionLine(probe, "test-session", mode), sessionLine(probe, null, mode)].includes(lines.at(-2) ?? "") || noSession(lines.at(-2) ?? ""), lines.at(-2));
   assert.match(lines.at(-1) ?? "", /^Usage: /);
+  assert.match(lines.at(-3) ?? "", /^Run time: /);
 };
 
 test("a finished run prints the plan path and exits 0", async () => {

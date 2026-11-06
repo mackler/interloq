@@ -86,7 +86,7 @@ const throughThePage = async (options: TestOptions, tracker: FakeTracker) => {
   assert.ok(frame !== undefined, "the replay holds no Ended");
   const view = decoded.reduce(reduce, initialState).modes.implementation.runs.find((r) => r.id === id);
   assert.equal(observed.length, 1);
-  return { conclusion: observed[0]!, frame, shown: view?.ended ?? null };
+  return { conclusion: observed[0]!, frame, shown: view?.ended?.ending ?? null };
 };
 
 const agree = (r: Awaited<ReturnType<typeof throughThePage>>) => {

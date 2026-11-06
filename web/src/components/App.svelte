@@ -425,7 +425,7 @@
       // Issue #139: the run's usage-limit wait, which its tab, the title and the icon show as a pause.
       limit: watched === null ? null : limitPauseOf(watched),
       run: watched === null || view.incarnation === null ? null : { incarnation: view.incarnation, run: watched.id },
-      ended: watched?.ended ?? null,
+      ended: watched?.ended?.ending ?? null,
       visible,
       promptShown: onScreen && (asking || deciding),
       onScreen,
@@ -605,7 +605,7 @@
         {#if !compact}<Notices notices={view.notices} onDismiss={dismiss} />{/if}
         {#if run.ended !== null}
           <div class="ended">
-            <EndedLine ending={run.ended} />
+            <EndedLine ending={run.ended.ending} runTimeMs={run.ended.runTimeMs} />
             <span class="ended-actions">
               {#if mode === "refinement"}<Button variant="text" type="button" name="close" onclick={() => closeRunTab(run.id)}>{CLOSE_RUN_TAB}</Button>{/if}
               <Button variant="filled" type="button" name="new" onclick={backToList}>{BACK_TO_LIST}</Button>

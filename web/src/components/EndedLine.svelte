@@ -3,11 +3,12 @@
   // since the line's first word states the ending; the ending's line; and the confirmed disposition of the work and the
   // item, each a paragraph of its own. A halt and an abandonment are drawn in the error color (decision Q2), never the
   // only signal. Every text through Svelte's interpolation, so none is markup. It stays shown after the attention mark
-  // clears (issue #209).
+  // clears (issue #209). Issue #18: how long the run took, after the ending's line, in the details' style, since it
+  // states a measurement and no alert; none where the run's start is unknown.
   import { type Ending, endingAlerts } from "../../../src/ending.ts";
-  import { endingDetails, endingLine, endingMarkOf } from "../../../src/prompts.ts";
+  import { endingDetails, endingLine, endingMarkOf, runTimeText } from "../../../src/prompts.ts";
 
-  let { ending }: { ending: Ending } = $props();
+  let { ending, runTimeMs }: { ending: Ending; runTimeMs: number | null } = $props();
   const alert = $derived(endingAlerts(ending));
 </script>
 
@@ -15,6 +16,9 @@
   <span class="mark" class:alert aria-hidden="true">{endingMarkOf(ending)}</span>
   <div class="text">
     <p class="line m3-font-body-medium" class:alert>{endingLine(ending)}</p>
+    {#if runTimeMs !== null}
+      <p class="detail m3-font-body-small" data-run-time>{runTimeText(runTimeMs)}</p>
+    {/if}
     {#each endingDetails(ending) as detail, i (i)}
       <p class="detail m3-font-body-small">{detail}</p>
     {/each}

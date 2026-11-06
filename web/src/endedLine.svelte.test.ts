@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import EndedLine from "./components/EndedLine.svelte";
 import type { Ending } from "../../src/ending.ts";
 import { endingAlerts } from "../../src/ending.ts";
-import { endingDetails, endingLine, endingMarkOf } from "../../src/prompts.ts";
+import { endingDetails, endingLine, endingMarkOf, runTimeText } from "../../src/prompts.ts";
 import { ABANDONED_PARK_FAILED, ENDINGS, HALTED_UNCHECKED, SENT_BACK_NOTHING, UNESTABLISHED_ENDING } from "../../test/endingFixtures.ts";
 
 let mounted: ReturnType<typeof mount>[] = [];
@@ -14,10 +14,10 @@ afterEach(() => {
   mounted = [];
   document.body.innerHTML = "";
 });
-const show = (ending: Ending): HTMLElement => {
+const show = (ending: Ending, runTimeMs: number | null = null): HTMLElement => {
   const root = document.createElement("div");
   document.body.appendChild(root);
-  mounted.push(mount(EndedLine, { target: root, props: { ending } }));
+  mounted.push(mount(EndedLine, { target: root, props: { ending, runTimeMs } }));
   flushSync();
   return root.querySelector<HTMLElement>("[role=status]")!;
 };
@@ -35,6 +35,21 @@ describe("EndedLine", () => {
       expect(status.querySelectorAll(".alert").length > 0).toBe(endingAlerts(ending));
       document.body.innerHTML = "";
     }
+  });
+  // Issue #18: the run's time, after the ending's line and before its details, a measurement and never an alert.
+  test("every ending with a run time shows it after its line, in the details' style", () => {
+    for (const ending of ENDINGS) {
+      const status = show(ending, 3_725_000);
+      const paragraphs = [...status.querySelectorAll("p")].map((p) => p.textContent);
+      expect(paragraphs).toEqual([endingLine(ending), runTimeText(3_725_000), ...endingDetails(ending)]);
+      const runTime = status.querySelector("[data-run-time]");
+      expect(runTime?.textContent).toBe(runTimeText(3_725_000));
+      expect(runTime?.classList.contains("alert")).toBe(false);
+      document.body.innerHTML = "";
+    }
+  });
+  test("a run with no run time shows none", () => {
+    expect(show(ENDINGS[0]!, null).querySelector("[data-run-time]")).toBeNull();
   });
   test("a send-back that parked nothing says there was no work to keep and names no branch", () => {
     const text = visibleText(show(SENT_BACK_NOTHING));

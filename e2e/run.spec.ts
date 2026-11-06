@@ -71,6 +71,8 @@ test.describe("the tests of the converge server, in order", () => {
     await expect(right(page).getByText("The step names no file.")).toBeVisible();
     await expect(right(page).getByText(/accepted: rationale P1-R1-1/)).toBeVisible();
     await toHaveEnded(page, "Completed");
+    // Issue #18: the ended line gives the run's time from its start to its end.
+    await expect(page.locator("[role=status][data-ending=Completed] [data-run-time]")).toHaveText(/^Run time: \d+:\d\d(:\d\d)?$/);
     // Issues #14 and #28: a finished loop is one line with what its cycles resolved, and no limit is shown.
     await expect(rail(page).getByText(loopSummary(2, 1, "converged"), { exact: true })).toBeVisible();
     await expect(rail(page).getByText(loopSummary(1, 0, "converged"), { exact: true })).toBeVisible();

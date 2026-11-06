@@ -20,7 +20,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { limitPauseOf, shownAnalysis, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState, dismissNotice, notice } from "./state.ts";
+import { limitPauseOf, shownAnalysis, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, foldEvent, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState, dismissNotice, notice } from "./state.ts";
 import { type ConnectionCondition, connectionNotices, messages, type Notices } from "./notices.ts";
 import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
@@ -408,7 +408,7 @@ describe("activity and timeline", () => {
     const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 2, limit: 5 }), endedEvent(INTERRUPTED)]));
     expect(runOf(s, "implementation")?.timeline.map((e) => [e.label, e.state])).toEqual([["Planning", "stopped"]]);
     expect(runOf(s, "implementation")?.timeline[0].groups[0].rounds.map((r) => r.round)).toEqual([1, 2]);
-    expect(runOf(s, "implementation")?.ended).toEqual(INTERRUPTED);
+    expect(runOf(s, "implementation")?.ended?.ending).toEqual(INTERRUPTED);
   });
 });
 
@@ -2964,7 +2964,7 @@ describe("the presented runs", () => {
   // Issue #44: the run's ending, never its code, is what the view keeps and what its tab shows.
   test("issue #44: a send-back's Ended sets the ending, and its unseen tab carries ↩", () => {
     const ended = fold(eventsOf(1, [endedEvent(SENT_BACK_PARKED)], 2), two);
-    expect(ended.modes.refinement.runs.find((r) => r.id === 1)?.ended).toEqual(SENT_BACK_PARKED);
+    expect(ended.modes.refinement.runs.find((r) => r.id === 1)?.ended?.ending).toEqual(SENT_BACK_PARKED);
     expect(runTabs(ended, "refinement", new Set([1]))[1]!.name).toBe(`↩ ${prompts.runTabName({ id: "11", title: "item 11" })}`);
   });
   test("issue #44: a replayed Ended recorded without its ending is shown as ended, with –", () => {
@@ -2972,7 +2972,7 @@ describe("the presented runs", () => {
     const decoded = decodeServer(frame);
     if (decoded._tag !== "Success") throw new Error("the frame did not decode");
     const ended = fold([decoded.success], two);
-    expect(ended.modes.refinement.runs.find((r) => r.id === 1)?.ended).toEqual(UNESTABLISHED_ENDING);
+    expect(ended.modes.refinement.runs.find((r) => r.id === 1)?.ended?.ending).toEqual(UNESTABLISHED_ENDING);
     expect(runTabs(ended, "refinement", new Set([1]))[1]!.name).toBe(`– ${prompts.runTabName({ id: "11", title: "item 11" })}`);
   });
 
@@ -3009,7 +3009,7 @@ describe("the countdown of a question (issue #185)", () => {
     const run = runOf(fold(live(events)), "implementation");
     expect(run?.pending).toBe(null);
     expect(run?.expired).toEqual({ prompt: 1, seconds: 120 });
-    expect(run?.ended).toEqual(ABANDONED);
+    expect(run?.ended?.ending).toEqual(ABANDONED);
     expect(prompts.endingWord(ABANDONED)).toBe("abandoned");
     // A replay of the same events folds alike.
     expect(runOf(replayed(events), "implementation")?.expired).toEqual(run?.expired);
@@ -3894,5 +3894,25 @@ describe("a question open beside the run (issue #243)", () => {
     expect(r?.analysis).toBeNull();
     expect(r?.pending).toBeNull();
     expect(r?.deciding).toEqual([]);
+  });
+});
+
+// Issue #18: the run's time, from its Started's envelope time to its Ended's, kept with its ending, live and replayed alike.
+describe("run time (issue #18)", () => {
+  const startedAt = Date.UTC(2026, 10, 6, 10, 0, 0);
+  const seconds = (iso: string) => (Date.parse(iso) - BASE) / 1000;
+  const times = [seconds(new Date(startedAt).toISOString()), seconds("2026-11-06T11:02:05.000Z")];
+  test("a run's ended value carries its ending and the time from Started to Ended, live and replayed alike", () => {
+    const events = [started, endedEvent(COMPLETED)];
+    const expected = { ending: COMPLETED, runTimeMs: 3_725_000 };
+    expect(runOf(fold(live(events, 1, times)), "implementation")?.ended).toEqual(expected);
+    expect(runOf(replayed(events, 1, null, times), "implementation")?.ended).toEqual(expected);
+  });
+  test("an Ended folded with no Started has no run time", () => {
+    expect(foldEvent(emptyRun(1), { time: at(5), event: endedEvent(COMPLETED) }).ended).toEqual({ ending: COMPLETED, runTimeMs: null });
+  });
+  test("an Ended stamped before its Started gives a run time of 0, never a negative one", () => {
+    const run = foldEvent(foldEvent(emptyRun(1), { time: at(10), event: started }), { time: at(5), event: endedEvent(COMPLETED) });
+    expect(run.ended).toEqual({ ending: COMPLETED, runTimeMs: 0 });
   });
 });

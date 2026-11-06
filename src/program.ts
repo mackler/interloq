@@ -9,7 +9,7 @@ import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe,
 import { heldTrackerEnv, noTrackerQuestion, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
 import { lateFindings } from "./lateFindings.ts";
-import { abandonAfterSendBackLine, abandonedRecord, lateFindingsLine, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
+import { abandonAfterSendBackLine, abandonedRecord, lateFindingsLine, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, runTimeText, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { type ImplementationEnd, implementationRun, type RefinementEnd, type RefinementSource, refinementRun, run, type UsedPreparation } from "./run.ts";
 import { preparationOf } from "./preparedComments.ts";
 import type { AgentSdk } from "./sdk.ts";
@@ -276,12 +276,15 @@ const programWith = (
     const ui = yield* wiring.ui;
     // Issue #120: the run's records directory, named by its start time, mode and item; allocated after the configuration
     // and the item are read. Issue #193: a halt before that allocates it to record the halt there (haltedBeforeRecords).
-    const planned = runRootOf(mode, start.item, new Date(yield* Clock.currentTimeMillis).toISOString());
+    // Issue #18: the same read is the run's start, from which its run time is measured.
+    const startedMs = yield* Clock.currentTimeMillis;
+    const planned = runRootOf(mode, start.item, new Date(startedMs).toISOString());
     const store = (root: RunRoot, ignorePaths: readonly string[]) => makeStore(project, root, ignorePaths).pipe(Effect.map(wiring.store ?? ((s: StoreShape) => s)), Effect.provide(wiring.platform));
 
-    /** The last two lines of every ending. */
+    /** The last lines of every ending: the run time (issue #18), the sessions and the usage summary; said only. */
     const tail = (sessionId: string | null, records: StoreShape) =>
       Effect.gen(function* () {
+        yield* ui.say(runTimeText((yield* Clock.currentTimeMillis) - startedMs));
         yield* ui.say(sessionsLine(records.root, mode, sessionId));
         const usage = yield* records.usageLines().pipe(Effect.map(summarizeUsage), Effect.map((s) => renderUsage(s, recordPath(records.root, { kind: "usage" }))), Effect.catch((e) => Effect.succeed(`unavailable: ${describe(e)}`)));
         yield* ui.say(`Usage: ${usage}`);

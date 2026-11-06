@@ -578,7 +578,7 @@ describe("TopBar", () => {
     const idle = show(TopBar, { run: null, location: null, connection: "reconnecting", onStop: () => undefined });
     expect((one(idle, "button[name=stop]") as HTMLButtonElement).disabled).toBe(true);
     expect(idle.textContent).toMatch(/reconnecting/);
-    const ended = show(TopBar, { run: { ...run, ended: COMPLETED }, location: null, connection: "open", onStop: () => undefined });
+    const ended = show(TopBar, { run: { ...run, ended: { ending: COMPLETED, runTimeMs: null } }, location: null, connection: "open", onStop: () => undefined });
     expect((one(ended, "button[name=stop]") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -599,7 +599,7 @@ describe("TopBar", () => {
   // W1-R1-1: once a run has ended the bar shows the server's identification, as above the form for a new task.
   test("an ended run gives way to the server's identification; a run in progress keeps its own", () => {
     const run = { ...emptyRun(3), project: "/workspace", location: "/host/other", task: "the task" };
-    const ended = show(TopBar, { run: { ...run, ended: COMPLETED }, location: "/host/server", connection: "open", onStop: () => undefined });
+    const ended = show(TopBar, { run: { ...run, ended: { ending: COMPLETED, runTimeMs: null } }, location: "/host/server", connection: "open", onStop: () => undefined });
     expect(one(ended, "h1 .project-name").textContent?.trim()).toBe("server");
     expect(one(ended, ".location").textContent?.trim()).toBe("/host/server");
     const during = show(TopBar, { run, location: "/host/server", connection: "open", onStop: () => undefined });

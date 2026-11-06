@@ -2917,6 +2917,8 @@ export function durationText(ms: number): string {
 export function phaseTook(ms: number): string {
   return `took ${durationText(ms)}`;
 }
+/** Issue #18: how long a run took, from its start to its end; the program's closing line and the page's ended line. */
+export const runTimeText = (ms: number): string => `Run time: ${durationText(ms)}`;
 /** The active phase's time since it began, beside its name in the progress rail (issue #50, Q2). */
 export function phaseElapsed(ms: number): string {
   return `${durationText(ms)} so far`;
