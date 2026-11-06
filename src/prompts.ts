@@ -3987,7 +3987,7 @@ export function questionTitle(n: number): string {
 }
 /** The note beside a context paragraph that the program wrote itself (S7, S10). */
 export const CONTEXT_BY_PROGRAM = "written by Interloq";
-const agentWords = (agent: Agent): string => (agent === "claude" ? "Claude Code, the coding agent," : "Codex, the reviewing agent,");
+const agentWords = (agent: Agent): string => `${AGENT_DISPLAY[agent].name}, ${AGENT_DISPLAY[agent].role},`;
 /**
  * Where a question came from, in ordinary words (S5): the subdued line under its heading. A question inside decision k
  * says that it belongs to the analysis the user asked for, and why it is asked (issue #57).
