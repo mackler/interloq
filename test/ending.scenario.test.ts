@@ -20,7 +20,7 @@ const noQuestions = { questions_for_user: [] };
 const quickTracker = { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 };
 const unreachable = (status: number | null = null) => new TrackerUnreachable({ tracker: "fake", message: "down", status });
 const verdictAtFirstPlan: TestOptions = { steps: [{ output: notRefined(MISSING) }], reviews: [{ issues: [] }] };
-const notRefinedExec = { status: "not_refined" as const, summary: "S1 done", question: MISSING, remainingWork: "S2", userInput: null, checks: [] };
+const notRefinedExec = { status: "not_refined" as const, summary: "S1 done", question: MISSING, remainingWork: "S2", userInput: null, checks: [], testFirst: [] };
 const verdictMidWork: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [notRefinedExec] };
 const finishing: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
 const haltsAtPlanning: TestOptions = { steps: [{ sessionTooLong: "Prompt is too long" }] };
@@ -71,7 +71,7 @@ test("(c) an abandonment whose parking fails is abandoned with the parking's fai
     steps: [{ output: noQuestions, plan: "v1" }, { output: { questions_for_user: [question] }, plan: "v2" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execScripts: [{ uncommitted: true }],
-    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [] }],
+    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [], testFirst: [] }],
     store: (s) => ({ ...s, commitLeftovers: () => Effect.fail(new GitError({ args: ["commit"], message: "the commit was refused" })) }),
   });
   assert.equal(code, 2);

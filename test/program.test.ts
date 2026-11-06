@@ -246,7 +246,7 @@ test("issue #122: a run of two iterations ends with the implementation's session
   const { wiring, probe } = testWiring(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1", usage: true }, { output: noQuestions, plan: "v2", usage: true }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [{ status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "B", checks: [] }, finished],
+    execs: [{ status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "B", checks: [], testFirst: [] }, finished],
     execScripts: [{ usage: true }, { usage: true }],
   });
   assert.equal(await runProgram(probe, wiring), 0);
@@ -748,7 +748,7 @@ describe("issue #186: how a send-back ends", () => {
   const MISSING = "The requirements do not say how long a note is kept.";
   const noQuestions = { questions_for_user: [] };
   const verdictAtFirstPlan = { steps: [{ output: { reply: { kind: "notRefined", missing: MISSING } } }], reviews: [{ issues: [] }] };
-  const notRefinedExec = { status: "not_refined" as const, summary: "S1 done", question: MISSING, remainingWork: "S2", userInput: null, checks: [] };
+  const notRefinedExec = { status: "not_refined" as const, summary: "S1 done", question: MISSING, remainingWork: "S2", userInput: null, checks: [], testFirst: [] };
   const verdictMidWork = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [notRefinedExec] };
   /** The item, whose last refinement asked the developer nothing where `asked` is false: the guard of requirements Q5. */
   const itemAsked = (asked: boolean): FakeItem => ({ ...scriptedItem, comments: [{ id: seededId(), body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" }] });

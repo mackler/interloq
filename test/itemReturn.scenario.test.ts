@@ -81,7 +81,7 @@ test("(d) a halt after an execution that committed keeps the item implementing a
   const { wiring, probe } = testWiring(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { sessionTooLong: "Prompt is too long" }],
     reviews: [{ issues: [] }, { issues: [] }],
-    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [] }],
+    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [], testFirst: [] }],
   });
   assert.equal(await runWith(wiring, probe), 1);
   assert.equal(await stateOf(probe), "implementing");
@@ -132,7 +132,7 @@ test("(f2) a conversation.md that cannot be written cuts no retry short: the ret
 });
 
 test("(g) a finished run still ends implemented and writes no relabeling line", async () => {
-  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [{ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [] }] });
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [{ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [], testFirst: [] }] });
   assert.equal(await runWith(wiring, probe), 0);
   assert.equal(await stateOf(probe), "implemented");
   assert.ok(!said(probe).includes(itemReturnedLine(item)));
@@ -143,7 +143,7 @@ const leavesUncommitted: TestOptions = {
   steps: [{ output: noQuestions, plan: "v1" }, { sessionTooLong: "Prompt is too long" }],
   reviews: [{ issues: [] }, { issues: [{ id: "W1-R1-1", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }],
   execScripts: [{ uncommitted: true }],
-  execs: [{ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [] }],
+  execs: [{ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [], testFirst: [] }],
 };
 const counting = (answer: boolean) => {
   let asked = 0;

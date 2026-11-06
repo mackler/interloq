@@ -35,7 +35,7 @@ export const normalizeReply = (reply: InterviewReply, closing: boolean): ReplyVa
 
 /** The status report of an execution call, by outcome: the `question` field is a question only when input is awaited, a description when blocked. */
 /** What every report carries: its summary, its remaining work and the check commands it ran (issue #162). */
-type ReportCommon = Readonly<{ summary: string; remainingWork: string; checks: ExecReport["checks"] }>;
+type ReportCommon = Readonly<{ summary: string; remainingWork: string; checks: ExecReport["checks"]; testFirst: ExecReport["test_first"] }>;
 export type ReportVariant =
   | (ReportCommon & Readonly<{ kind: "finished" }>)
   | (ReportCommon & Readonly<{ kind: "continuing" }>)
@@ -51,7 +51,7 @@ export const checkRunOf = (check: StepCheckRun): StepCheckRun =>
   check.counts !== null && (check.counts.passed < 0 || check.counts.failed < 0 || check.counts.skipped < 0) ? { ...check, counts: null } : check;
 
 export const normalizeReport = (report: ExecReport): ReportVariant => {
-  const common = { summary: report.summary, remainingWork: report.remaining_work, checks: report.checks };
+  const common = { summary: report.summary, remainingWork: report.remaining_work, checks: report.checks, testFirst: report.test_first };
   switch (report.status) {
     case "finished":
       return { kind: "finished", ...common };

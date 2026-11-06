@@ -509,6 +509,16 @@ const StoredStepCheckRun = Schema.Struct({
   counts: Schema.NullOr(CheckCounts).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });
 
+/**
+ * Issue #228: what Claude Code reports of a code step it completed under the test-first rule: for each test that
+ * specifies its change, its name or command and the failure seen when it first ran, and what the refactor changed.
+ * Interloq does not observe them. Plain strings with no length keyword, so acceptance never depends on one.
+ */
+export const TestFailureObserved = Schema.Struct({ test: Schema.String, observed: Schema.String });
+export type TestFailureObserved = typeof TestFailureObserved.Type;
+export const StepTestFirst = Schema.Struct({ step: Schema.String, tests: Schema.Array(TestFailureObserved), refactor: Schema.String });
+export type StepTestFirst = typeof StepTestFirst.Type;
+
 export const ExecReport = Schema.Struct({
   status: Schema.Literals(["finished", "continuing", "needs_input", "blocked", "not_refined"]),
   summary: Schema.String,
@@ -516,6 +526,8 @@ export const ExecReport = Schema.Struct({
   remaining_work: Schema.String,
   /** Issue #162: every check command the call ran, with its step and its duration. */
   checks: Schema.Array(StepCheckRun),
+  /** Issue #228: each code step the call completed, with its tests' first failures and its refactor; none where it completed none. */
+  test_first: Schema.Array(StepTestFirst),
   /** Issue #186: with status not_refined, what the requirements leave out (NOT_REFINED_STATUS_SENTENCE); "" otherwise. */
   missing: Schema.String,
 });
@@ -533,6 +545,8 @@ export const ExecOutcome = Schema.Struct({
   userInput: Schema.NullOr(Schema.String),
   /** Issue #162: the check commands the phase's calls reported, in order; none where no report was given. */
   checks: Schema.Array(StoredStepCheckRun),
+  /** Issue #228: the test-first records the phase's calls reported, in order; read as none from a record written before it. */
+  testFirst: Schema.Array(StepTestFirst).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 
 // Constraints for the program's own records (finding 5 of docs/functional-design-review.md). The seven agent
@@ -974,7 +988,7 @@ export type ExecOutcome = typeof ExecOutcome.Type;
  * One execution call that ended with work left and nothing for the user to decide (issue #154, decision Q2): the run
  * continues the phase's session without asking. Never a phase's outcome, so it is never recorded or decoded.
  */
-export type ExecContinuation = Readonly<{ status: "continuing"; summary: string; remainingWork: string; checks: ReadonlyArray<StepCheckRun> }>;
+export type ExecContinuation = Readonly<{ status: "continuing"; summary: string; remainingWork: string; checks: ReadonlyArray<StepCheckRun>; testFirst: ReadonlyArray<StepTestFirst> }>;
 /**
  * An execution call whose Claude Code process ended by a signal or a nonzero exit code on its last attempt, its retries
  * used up (issue #157): `attempts` the attempts made, `fault` the SDK's text. Like a continuation never a phase's

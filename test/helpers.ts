@@ -859,7 +859,7 @@ export const unmarked = (dispositions: readonly S.Disposition[]): readonly S.Dis
 /** A response whose dispositions carry the mark, which every subject's response accepts. */
 export type MarkedResponse = Omit<PlannerResponse, "dispositions"> & Readonly<{ dispositions: readonly (MarkedDisposition & Partial<Pick<S.EffectDisposition, typeof S.WORK_EFFECT_FIELD>>)[] }>;
 
-export const finished: ExecOutcome = { status: "finished", summary: "done", question: "", remainingWork: "", userInput: null, checks: [] };
+export const finished: ExecOutcome = { status: "finished", summary: "done", question: "", remainingWork: "", userInput: null, checks: [], testFirst: [] };
 /** The execution a work response is given (issue #117): a finished report and a plan text of its own. */
 export const workExecution: WorkExecution = { outcome: finished, plan: "# Plan\n\n1. S1 (done): the scripted step\n" };
 

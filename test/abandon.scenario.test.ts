@@ -40,7 +40,7 @@ test("a plan writer's question unanswered after an execution committed: 2, the w
     answers: [{ noAnswer: true }],
     steps: [{ output: noQuestions, plan: "v1" }, { output: { questions_for_user: [question] }, plan: "v2" }],
     reviews: [{ issues: [] }, { issues: [] }],
-    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [] }],
+    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [], testFirst: [] }],
   });
   assert.equal(code, 2);
   const branch = branchOf(probe);
@@ -78,7 +78,7 @@ test("a plan writer's question unanswered after an execution left files uncommit
     steps: [{ output: noQuestions, plan: "v1" }, { output: { questions_for_user: [question] }, plan: "v2" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execScripts: [{ uncommitted: true }],
-    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [] }],
+    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [], testFirst: [] }],
   });
   assert.equal(code, 2);
   assert.equal(conclusion?.parked?._tag, "Parked");

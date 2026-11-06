@@ -61,7 +61,7 @@ test("the context prompt of a disputed pause carries the outcome-label rule, and
 // ---- the scenarios (S4) ------------------------------------------------------------------------------------------
 
 const noQuestions = { questions_for_user: [] };
-const finishedExec = { status: "finished" as const, summary: "done", question: "", remainingWork: "", userInput: null, checks: [] };
+const finishedExec = { status: "finished" as const, summary: "done", question: "", remainingWork: "", userInput: null, checks: [], testFirst: [] };
 // Issue #38: the point raised again is asked after its investigation, at the third review.
 const REVIEWS = [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }];
 const ACCEPT_LABEL = "Accept the review's point";

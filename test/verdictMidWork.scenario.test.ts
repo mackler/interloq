@@ -19,7 +19,7 @@ import { NO_STEP_CHECKS } from "../src/schema.ts";
 import { finished, issue, respond, scriptedItem, scriptedStart, tempRepo, type TestOptions, testWiring, type WiringProbe } from "./helpers.ts";
 
 const MISSING = "The requirements do not say whether a deleted note can be restored.";
-const notRefined: ExecOutcome = { status: "not_refined", summary: "S1 done", question: MISSING, remainingWork: "S2", userInput: null, checks: [] };
+const notRefined: ExecOutcome = { status: "not_refined", summary: "S1 done", question: MISSING, remainingWork: "S2", userInput: null, checks: [], testFirst: [] };
 const noQuestions = { questions_for_user: [] };
 const git = (dir: string, ...args: string[]): string => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
 const verdictResponse = (dispositions: Parameters<typeof respond>[0], missing = MISSING) => ({ ...respond(dispositions), missing });
@@ -80,7 +80,7 @@ test("a verdict of an execution that Claude Code withdraws after Codex's objecti
 // the work review follows and from which the plan is revised (behavior 4), with no verdict and no send-back.
 test("a not_refined report with a blank missing takes the aborted stop's path: work review, revision, no verdict", async () => {
   const interpreted = interpretExecution(
-    { sessionId: "s", costUsd: 1, structured: { status: "not_refined", summary: "S1 done", question: "", remaining_work: "S2", missing: " ", checks: [] }, resultText: "r", error: null, partial: false, failure: null },
+    { sessionId: "s", costUsd: 1, structured: { status: "not_refined", summary: "S1 done", question: "", remaining_work: "S2", missing: " ", checks: [], test_first: [] }, resultText: "r", error: null, partial: false, failure: null },
     null,
   );
   assert.equal(interpreted.status, "aborted");

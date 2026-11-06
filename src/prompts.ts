@@ -1444,6 +1444,11 @@ export const runningNote = (names: readonly string[]): string | null => (names.l
  */
 export const REPORT_CHECKS_SENTENCE = "In the report's 'checks', list each check command you ran in this call, in the order you ran them: the step's id in 'step', the command exactly as you ran it in 'command', how long it took in seconds in 'seconds', in 'selection' true where the command ran only some of the tests (such as the tests the change touches, or one end-to-end scenario) and false otherwise, and in 'counts' the passed, failed and skipped tests ('passed', 'failed', 'skipped') taken only from the runner's structured report, a JSON or TAP reporter the runner offers (for example Node's --test-reporter=tap, Vitest's --reporter=json, bats' --formatter tap, Playwright's --reporter=json), never from its printed summary and never computed or estimated; give 'null' where the check used no structured reporter or its runner counts nothing (a build, a type check). List none if you ran none.";
 /**
+ * Issue #228: the execution report's test-first record, beside its checks: Claude Code reports, for each code step it
+ * completed, each test's first failure and the refactor; Interloq does not observe them.
+ */
+export const REPORT_TEST_FIRST_SENTENCE = "In the report's 'test_first', list each code step you completed in this call: its id in 'step'; in 'tests', each test that specifies its change, its end-to-end and layout tests included, with its name or the command that ran it in 'test' and the failure you saw when it first ran, before the code, in 'observed'; and in 'refactor' what the refactor changed, or that nothing needed it. List none if you completed no code step.";
+/**
  * When an execution call asks the user (issue #186, work review 1, W1-R1-1): a decision or information about how to
  * carry out the work, or a remaining step that proves wrong. A point of what the work should achieve that the sources
  * leave open is the verdict of NOT_REFINED_STATUS_SENTENCE, named by the same phrase, so the two divide the cases by one
@@ -1463,6 +1468,7 @@ ${RELAYED_SHAPE}
 ${questionWritingRules()}
 ${planStepCheckRule(checks)}
 ${REPORT_CHECKS_SENTENCE}
+${REPORT_TEST_FIRST_SENTENCE}
 ${NARRATION_OUTCOME_SENTENCE}
 ${EXECUTION_COMMIT_SENTENCE}
 ${TEST_FIRST_RULE}

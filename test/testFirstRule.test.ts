@@ -4,7 +4,9 @@
 // agent is given.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Result } from "effect";
+import { Result, Schema } from "effect";
+import { execReport, interpretExecution } from "../src/claudeEvents.ts";
+import { UiEventSchema } from "../src/protocol.ts";
 import * as prompts from "../src/prompts.ts";
 import * as S from "../src/schema.ts";
 import { EARLIER_ROOT, TEST_ROOT } from "./helpers.ts";
@@ -79,4 +81,31 @@ test("issue #228: a step of code no type checker covers carries no types-first p
   assert.ok(prompts.TEST_FIRST_REVIEW_CRITERION.includes(prompts.TYPE_CHECKER_SENTENCE));
   assert.match(prompts.TEST_FIRST_REVIEW_CRITERION, /types-first part where it does not apply/);
   assert.match(prompts.TYPE_CHECKER_SENTENCE, /starts at the tests/);
+});
+
+// ---- S2: the execution report's test-first record --------------------------------------------------------------------
+
+const record: S.StepTestFirst = { step: "S1", tests: [{ test: "node --test test/a.test.ts", observed: "AssertionError: expected 2, got 1" }], refactor: "nothing needed it" };
+const rawReport = (testFirst: unknown) => ({ status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks: [], test_first: testFirst });
+
+test("issue #228: the sentence names the schema's fields, and the execution prompt carries it", () => {
+  assert.ok(Object.keys(S.ExecReport.fields).includes("test_first"));
+  assert.ok(prompts.REPORT_TEST_FIRST_SENTENCE.includes("'test_first'"));
+  for (const key of [...Object.keys(S.StepTestFirst.fields), ...Object.keys(S.TestFailureObserved.fields)]) assert.ok(prompts.REPORT_TEST_FIRST_SENTENCE.includes(`'${key}'`), key);
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true, checks).includes(prompts.REPORT_TEST_FIRST_SENTENCE));
+});
+
+test("issue #228: the report's record is kept on the report path and the stop path", () => {
+  assert.deepEqual(execReport(rawReport([record]))?.test_first, [record]);
+  const complete = { sessionId: "s", costUsd: 1, structured: rawReport([record]), resultText: "", error: null, partial: false, failure: null };
+  assert.deepEqual(interpretExecution(complete, null).testFirst, [record]);
+  assert.deepEqual(interpretExecution(complete, { question: "q?", input: "a" }).testFirst, [record]);
+});
+
+test("issue #228: an outcome and an ExecutionEnded recorded before the field decode with none", () => {
+  const old = { status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [] };
+  assert.deepEqual(Schema.decodeUnknownSync(S.ExecOutcome)(old).testFirst, []);
+  const event = Schema.decodeUnknownSync(UiEventSchema)({ _tag: "ExecutionEnded", phase: 1, outcome: old });
+  assert.ok(event._tag === "ExecutionEnded");
+  assert.deepEqual(event.outcome.testFirst, []);
 });

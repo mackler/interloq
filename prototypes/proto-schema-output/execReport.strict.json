@@ -75,6 +75,45 @@
         "additionalProperties": false
       }
     },
+    "test_first": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "string"
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "test": {
+                  "type": "string"
+                },
+                "observed": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "test",
+                "observed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "refactor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "tests",
+          "refactor"
+        ],
+        "additionalProperties": false
+      }
+    },
     "missing": {
       "type": "string"
     }
@@ -85,6 +124,7 @@
     "question",
     "remaining_work",
     "checks",
+    "test_first",
     "missing"
   ],
   "additionalProperties": false

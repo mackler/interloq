@@ -877,7 +877,7 @@ test("issue #117: executePrompt names the task, the requirements where they exis
 // Issue #117: the work response runs in the main session, the execution in a session of its own, so the response's
 // prompt carries the execution's report and the plan instead of saying they are in its context.
 test("issue #117: workRespondPrompt carries the execution's report and the plan, and does not say they are in its context", () => {
-  const execution = { outcome: { status: "needs_input" as const, summary: "the summary of S1", question: "A or B?", remainingWork: "S2 and S3", userInput: "B", checks: [] }, plan: "# The plan\n\nS1 done\n" };
+  const execution = { outcome: { status: "needs_input" as const, summary: "the summary of S1", question: "A or B?", remainingWork: "S2 and S3", userInput: "B", checks: [], testFirst: [] }, plan: "# The plan\n\nS1 done\n" };
   const text = prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, execution, "t");
   for (const part of [execution.outcome.summary, execution.outcome.remainingWork, execution.outcome.question, execution.outcome.status, execution.plan]) assert.ok(text.includes(part), part);
   assert.doesNotMatch(text, /in your context/);

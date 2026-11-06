@@ -88,7 +88,7 @@ test("a stop with a question starts a second planning phase with a new Codex thr
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
     // Plan review 1, work review 1, plan review 2, work review 2.
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [{ status: "needs_input", summary: "step 1", question: "A or B?", remainingWork: "steps 2-3", userInput: "B", checks: [] }, finished],
+    execs: [{ status: "needs_input", summary: "step 1", question: "A or B?", remainingWork: "steps 2-3", userInput: "B", checks: [], testFirst: [] }, finished],
   });
   assert.equal(await runTask(layer), 2);
   assert.equal(probe.reviewer.phases, 4);
@@ -103,7 +103,7 @@ test("issue #117: two execution phases run in two sessions of their own, each wi
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [{ status: "needs_input", summary: "step 1", question: "A or B?", remainingWork: "steps 2-3", userInput: "B", checks: [] }, finished],
+    execs: [{ status: "needs_input", summary: "step 1", question: "A or B?", remainingWork: "steps 2-3", userInput: "B", checks: [], testFirst: [] }, finished],
   });
   assert.equal(await runTask(layer, scriptedTask), 2);
   const [first, second] = probe.planner.execSessions;
@@ -121,7 +121,7 @@ test("a stop without a question asks nothing and is revised from Claude Code's a
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [{ status: "aborted", summary: "", question: "no status", remainingWork: "", userInput: null, checks: [] }, finished],
+    execs: [{ status: "aborted", summary: "", question: "no status", remainingWork: "", userInput: null, checks: [], testFirst: [] }, finished],
   });
   assert.equal(await runTask(layer), 2);
   assert.deepEqual(probe.ui.asked, []);
@@ -457,7 +457,7 @@ const planStatuses = (dir: string): Record<string, string> => {
   const file = JSON.parse(fs.readFileSync(path.join(dir, "plan.json"), "utf8"));
   return Object.fromEntries(file.plan.stages.flatMap((s: { steps: { id: string; status: string }[] }) => s.steps.map((st) => [st.id, st.status])));
 };
-const stopped = { status: "needs_input" as const, summary: "s", question: "A or B?", remainingWork: "w", userInput: "B", checks: [] };
+const stopped = { status: "needs_input" as const, summary: "s", question: "A or B?", remainingWork: "w", userInput: "B", checks: [], testFirst: [] };
 
 test("a step started in a stopped execution is unfinished before the work review, remains for the next execution, and a report there belongs to phase 2", async () => {
   const seen: Record<string, string>[] = [];
@@ -654,7 +654,7 @@ test("issue #122: the second planning phase's prompt carries the task", async ()
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [{ status: "needs_input", summary: "partial", question: "Which database?", remainingWork: "the rest", userInput: "PostgreSQL", checks: [] }, finished],
+    execs: [{ status: "needs_input", summary: "partial", question: "Which database?", remainingWork: "the rest", userInput: "PostgreSQL", checks: [], testFirst: [] }, finished],
   });
   const task = "The scripted task of item 1";
   assert.equal(await runTask(layer, task), 2);
@@ -669,7 +669,7 @@ const sessionOf = (probe: ReturnType<typeof testLayer>["probe"], prompt: string)
   assert.equal(found.length, 1, `the prompt ran on ${found.length} sessions`);
   return found[0];
 };
-const stopWith = (input: string) => ({ status: "needs_input" as const, summary: "partial", question: "Which database?", remainingWork: "the rest", userInput: input, checks: [] });
+const stopWith = (input: string) => ({ status: "needs_input" as const, summary: "partial", question: "Which database?", remainingWork: "the rest", userInput: input, checks: [], testFirst: [] });
 
 test("issue #122: two iterations: each planning phase and each work review runs on a session of its own, carrying no other phase", async () => {
   const { layer, probe } = testLayer(tempRepo(), {

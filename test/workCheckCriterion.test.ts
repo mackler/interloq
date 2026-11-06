@@ -7,7 +7,7 @@ import * as prompts from "../src/prompts.ts";
 import type * as S from "../src/schema.ts";
 import { TEST_ROOT } from "./helpers.ts";
 
-const outcome: S.ExecOutcome = { status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [{ step: "S1", command: "npm run test:unit", seconds: 30, selection: false, counts: null }] };
+const outcome: S.ExecOutcome = { status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [{ step: "S1", command: "npm run test:unit", seconds: 30, selection: false, counts: null }], testFirst: [] };
 const work = { outcome, plan: "the plan" };
 
 test("the work review's criterion names no duration or limit (issue #245)", () => {

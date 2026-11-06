@@ -27,3 +27,17 @@ test("issue #228: a plan whose code step leaves out its failing test is raised b
   assert.equal(log.entries[0]?.action, "accepted");
   assert.match(fs.readFileSync(path.join(probe.dir, "plan.md"), "utf8"), /v2/);
 });
+
+test("issue #228: a phase of two calls records both calls' test-first records, in order", async () => {
+  const first = { step: "S1", tests: [{ test: "test/a.test.ts", observed: "AssertionError: a" }], refactor: "nothing needed it" };
+  const second = { step: "S2", tests: [{ test: "test/b.test.ts", observed: "TS2345 naming f" }], refactor: "one helper extracted" };
+  const { wiring, probe } = testWiring(tempRepo(), {
+    tracker: fakeTrackerOf([scriptedItem]),
+    steps: [{ output: { questions_for_user: [] }, plan: "v1" }],
+    reviews: [{ issues: [] }, { issues: [] }],
+    execs: [{ status: "continuing", summary: "s", remainingWork: "S2", checks: [], testFirst: [first] }, { ...finished, testFirst: [second] }],
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const recorded = JSON.parse(fs.readFileSync(path.join(probe.dir, "execution-1", "result.json"), "utf8"));
+  assert.deepEqual(recorded.outcome?.testFirst ?? recorded.testFirst, [first, second]);
+});

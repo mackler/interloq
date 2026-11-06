@@ -98,7 +98,7 @@ test("S7 (e): an execution that stopped with no step done is still reviewed by t
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: { ...noQuestions, plan: twoSteps } }, { output: { ...noQuestions, plan: twoSteps } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [{ status: "blocked", summary: "partial", question: "It fails.", remainingWork: "everything", userInput: null, checks: [] }, finished],
+    execs: [{ status: "blocked", summary: "partial", question: "It fails.", remainingWork: "everything", userInput: null, checks: [], testFirst: [] }, finished],
   });
   await runTask(layer);
   assert.equal(workPrompts(probe.reviewer.prompts, 1).length, 1);

@@ -125,7 +125,7 @@ export const execReport = (structured: unknown): ExecReport | null => {
 export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, transport = false): ExecOutcome | ExecContinuation => {
   const report = execReport(outcome.structured);
   if (stop !== null) {
-    return { status: "needs_input", summary: report?.summary ?? "", question: stop.question, remainingWork: report?.remaining_work ?? "", userInput: stop.input, checks: report?.checks ?? [] };
+    return { status: "needs_input", summary: report?.summary ?? "", question: stop.question, remainingWork: report?.remaining_work ?? "", userInput: stop.input, checks: report?.checks ?? [], testFirst: report?.test_first ?? [] };
   }
   // A valid report delivered before a transport fault stands (issue #26, P1-R1-3): it is the call's last act.
   // Issue #186: a verdict that names nothing missing is an invalid report, since an execution report gets no repair turn.
@@ -133,20 +133,20 @@ export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, tran
   const reportStands = report !== null && !blankVerdict && (outcome.error === null || transport);
   if (!reportStands) {
     const reason = outcome.error ?? (outcome.structured === null || outcome.structured === undefined ? "no structured output" : blankVerdict ? NOT_REFINED_BLANK_REASON : "the status report does not match its schema");
-    return { status: "aborted", summary: outcome.resultText, question: `The execution call ended without a status report: ${reason}`, remainingWork: "", userInput: null, checks: [] };
+    return { status: "aborted", summary: outcome.resultText, question: `The execution call ended without a status report: ${reason}`, remainingWork: "", userInput: null, checks: [], testFirst: [] };
   }
   const variant = normalizeReport(report);
   switch (variant.kind) {
     case "finished":
-      return { status: "finished", summary: variant.summary, question: "", remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
+      return { status: "finished", summary: variant.summary, question: "", remainingWork: variant.remainingWork, userInput: null, checks: variant.checks, testFirst: variant.testFirst };
     case "continuing":
-      return { status: "continuing", summary: variant.summary, remainingWork: variant.remainingWork, checks: variant.checks };
+      return { status: "continuing", summary: variant.summary, remainingWork: variant.remainingWork, checks: variant.checks, testFirst: variant.testFirst };
     case "awaiting_input":
-      return { status: "needs_input", summary: variant.summary, question: variant.question, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
+      return { status: "needs_input", summary: variant.summary, question: variant.question, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks, testFirst: variant.testFirst };
     case "blocked":
-      return { status: "blocked", summary: variant.summary, question: variant.description, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
+      return { status: "blocked", summary: variant.summary, question: variant.description, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks, testFirst: variant.testFirst };
     case "not_refined":
-      return { status: "not_refined", summary: variant.summary, question: variant.missing, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
+      return { status: "not_refined", summary: variant.summary, question: variant.missing, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks, testFirst: variant.testFirst };
   }
 };
 
@@ -203,7 +203,7 @@ export const waitingOn = (state: BackgroundState): boolean => state.pending.size
  */
 export const checkBackground = (result: ExecOutcome | ExecContinuation, stop: Stop | null, state: BackgroundState, nameOf: (id: string) => string): ExecOutcome | ExecContinuation => {
   if (stop !== null || !waitingOn(state)) return result;
-  return { status: "aborted", summary: result.summary, question: backgroundKilledText([...state.pending].map(nameOf)), remainingWork: result.remainingWork, userInput: null, checks: result.checks };
+  return { status: "aborted", summary: result.summary, question: backgroundKilledText([...state.pending].map(nameOf)), remainingWork: result.remainingWork, userInput: null, checks: result.checks, testFirst: result.testFirst };
 };
 /** The name of each background task, its description as the SDK first gave it, for the lines and texts naming it. */
 export const nameTasks = (names: ReadonlyMap<string, string>, message: SDKMessage): ReadonlyMap<string, string> => {

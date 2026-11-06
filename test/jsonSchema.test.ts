@@ -108,9 +108,23 @@ const agentSchemas = {
             additionalProperties: false,
           },
         },
+        // Issue #228: each completed code step's tests' first failures and its refactor.
+        test_first: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              step: { type: "string" },
+              tests: { type: "array", items: { type: "object", properties: { test: { type: "string" }, observed: { type: "string" } }, required: ["test", "observed"], additionalProperties: false } },
+              refactor: { type: "string" },
+            },
+            required: ["step", "tests", "refactor"],
+            additionalProperties: false,
+          },
+        },
         missing: { type: "string" },
       },
-      required: [...legacy.execReportSchema.required, "checks", "missing"],
+      required: [...legacy.execReportSchema.required, "checks", "test_first", "missing"],
     },
   },
   questionList: { effect: S.QuestionList, legacy: withContext(legacy.questionListSchema) },

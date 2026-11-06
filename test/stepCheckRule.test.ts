@@ -43,7 +43,7 @@ test("the plan review's criterion names no command where the project lists none"
 // The execution report's checks and the work review's criterion (S6): the field names the execution prompt asks for are
 // the schema's, and the work review groups a step's checks across the calls of its phase (P1-R1-1), without their seconds (issue #245).
 const checkFields = Object.keys(S.StepCheckRun.fields);
-const outcome = (checks: ReadonlyArray<S.StepCheckRun>): S.ExecOutcome => ({ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks });
+const outcome = (checks: ReadonlyArray<S.StepCheckRun>): S.ExecOutcome => ({ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks, testFirst: [] });
 
 test("the execution prompt asks for the report's checks by the schema's field names", () => {
   const prompt = prompts.executePrompt(TEST_ROOT, "t", true, checks);
@@ -102,7 +102,7 @@ test("the sentence asks for a selection and for counts from a structured report,
 });
 
 test("the report's counts are kept, and a negative count becomes null on the report path and the stop path", () => {
-  const report = (checks: unknown) => ({ status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks });
+  const report = (checks: unknown) => ({ status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks, test_first: [] });
   const negative = { ...counted, counts: { passed: 4, failed: -1, skipped: 0 } };
   assert.deepEqual(execReport(report([counted, build]))?.checks, [counted, build]);
   assert.deepEqual(execReport(report([negative]))?.checks, [{ ...negative, counts: null }]);

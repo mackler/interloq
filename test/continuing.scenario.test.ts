@@ -13,8 +13,8 @@ import type { ExecCallOutcome } from "../src/schema.ts";
 import { finished, runTask, scriptedStart, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
-const continuing = (remainingWork: string): ExecCallOutcome => ({ status: "continuing", summary: "part done", remainingWork, checks: [] });
-const blocked: ExecCallOutcome = { status: "blocked", summary: "s", question: "the database is down", remainingWork: "S1", userInput: null, checks: [] };
+const continuing = (remainingWork: string): ExecCallOutcome => ({ status: "continuing", summary: "part done", remainingWork, checks: [], testFirst: [] });
+const blocked: ExecCallOutcome = { status: "blocked", summary: "s", question: "the database is down", remainingWork: "S1", userInput: null, checks: [], testFirst: [] };
 const decisionsOf = (dir: string): string => {
   const file = path.join(dir, "user-decisions.md");
   return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
@@ -127,7 +127,7 @@ test("a step left started by a continuing call is still started when the continu
 // Issue #162 (P1-R1-1): the checks of every call of a continued phase reach the work review, a step reported in two
 // calls grouped once; since issue #245 without their seconds, which the recorded outcome still holds.
 test("issue #162: a continued phase's checks from both calls reach the work review, one step's checks grouped across them", async () => {
-  const first: ExecCallOutcome = { status: "continuing", summary: "part done", remainingWork: "S1", checks: [{ step: "S1", command: "npm run test:unit", seconds: 70, selection: false, counts: null }] };
+  const first: ExecCallOutcome = { status: "continuing", summary: "part done", remainingWork: "S1", checks: [{ step: "S1", command: "npm run test:unit", seconds: 70, selection: false, counts: null }], testFirst: [] };
   const second: ExecCallOutcome = { ...finished, checks: [{ step: "S1", command: "npm run test:unit", seconds: 60, selection: false, counts: null }] };
   const { layer, probe } = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [first, second] });
   assert.equal(await runTask(layer), 1);

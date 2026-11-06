@@ -259,7 +259,7 @@ test("review passes the given schema as the turn's outputSchema", async () => {
 
 test("seam: the plan's and the work's subjects review with the effect review, every other subject with the plain one", async () => {
   const { planSubject, workSubject, questionSubject, termsSubject, requirementsSubject, decisionSubject } = await import("../src/subjects.ts");
-  const execution = { outcome: { status: "finished" as const, summary: "s", question: "", remainingWork: "", userInput: null, checks: [] }, plan: "p" };
+  const execution = { outcome: { status: "finished" as const, summary: "s", question: "", remainingWork: "", userInput: null, checks: [], testFirst: [] }, plan: "p" };
   assert.equal(planSubject(TEST_ROOT, 1, false, null, S.NO_STEP_CHECKS).reviewSchema, S.EffectReview);
   assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS, null).reviewSchema, S.EffectReview);
   assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS, null).respond.schema, S.WorkResponse);

@@ -369,23 +369,27 @@ const planningPrompt = (root: RunRoot, task: string, withRequirements: boolean, 
  * A phase whose last call's Claude Code process ended on every attempt (issue #157), with the checks its earlier calls
  * reported (issue #162, W1-R1-1): the call that ended has no report and so no checks of its own.
  */
-type PhaseProcessEnded = Readonly<{ status: "processEnded"; ending: S.ExecProcessEnded; checks: ReadonlyArray<S.StepCheckRun> }>;
+type PhaseProcessEnded = Readonly<{ status: "processEnded"; ending: S.ExecProcessEnded } & Reported>;
+/** What a phase's calls report beside their status, concatenated across a continued phase: the checks (issue #162) and the test-first records (issue #228). */
+type Reported = Readonly<{ checks: ReadonlyArray<S.StepCheckRun>; testFirst: ReadonlyArray<S.StepTestFirst> }>;
+const NOTHING_REPORTED: Reported = { checks: [], testFirst: [] };
+const reportedAfter = (earlier: Reported, call: Reported): Reported => ({ checks: [...earlier.checks, ...call.checks], testFirst: [...earlier.testFirst, ...call.testFirst] });
 
 /**
  * One execution phase's calls on its own planner (issue #154, decisions Q2 and Q3): a call that ends with status
  * continuing is followed by another in the same session, told to go on with the work it reported left, said on the page
  * and written to conversation.md, with no question and no limit; the phase's outcome is the first other outcome.
  */
-const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string, earlier: ReadonlyArray<S.StepCheckRun> = []): Effect.Effect<S.ExecOutcome | PhaseProcessEnded, RunError, Decider | Ui | Store> =>
+const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string, earlier: Reported = NOTHING_REPORTED): Effect.Effect<S.ExecOutcome | PhaseProcessEnded, RunError, Decider | Ui | Store> =>
   Effect.gen(function* () {
     const outcome = yield* executor.executing(prompt, report);
-    // Issue #162: a continued phase reports the checks of all its calls.
-    if (outcome.status === "processEnded") return { status: "processEnded", ending: outcome, checks: earlier };
-    if (outcome.status !== "continuing") return { ...outcome, checks: [...earlier, ...outcome.checks] };
+    // Issue #162: a continued phase reports the checks of all its calls; issue #228: and their test-first records.
+    if (outcome.status === "processEnded") return { status: "processEnded", ending: outcome, ...earlier };
+    if (outcome.status !== "continuing") return { ...outcome, ...reportedAfter(earlier, outcome) };
     const line = continuingLine(phaseLabel, outcome.remainingWork);
     yield* (yield* Ui).say(line);
     yield* (yield* Store).converse(`${line}\n\n`);
-    return yield* continuedExecution(executor, executionContinuingPrompt(outcome.remainingWork), report, phaseLabel, [...earlier, ...outcome.checks]);
+    return yield* continuedExecution(executor, executionContinuingPrompt(outcome.remainingWork), report, phaseLabel, reportedAfter(earlier, outcome));
   });
 
 /**
@@ -400,6 +404,7 @@ const processEndedStop = (ended: PhaseProcessEnded, records: StepRecords): S.Exe
   remainingWork: processEndedRemaining(records.unfinished),
   userInput: null,
   checks: ended.checks,
+  testFirst: ended.testFirst,
 });
 
 /** How the implementation phases ended (issue #186): the run finished, or a verdict that the item is not refined stood. */

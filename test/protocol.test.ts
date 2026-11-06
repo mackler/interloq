@@ -68,7 +68,7 @@ const questionEntry = fc.record({ id: text, context: fc.array(block, { maxLength
 const markedDisposition = fc.tuple(disposition, fc.boolean()).map(([d, task_dispute]) => ({ ...d, task_dispute }));
 const markedListResponse = fc.tuple(plannerResponse, fc.array(markedDisposition, { maxLength: 3 }), fc.array(questionEntry, { maxLength: 2 })).map(([r, dispositions, questions]) => ({ ...r, dispositions, questions }));
 const response = fc.oneof(plannerResponse, markedListResponse);
-const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }), checks: fc.array(fc.record({ step: text, command: text, seconds: fc.double({ noNaN: true, noDefaultInfinity: true }), selection: fc.boolean(), counts: fc.option(fc.record({ passed: nat, failed: nat, skipped: nat }), { nil: null }) }), { maxLength: 2 }) });
+const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }), checks: fc.array(fc.record({ step: text, command: text, seconds: fc.double({ noNaN: true, noDefaultInfinity: true }), selection: fc.boolean(), counts: fc.option(fc.record({ passed: nat, failed: nat, skipped: nat }), { nil: null }) }), { maxLength: 2 }), testFirst: fc.array(fc.record({ step: text, tests: fc.array(fc.record({ test: text, observed: text }), { maxLength: 2 }), refactor: text }), { maxLength: 2 }) });
 // Issue #216 (W1-R1-2): the noun of Codex's pass that a pause, limit or unchanged origin carries.
 const pass = fc.constantFrom("check" as const, "review" as const);
 // S5: a question as the user is shown it, with every kind of origin and both kinds of answer.
@@ -735,7 +735,7 @@ test("a SuiteCounted event crosses the protocol, and a negative count or counts 
 // Issue #39 (S11): an earlier run's ExecutionEnded, whose checks lack selection and counts, still decodes, read as no
 // selection and no counts.
 test("an ExecutionEnded recorded before a check's selection and counts decodes with neither", () => {
-  const outcome = (checks: unknown) => ({ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks });
+  const outcome = (checks: unknown) => ({ status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks, testFirst: [] });
   const frame = JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "ExecutionEnded", phase: 1, outcome: outcome([{ step: "S1", command: "npm run check", seconds: 9 }]) } } });
   const decoded = Result.getOrThrow(decodeServer(frame));
   assert.deepEqual(decoded.type === "event" && decoded.event._tag === "Notified" && decoded.event.event._tag === "ExecutionEnded" ? decoded.event.event.outcome.checks : null, [
