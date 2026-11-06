@@ -5,7 +5,7 @@ import { Context, Effect } from "effect";
 import type { Brand, Fiber, Option, Schema, Scope } from "effect";
 import type { Answered, DisputeOwner, OpenDispute, Withdrawn } from "./openDisputes.ts";
 import type { BesideKey } from "./reviewState.ts";
-import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
+import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRateLimited, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { Figure } from "./figure.ts";
 import type { RunMode } from "./runMode.ts";
@@ -177,7 +177,7 @@ export interface ReviewerShape {
 export class Reviewer extends Context.Service<Reviewer, ReviewerShape>()("plan-review/Reviewer") {}
 
 /** What the tracker port can fail with (issue #120, part 1; the fifth, an ambiguous state, by requirements Q3). */
-export type TrackerError = TrackerUnreachable | TrackerRequestRefused | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous;
+export type TrackerError = TrackerUnreachable | TrackerRequestRefused | TrackerRateLimited | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous;
 /**
  * The project's issue tracker (issue #120, part 1): its operations are the whole common type (developer's decision).
  * Issue #186 (requirements Q3, the developer's decision in its refinement) adds the comment, and with it the listing

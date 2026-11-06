@@ -132,6 +132,8 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   // Issue #171.
   fc.record({ _tag: fc.constant("TrackerRetrying" as const), wait: nat, tracker: text, what: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("TrackerRecovered" as const), tracker: text }),
+  // Issue #219: a tracker's rate-limit wait.
+  fc.record({ _tag: fc.constant("TrackerRateLimitWaiting" as const), wait: nat, tracker: text, what: text, stated: fc.boolean(), fromMs: nat, untilMs: nat }),
   // Issue #170: a usage limit's wait with its basis.
   fc.record({ _tag: fc.constant("UsageLimitWaiting" as const), wait: nat, agent, purpose: text, limitType: fc.option(text, { nil: null }), basis: limitBasis, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("UsageLimitLifted" as const), agent, limitType: fc.option(text, { nil: null }), waitedMs: nat }),
@@ -664,6 +666,7 @@ test("the four endable waits carry their id, required, and WaitEndedEarly decode
     { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "reset", fromMs: 0, untilMs: 5000, wait: 3 },
     { _tag: "NetworkRetrying", agent: "claude", purpose: "planning", what: "a plan", attempt: 1, code: "EAI_AGAIN", delaySeconds: 40, fault: "x", fromMs: 0, untilMs: 40_000, wait: 4 },
     { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 1", attempt: 1, of: 5, delaySeconds: 15, fault: "x", fromMs: 0, untilMs: 15_000, wait: 5 },
+    { _tag: "TrackerRateLimitWaiting", tracker: "GitLab", what: "reading item 130", stated: true, fromMs: 0, untilMs: 31_000, wait: 7 },
     { _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: null, basis: { kind: "reset" }, fromMs: 0, untilMs: 300_000, wait: 6 },
     { _tag: "WaitEndedEarly", wait: 6 },
   ];
@@ -672,6 +675,15 @@ test("the four endable waits carry their id, required, and WaitEndedEarly decode
     const { wait: _, ...without } = event;
     assert.ok(Result.isFailure(decodeServer(frame(without))), event._tag);
   }
+});
+
+// Issue #219: a tracker's rate-limit wait requires whether its reset was stated.
+test("a TrackerRateLimitWaiting without stated does not decode", () => {
+  const frame = (event: unknown) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
+  const event = { _tag: "TrackerRateLimitWaiting", tracker: "GitLab", what: "reading item 130", stated: false, fromMs: 0, untilMs: 60_000, wait: 2 };
+  assert.ok(Result.isSuccess(decodeServer(frame(event))));
+  const { stated: _, ...without } = event;
+  assert.ok(Result.isFailure(decodeServer(frame(without))));
 });
 
 // Issue #216 (W1-R1-2): a pause, limit or unchanged origin carries its pass; one recorded before the field decodes as review.
@@ -756,4 +768,16 @@ test("an ExecutionEnded recorded before a check's selection and counts decodes w
   assert.deepEqual(decoded.type === "event" && decoded.event._tag === "Notified" && decoded.event.event._tag === "ExecutionEnded" ? decoded.event.event.outcome.checks : null, [
     { step: "S1", command: "npm run check", seconds: 9, selection: false, counts: null },
   ]);
+});
+
+// Issue #219: a tab's listing waiting out the tracker's rate limit, and the developer ending that wait.
+test("the itemsWaiting and endItemsWait frames decode, and one without its wait does not", () => {
+  const waiting = { type: "itemsWaiting", mode: "refinement", tracker: "GitLab", fromMs: 0, untilMs: 31_000, stated: true, wait: 4 };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(waiting))), waiting);
+  const { wait: _w, ...waitingWithout } = waiting;
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify(waitingWithout))));
+  const end = { type: "endItemsWait", incarnation: "i-1", wait: 4 };
+  assert.deepEqual(decoded(decodeClient(JSON.stringify(end))), end);
+  const { wait: _e, ...endWithout } = end;
+  assert.ok(Result.isFailure(decodeClient(JSON.stringify(endWithout))));
 });

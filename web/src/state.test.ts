@@ -731,6 +731,21 @@ describe("runs, replay and gaps", () => {
     expect(s.modes.refinement.items).toEqual({ _tag: "Listed", items, terms: "unchecked" });
   });
 
+  // Issue #219: a listing waiting out the tracker's rate limit, shown in its tab until its answer, a new request or a hello.
+  test("itemsWaiting sets its mode's wait; the items answer, a new request and a hello clear it; the outstanding count is unchanged", () => {
+    const items = [{ id: "120", title: "Two modes", excerpt: "x", url: null, sentBack: 0, preparation: null }];
+    const waiting: ServerMessage = { type: "itemsWaiting", mode: "refinement", tracker: "GitLab", fromMs: 1000, untilMs: 32_000, stated: true, wait: 7 };
+    const asked = itemsRequested(fold([hello(null)]), "refinement");
+    const s = fold([waiting], asked);
+    expect(s.modes.refinement.itemsWait).toEqual({ tracker: "GitLab", stated: true, fromMs: 1000, untilMs: 32_000, waitId: 7 });
+    expect(s.modes.implementation.itemsWait).toBe(null);
+    expect(s.refinementOutstanding).toBe(asked.refinementOutstanding);
+    expect(fold([{ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "unchecked" } }], s).modes.refinement.itemsWait).toBe(null);
+    expect(itemsRequested(s, "refinement").modes.refinement.itemsWait).toBe(null);
+    expect(fold([hello(null)], s).modes.refinement.itemsWait).toBe(null);
+    expect(fold([{ ...hello(null), incarnation: "other" } as ServerMessage], s).modes.refinement.itemsWait).toBe(null);
+  });
+
   // W3-R1-1 of work review 3: a tracker id of one server names nothing in another, which may serve another project.
   const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location, current: { refinement: [], implementation: null }, incarnation });
   const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null }];
@@ -2270,6 +2285,16 @@ describe("the countdown of a retry's wait", () => {
       expect(runOf(s, "implementation")?.retry).toBe(null);
       expect(statusOf(s)).toBe("Codex — review");
     }
+  });
+  // Issue #219: a tracker's rate-limit wait is counted down as a repeat is, its wait endable, cleared by its end and by the recovery.
+  test("a TrackerRateLimitWaiting sets the countdown with its wait id; WaitEndedEarly clears the countdown; TrackerRecovered the retry", () => {
+    const waiting: UiEvent = { _tag: "TrackerRateLimitWaiting", wait: 4, tracker: "GitLab", what: "reading item 130", stated: true, fromMs: 1000, untilMs: 32_000 };
+    for (const s of both([started, notified(waiting)])) {
+      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "tracker", purpose: null, text: prompts.trackerRateLimitActivity(true), wait: { fromMs: 1000, untilMs: 32_000, waitId: 4 } });
+      expect(statusOf(s)).toBe(`GitLab — ${prompts.trackerRateLimitActivity(true)}`);
+    }
+    for (const s of both([started, notified(waiting), notified({ _tag: "WaitEndedEarly", wait: 4 })])) expect(runOf(s, "implementation")?.retry?.wait).toBe(null);
+    for (const s of both([started, notified(waiting), notified({ _tag: "TrackerRecovered", tracker: "GitLab" })])) expect(runOf(s, "implementation")?.retry).toBe(null);
   });
   test("countdownView: the fraction elapsed and the time remaining while the wait lasts, nothing at and after its end", () => {
     expect(countdownView({ fromMs: 1000, untilMs: 6000 }, 1000)).toEqual({ percent: 0, remainingMs: 5000 });

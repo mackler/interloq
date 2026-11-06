@@ -13,7 +13,7 @@ import type { Asked, Countdown as AnswerCountdown, ChainFrameSettings, CurrentRu
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import { added, afterHello as noticesAfterHello, type ConnectionCondition, dismissed, EMPTY_NOTICES, type NoticeId, type Notices } from "./notices.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, clarificationHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, planWrittenBody, documentLabel, modelLine, NO_UNANSWERED_QUESTIONS, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, trackerRateLimitActivity, cycleLine, clarificationHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, planWrittenBody, documentLabel, modelLine, NO_UNANSWERED_QUESTIONS, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
 import { clarificationSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -320,8 +320,10 @@ const LIST: Focus = { _tag: "List" };
  * whose start this page asked for, until its Started or refusal; its items; and the refusal of its last action, which its
  * next items frame or Started clears.
  */
-export type ModeView = Readonly<{ current: readonly number[]; runs: readonly RunView[]; focus: Focus; starting: string | null; items: ItemsView; refusal: string | null }>;
-const emptyMode: ModeView = { current: [], runs: [], focus: LIST, starting: null, items: { _tag: "Unasked" }, refusal: null };
+/** Issue #219: a tab's listing waiting out the tracker's rate limit, with the server's wait the tab may end. */
+export type ItemsWait = Readonly<{ tracker: string; stated: boolean; fromMs: number; untilMs: number; waitId: number }>;
+export type ModeView = Readonly<{ current: readonly number[]; runs: readonly RunView[]; focus: Focus; starting: string | null; items: ItemsView; refusal: string | null; itemsWait: ItemsWait | null }>;
+const emptyMode: ModeView = { current: [], runs: [], focus: LIST, starting: null, items: { _tag: "Unasked" }, refusal: null, itemsWait: null };
 export type ViewState = Readonly<{
   connection: "connecting" | "open" | "reconnecting" | "failed";
   /** The identification of the server's working directory, the one project, from the last hello (issue #29); null before the first. */
@@ -501,7 +503,7 @@ export const startRequested = (state: ViewState, mode: RunMode, item: string): V
 export const refinementInProgress = (state: ViewState): readonly string[] => state.modes.refinement.runs.flatMap((r) => (r.ended === null && r.item !== null ? [r.item.id] : []));
 /** A tab's items asked for: loading until the server's items frame. */
 export const itemsRequested = (state: ViewState, mode: RunMode): ViewState => {
-  const requested = withMode(state, mode, (m) => ({ ...m, items: { _tag: "Loading" } }));
+  const requested = withMode(state, mode, (m) => ({ ...m, items: { _tag: "Loading" }, itemsWait: null }));
   return mode === "refinement" ? refreshSent(requested) : requested;
 };
 /** The run a mode's tab shows, its newest, and the server's incarnation: what the draft and the notifications key by. */
@@ -1010,6 +1012,11 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       const text = retryActivity(event.attempt, event.of, event.fault);
       return { ...withActivity(run, `${event.tracker} — ${text}`), retry: { agent: "tracker", purpose: null, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs, waitId: event.wait } } };
     }
+    // Issue #219: a tracker's rate-limit wait, counted down and endable as a repeat is, outside its count.
+    case "TrackerRateLimitWaiting": {
+      const text = trackerRateLimitActivity(event.stated);
+      return { ...withActivity(run, `${event.tracker} — ${text}`), retry: { agent: "tracker", purpose: null, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs, waitId: event.wait } } };
+    }
     case "TrackerRecovered":
       return { ...withActivity(run, run.calls.at(-1)?.label ?? ""), retry: null };
     // Issue #68: a wait for a usage limit, whose end is known; the activity line shows it until it lifts.
@@ -1449,7 +1456,7 @@ const startedFocus = (mode: RunMode, before: ModeView, runs: readonly RunView[],
 };
 
 /** A mode after a hello of the same incarnation, a reconnection: everything kept, the items as `afterHello` leaves them. */
-const reconnectedMode = (mode: ModeView, current: readonly number[]): ModeView => ({ ...mode, current, items: afterHello(mode.items) });
+const reconnectedMode = (mode: ModeView, current: readonly number[]): ModeView => ({ ...mode, current, items: afterHello(mode.items), itemsWait: null });
 /** A mode's runs in progress as a hello gives them (issue #191). */
 const currentOf = (current: CurrentRuns, mode: RunMode): readonly number[] => (mode === "refinement" ? current.refinement : current.implementation === null ? [] : [current.implementation]);
 /** The runs a mode holds after one is added, ascending by id: the implementation tab keeps its two newest. */
@@ -1498,8 +1505,11 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       );
       return { ...focused, selected: unchosenTab(focused) };
     }
+    // Issue #219: the listing waits out the tracker's rate limit; it answers no listing, so the outstanding count stays.
+    case "itemsWaiting":
+      return withMode(state, message.mode, (m) => ({ ...m, itemsWait: { tracker: message.tracker, stated: message.stated, fromMs: message.fromMs, untilMs: message.untilMs, waitId: message.wait } }));
     case "items": {
-      const listed = withMode(state, message.mode, (m) => ({ ...m, items: message.result, refusal: null }));
+      const listed = withMode(state, message.mode, (m) => ({ ...m, items: message.result, refusal: null, itemsWait: null }));
       if (message.mode !== "refinement") return listed;
       // W2-R1-1: the answer that leaves no Refinement listing outstanding asks for a change deferred meanwhile, so its
       // answer is the last to arrive and was computed after the last change.

@@ -50,6 +50,7 @@ const managerOf = (current: CurrentRuns): RunManager => ({
   answer: () => Effect.succeed(null),
   hold: () => Effect.succeed(null),
   endWait: () => Effect.succeed(null),
+  endItemsWait: () => Effect.succeed(null),
   setUi: () => Effect.succeed(null),
   haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
   chain: Effect.succeed(initialChain(OFF_SETTINGS)),

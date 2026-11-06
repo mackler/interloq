@@ -32,6 +32,7 @@ import type { WriteCheck } from "./errors.ts";
 import type { TrackerOperation } from "./trackerRetry.ts";
 import { AGENT_DISPLAY, AGENTS, type Agent } from "./agents.ts";
 import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, type LimitWaitBasis, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
+import { TRACKER_RATE_LIMIT_FALLBACK_SECONDS } from "./trackerRateLimit.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -1892,6 +1893,7 @@ export const TRACKER_FAILURE_TEXTS = {
   credentialMissing: (variable: string) => `the issue tracker's credential is missing: the environment variable ${variable} is not set`,
   unreachable: (tracker: string, message: string) => `the ${tracker} issue tracker could not be reached: ${message}`,
   requestRefused: (tracker: string, message: string) => `the ${tracker} issue tracker refused the request: ${message}`,
+  rateLimited: (tracker: string, message: string) => `the ${tracker} issue tracker refused the request for its rate limit: ${message}`,
   authRefused: (tracker: string, status: number) => `the ${tracker} issue tracker refused the credential (HTTP status ${status})`,
   notFound: (id: string) => `the issue tracker has no item ${id}`,
   bodyInvalid: (id: string, message: string) => `item ${id} of the issue tracker could not be read: ${message}`,
@@ -1992,6 +1994,26 @@ export function trackerOperationText(op: TrackerOperation): string {
 /** A repeat of a failed tracker request, as the page and conversation.md show it. */
 export function trackerRetryLine(tracker: string, what: string, attempt: number, of: number, delaySeconds: number, fault: string): string {
   return `${tracker}: request failed while ${what}, retry ${attempt} of ${of} in ${delaySeconds} s (${fault})`;
+}
+/** An instant in UTC to the second, as a tracker's rate-limit wait names it (issue #219). */
+function utcSecond(ms: number): string {
+  return `${new Date(ms).toISOString().slice(11, 19)} UTC`;
+}
+/**
+ * Issue #219: a tracker request refused for the tracker's rate limit, as the page and conversation.md show it: tried
+ * again when the stated reset comes, or after a fixed minute where none was stated. It never says the limit lifted.
+ */
+export function trackerRateLimitLine(tracker: string, what: string, untilMs: number, stated: boolean): string {
+  const refused = `${tracker} refused the request while ${what} for its rate limit`;
+  return stated ? `${refused}; trying again at ${utcSecond(untilMs)}, when it says the limit resets.` : `${refused}; it stated no reset, so trying again in ${TRACKER_RATE_LIMIT_FALLBACK_SECONDS} seconds.`;
+}
+/** Issue #219: a tab's listing waiting out the tracker's rate limit, as the tab shows it beside its countdown. */
+export function itemsRateLimitText(tracker: string, stated: boolean): string {
+  return stated ? `${tracker}'s rate limit was reached; the list is asked for again when the countdown ends.` : `${tracker}'s rate limit was reached and it stated no reset; the list is asked for again in ${TRACKER_RATE_LIMIT_FALLBACK_SECONDS} seconds.`;
+}
+/** Issue #219: a tracker's rate-limit wait on the status line. */
+export function trackerRateLimitActivity(stated: boolean): string {
+  return stated ? "rate limit reached, trying again when it resets" : `rate limit reached, trying again in ${TRACKER_RATE_LIMIT_FALLBACK_SECONDS} s`;
 }
 /** A tracker request that succeeded after a repeat. */
 export function trackerRecoveredLine(tracker: string): string {
@@ -2608,7 +2630,7 @@ export const NOTICES_LABEL = "Messages";
 export const DISMISS_NOTICE = "Dismiss";
 /** The heading of the answers the page could not send (G-R1-1, P1-R1-2 of the defects' plan). */
 export const UNSENT_HEADING = "Not sent";
-const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait" | "queue", string> = {
+const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait" | "endItemsWait" | "queue", string> = {
   answer: "Your answer was not sent",
   // Issue #185.
   hold: "That you are working on the question was not sent, so its countdown may still run",
@@ -2621,6 +2643,8 @@ const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "c
   preparation: "Turning the preparation of marked items' questions on or off was not sent",
   // Issue #215.
   endWait: "The request to end the wait was not sent",
+  // Issue #219.
+  endItemsWait: "The request to end the list's wait for the tracker's rate limit was not sent",
   // Issue #196.
   queue: "The change of the chain's queue was not sent",
 };
@@ -2633,7 +2657,7 @@ const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = 
  * An action that was not sent: queued while disconnected and overtaken by the reconnection, or refused because the page
  * has stopped reconnecting. A disconnected answer says where its text is: in the answer field, or quoted and kept.
  */
-export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait" | "queue", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
+export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait" | "endItemsWait" | "queue", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
   const base = `${NOT_SENT_SUBJECT[kind]}: ${NOT_SENT_REASON[reason]}.`;
   if (kind !== "answer" || reason !== "disconnected") return base;
   return quoted === undefined ? `${base} Its text is still in the answer field.` : `${base} Its text is kept under “${UNSENT_HEADING}”: «${quoted}»`;
@@ -2902,6 +2926,8 @@ export const PLAN_STEP_STATE_LABEL: Record<"done" | "current" | "unfinished" | "
 export const AGENT_WORKING_LABEL = "An agent is working";
 /** The indicator of the activity line while the program waits to retry a call (issue #26, W1-R1-4). */
 export const RETRY_WAITING_LABEL = "Waiting to retry the connection";
+/** Issue #219: the accessible name of the countdown of a listing waiting out the tracker's rate limit. */
+export const RATE_LIMIT_WAITING_LABEL = "Waiting for the tracker's rate limit to reset";
 /** The measured time of the current agent call beside the busy indicator (issue #42, Q7): m:ss, or h:mm:ss from one hour on. */
 export function runningFor(ms: number): string {
   return `running for ${durationText(ms)}`;

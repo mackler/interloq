@@ -4,7 +4,8 @@
 // HttpClientError or its request, which carry the Authorization header.
 import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpClientResponse } from "effect/http";
-import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
+import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRateLimited, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
+import { type Headers, isGithubRateLimit, rateLimitResetOf } from "./trackerRateLimit.ts";
 import { commentOf, GithubComment, type GithubIssue, GithubIssue as GithubIssueSchema, citedOfIssue, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
 import { type GithubTrackerConfig, stageLabelsOfConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
@@ -26,13 +27,16 @@ const named = (target: Target): string => (target.kind === "item" ? target.id : 
 
 /**
  * What a status of GitHub's answer means, or null for a 2xx: the one mapping, whether the client returned the answer
- * or failed it with a StatusCodeError (a client wrapped by HttpClient.filterStatusOk; W1-R1-2).
+ * or failed it with a StatusCodeError (a client wrapped by HttpClient.filterStatusOk; W1-R1-2). Issue #219: GitHub's
+ * rate limit, a 429 or a 403 with no requests remaining or a retry-after, is TrackerRateLimited with the reset `headers`
+ * state, read before a 403 is taken for a refused credential.
  */
-export const statusFailure = (status: number, method: string, target: Target): TrackerError | null => {
+export const statusFailure = (status: number, method: string, target: Target, headers: Headers): TrackerError | null => {
   if (status >= 200 && status <= 299) return null;
+  const message = `GitHub answered ${method} ${named(target)} with status ${status}`;
+  if (isGithubRateLimit(status, headers)) return new TrackerRateLimited({ tracker: TRACKER, status, message, reset: rateLimitResetOf(headers) });
   if (status === 401 || status === 403) return new TrackerAuthRefused({ tracker: TRACKER, status });
   if ((status === 404 || status === 410) && target.kind === "item") return new TrackerItemNotFound({ id: target.id });
-  const message = `GitHub answered ${method} ${named(target)} with status ${status}`;
   // Issue #171: any other 4xx is permanent; anything else, a 5xx in practice, is unreachable with its status.
   if (status >= 400 && status <= 499) return new TrackerRequestRefused({ tracker: TRACKER, status, message });
   return new TrackerUnreachable({ tracker: TRACKER, message, status });
@@ -46,7 +50,7 @@ const clientFailure = (error: HttpClientError.HttpClientError, method: string, t
   const reason = error.reason;
   switch (reason._tag) {
     case "StatusCodeError":
-      return statusFailure(reason.response.status, method, target) ?? new TrackerUnreachable({ tracker: TRACKER, message: `the client refused GitHub's answer to ${method} ${named(target)} with status ${reason.response.status}`, status: reason.response.status });
+      return statusFailure(reason.response.status, method, target, reason.response.headers) ?? new TrackerUnreachable({ tracker: TRACKER, message: `the client refused GitHub's answer to ${method} ${named(target)} with status ${reason.response.status}`, status: reason.response.status });
     case "DecodeError":
     case "EmptyBodyError":
       return new TrackerBodyInvalid({ id: named(target), message: "GitHub's answer could not be decoded" });
@@ -79,7 +83,7 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
     const send = (request: HttpClientRequest.HttpClientRequest, target: Target): Effect.Effect<Answer, TrackerError> =>
       Effect.gen(function* () {
         const response: HttpClientResponse.HttpClientResponse = yield* Effect.mapError(client.execute(authorized(request)), (error) => clientFailure(error, request.method, target));
-        const refused = statusFailure(response.status, request.method, target);
+        const refused = statusFailure(response.status, request.method, target, response.headers);
         if (refused !== null) return yield* Effect.fail(refused);
         const json = yield* Effect.mapError(response.json, () => new TrackerBodyInvalid({ id: named(target), message: "GitHub's answer is not JSON" }));
         return { json, link: response.headers["link"] };
@@ -205,7 +209,7 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
             ),
             (response): Effect.Effect<void, TrackerError> => {
               if (response === null || gone(response.status)) return Effect.void;
-              const refused = statusFailure(response.status, request.method, target);
+              const refused = statusFailure(response.status, request.method, target, response.headers);
               return refused === null ? Effect.void : Effect.fail(refused);
             },
           );

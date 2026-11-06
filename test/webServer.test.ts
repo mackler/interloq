@@ -13,6 +13,7 @@ import { Deferred, Effect, Exit, Fiber, Layer, Option, Result, Schema } from "ef
 import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { identify, type MountTable } from "../src/hostDir.ts";
+import { TrackerRateLimited } from "../src/errors.ts";
 import { platformLayer } from "../src/platform.ts";
 import { decodeClient as decodeClientMessage, decodeServer, FELL_BEHIND_FRAME, listedItemOf, ServerMessageSchema } from "../src/protocol.ts";
 import type { ClientMessage, ListedItem, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
@@ -21,7 +22,7 @@ import { makeWebServer, OUTPUT_BACKLOG_BOUND, requestTarget } from "../src/webSe
 import { SCROLLBACK_LINES } from "../src/liveOutput.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
-import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, queueFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
+import { chainFrame, endItemsWaitFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, queueFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
 import { editIdOf, type QueueEdit } from "../src/chainQueue.ts";
 import type { ItemId } from "../src/tracker.ts";
 import { listedState } from "../src/runMode.ts";
@@ -319,6 +320,29 @@ test("a start in a project that does not exist is refused with the reason and it
   });
 });
 
+// Issue #219, the seam of a listing's rate-limit wait: the itemsWaiting frame decodes with the page's decoder, the page's
+// endItemsWaitFrame with its wait id ends the wait, and the items frame follows.
+test("a listing refused for the rate limit tells the tab its wait, which the page's frame ends, and then answers the items", async () => {
+  const repo = tempRepo();
+  const tracker = fakeTrackerOf(MANAGER_ITEMS);
+  await run(tracker.failNext("list", new TrackerRateLimited({ tracker: "GitLab", status: 429, message: "GitLab answered GET the unrefined issues with status 429", reset: { _tag: "After", seconds: 3600 } })));
+  const manager = await managerOf(repo, [], [], tracker);
+  await serve(manager, dist(), async (port) => {
+    const a = await connect(port);
+    a.send(itemsFrame("refinement"));
+    await until("the wait", () => a.messages.some((m) => m.type === "itemsWaiting"));
+    const raw = a.messages.find((m) => m.type === "itemsWaiting")!;
+    const waiting = Result.getOrThrow(decodeServer(JSON.stringify(raw)));
+    assert.ok(waiting.type === "itemsWaiting" && waiting.mode === "refinement" && waiting.tracker === "GitLab" && waiting.stated);
+    a.send(endItemsWaitFrame(manager.incarnation, waiting.wait));
+    await until("the items", () => a.messages.some((m) => m.type === "items"));
+    const items = a.messages.find((m) => m.type === "items")!;
+    assert.ok(items.type === "items" && items.result._tag === "Listed");
+    assert.deepEqual(refusals(a), []);
+    a.close();
+  });
+});
+
 // Issue #120, the seam of the start: the frame the page builds from a listed item (web/src/tabs.ts), the mode and item of
 // the run the server starts, and the item the run reads from the tracker, all derived from one fixture item.
 for (const mode of ["refinement", "implementation"] as const) {
@@ -519,6 +543,7 @@ const fallBehind = async (body: (slow: Watched, port: number, listeners: readonl
     answer: () => Effect.succeed(null),
     hold: () => Effect.succeed(null),
     endWait: () => Effect.succeed(null),
+    endItemsWait: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
     chain: Effect.succeed(initialChain(OFF_SETTINGS)),
@@ -929,6 +954,7 @@ test("output frames reach the tab outside its event queue: a burst never closes 
     answer: () => Effect.succeed(null),
     hold: () => Effect.succeed(null),
     endWait: () => Effect.succeed(null),
+    endItemsWait: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
     chain: Effect.succeed(initialChain(OFF_SETTINGS)),

@@ -39,6 +39,7 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   // Issue #171: the tracker's repeats.
   TrackerRetrying: [{ _tag: "TrackerRetrying", wait: 1, tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 0, untilMs: 30_000 }, /^GitHub: request failed while reading item 155, retry 2 of 5 in 30 s \(no answer\)$/],
   TrackerRecovered: [{ _tag: "TrackerRecovered", tracker: "GitHub" }, /^GitHub: request succeeded$/],
+  TrackerRateLimitWaiting: [{ _tag: "TrackerRateLimitWaiting", tracker: "GitLab", what: "reading item 130", stated: false, fromMs: 0, untilMs: 60_000, wait: 1 }, /^GitLab refused the request while reading item 130 for its rate limit; it stated no reset, so trying again in 60 seconds\.$/],
   UsageLimitWaiting: [{ _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: 0, untilMs: 9_000_000 }, /^Claude Code: five-hour session limit reached; Interloq waits until 1970-01-01 02:30 UTC, then continues$/],
   // Issue #215: a wait the developer ended early.
   WaitEndedEarly: [{ _tag: "WaitEndedEarly", wait: 3 }, /^you ended wait 3 early$/],

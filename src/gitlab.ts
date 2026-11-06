@@ -58,7 +58,7 @@ const clientFailure = (error: HttpClientError.HttpClientError, method: string, t
   const reason = error.reason;
   switch (reason._tag) {
     case "StatusCodeError":
-      return gitlabStatusFailure(reason.response.status, method, target) ?? new TrackerUnreachable({ tracker: TRACKER, message: `the client refused GitLab's answer to ${method} ${gitlabTargetName(target)} with status ${reason.response.status}`, status: reason.response.status });
+      return gitlabStatusFailure(reason.response.status, method, target, reason.response.headers) ?? new TrackerUnreachable({ tracker: TRACKER, message: `the client refused GitLab's answer to ${method} ${gitlabTargetName(target)} with status ${reason.response.status}`, status: reason.response.status });
     case "DecodeError":
     case "EmptyBodyError":
       return new TrackerBodyInvalid({ id: gitlabTargetName(target), message: "GitLab's answer could not be decoded" });
@@ -100,7 +100,7 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
     const send = (request: HttpClientRequest.HttpClientRequest, target: GitlabTarget): Effect.Effect<Answer, TrackerError> =>
       Effect.gen(function* () {
         const response: HttpClientResponse.HttpClientResponse = yield* Effect.mapError(execute(authorized(request), 1), (error) => clientFailure(error, request.method, target));
-        const refused = gitlabStatusFailure(response.status, request.method, target);
+        const refused = gitlabStatusFailure(response.status, request.method, target, response.headers);
         if (refused !== null) return yield* Effect.fail(refused);
         const json = yield* Effect.mapError(response.json, () => new TrackerBodyInvalid({ id: gitlabTargetName(target), message: "GitLab's answer is not JSON" }));
         return { json, nextPage: response.headers["x-next-page"] };
@@ -241,7 +241,7 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
             ),
             (response): Effect.Effect<void, TrackerError> => {
               if (response === null || response.status === 404) return Effect.void;
-              const refused = gitlabStatusFailure(response.status, request.method, target);
+              const refused = gitlabStatusFailure(response.status, request.method, target, response.headers);
               return refused === null ? Effect.void : Effect.fail(refused);
             },
           );

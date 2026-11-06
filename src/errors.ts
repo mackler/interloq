@@ -5,6 +5,7 @@ import { type Change, renderChange } from "./snapshot.ts";
 import type { NetworkCode, ProcessEnd } from "./transport.ts";
 import type { LimitRefusal, LimitReset } from "./limitReset.ts";
 import type { Agent } from "./agents.ts";
+import type { RateLimitReset } from "./trackerRateLimit.ts";
 import { ItemState } from "./tracker.ts";
 import { type ParkNote, ParkNoteSchema } from "./chain.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
@@ -92,10 +93,17 @@ export class TransportFault extends Data.TaggedError("TransportFault")<{ readonl
  */
 export class TrackerUnreachable extends Data.TaggedError("TrackerUnreachable")<{ readonly tracker: string; readonly message: string; readonly status: number | null }> {}
 /**
- * Issue #171: the tracker answered with a 4xx other than a refused credential or an item not found (a 409, a 422, a
- * 429, a 404 on a listing). Permanent, like a 4xx of an agent (behavior 14): never repeated.
+ * Issue #171: the tracker answered with a 4xx other than a refused credential, an item not found or a rate limit (a 409,
+ * a 422, a 404 on a listing). Permanent, like a 4xx of an agent (behavior 14): never repeated. A 429 is
+ * TrackerRateLimited since issue #219.
  */
 export class TrackerRequestRefused extends Data.TaggedError("TrackerRequestRefused")<{ readonly tracker: string; readonly status: number; readonly message: string }> {}
+/**
+ * Issue #219: the tracker refused the request for its rate limit (a 429, or GitHub's 403 with no requests remaining),
+ * with the reset its answer stated. Temporary: waited out until the reset, outside the repeats of issue #171. `message`
+ * names the method and the target only, never a header or a credential.
+ */
+export class TrackerRateLimited extends Data.TaggedError("TrackerRateLimited")<{ readonly tracker: string; readonly status: number; readonly message: string; readonly reset: RateLimitReset }> {}
 /** The tracker refused the credential (401 or 403): never an empty list. */
 export class TrackerAuthRefused extends Data.TaggedError("TrackerAuthRefused")<{ readonly tracker: string; readonly status: number }> {}
 /** No item with this id: not in the tracker, not in the adapter's format, or not an item (a GitHub pull request). */
@@ -241,7 +249,7 @@ export type WriteCheck = typeof WriteCheckSchema.Type;
 export class TrackerStepFailed extends Data.TaggedError("TrackerStepFailed")<{ readonly item: string; readonly step: TrackerStep; readonly cause: string; readonly done: string | null; readonly check: WriteCheck | null }> {}
 
 /** A tracker's failure, or why there is none, as the program says it (issue #120). */
-export const trackerFailureText = (error: TrackerUnreachable | TrackerRequestRefused | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous | NoTracker | TrackerCredentialMissing): string => {
+export const trackerFailureText = (error: TrackerUnreachable | TrackerRequestRefused | TrackerRateLimited | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous | NoTracker | TrackerCredentialMissing): string => {
   switch (error._tag) {
     case "NoTracker":
       return TRACKER_FAILURE_TEXTS.noTracker;
@@ -251,6 +259,8 @@ export const trackerFailureText = (error: TrackerUnreachable | TrackerRequestRef
       return TRACKER_FAILURE_TEXTS.unreachable(error.tracker, error.message);
     case "TrackerRequestRefused":
       return TRACKER_FAILURE_TEXTS.requestRefused(error.tracker, error.message);
+    case "TrackerRateLimited":
+      return TRACKER_FAILURE_TEXTS.rateLimited(error.tracker, error.message);
     case "TrackerAuthRefused":
       return TRACKER_FAILURE_TEXTS.authRefused(error.tracker, error.status);
     case "TrackerItemNotFound":
@@ -510,6 +520,6 @@ export const haltMessage = (error: unknown): string | null => {
   return decoded === null ? null : `HALTED: ${describe(decoded)}`;
 };
 
-const TRACKER_ERROR_TAGS: ReadonlySet<string> = new Set<TrackerError["_tag"]>(["TrackerUnreachable", "TrackerRequestRefused", "TrackerAuthRefused", "TrackerItemNotFound", "TrackerBodyInvalid", "TrackerStateAmbiguous"]);
+const TRACKER_ERROR_TAGS: ReadonlySet<string> = new Set<TrackerError["_tag"]>(["TrackerUnreachable", "TrackerRequestRefused", "TrackerRateLimited", "TrackerAuthRefused", "TrackerItemNotFound", "TrackerBodyInvalid", "TrackerStateAmbiguous"]);
 /** Whether a failure is one of the tracker port's (TrackerError), so that trackerFailureText says it; the one statement of the test. */
 export const isTrackerError = <E extends Readonly<{ _tag: string }>>(error: E | TrackerError): error is TrackerError => TRACKER_ERROR_TAGS.has(error._tag);

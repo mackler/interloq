@@ -5,7 +5,7 @@ import { type SubjectId, subjectDir } from "./artifacts.ts";
 import type { LimitWaitBasis } from "./limitReset.ts";
 import type { NetworkCode } from "./transport.ts";
 import type { CommandReport } from "./testCounts.ts";
-import { agentReconnectingLine, commandReportsText, cycleHeading, modelLine, type NamedModel, networkRetryLine, phaseLabel, runningNote, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
+import { agentReconnectingLine, commandReportsText, cycleHeading, modelLine, type NamedModel, networkRetryLine, phaseLabel, runningNote, trackerRecoveredLine, trackerRateLimitLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
 import type { PresentedQuestion } from "./question.ts";
 import type { LoopResponse } from "./schema.ts";
 import type { DecisionAnalysis, ExecOutcome, RecordedPlan, Review, UserQuestion, EffectReview } from "./schema.ts";
@@ -63,6 +63,11 @@ export type UiEvent =
    * `of` of `what` (the request in words), after `delaySeconds`, from `fromMs` to `untilMs`.
    */
   | Readonly<{ _tag: "TrackerRetrying"; tracker: string; what: string; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number; wait: number }>
+  /**
+   * Issue #219: a tracker request refused for its rate limit waits until `untilMs`, the reset the tracker stated plus a
+   * margin, or a fixed minute where `stated` is false; outside the repeats of issue #171, so it carries no count.
+   */
+  | Readonly<{ _tag: "TrackerRateLimitWaiting"; tracker: string; what: string; stated: boolean; fromMs: number; untilMs: number; wait: number }>
   /** A tracker request succeeded after a repeat, or the item read back showed a write applied. */
   | Readonly<{ _tag: "TrackerRecovered"; tracker: string }>
   // Issue #68: a wait for a usage limit with a stated reset, from its start to its scheduled end, and its end.
@@ -193,6 +198,8 @@ export const describeEvent = (event: UiEvent): string => {
       return transportRecoveredLine(event.agent);
     case "TrackerRetrying":
       return trackerRetryLine(event.tracker, event.what, event.attempt, event.of, event.delaySeconds, event.fault);
+    case "TrackerRateLimitWaiting":
+      return trackerRateLimitLine(event.tracker, event.what, event.untilMs, event.stated);
     case "TrackerRecovered":
       return trackerRecoveredLine(event.tracker);
     case "UsageLimitWaiting":

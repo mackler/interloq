@@ -121,6 +121,8 @@ export type ClientMessage =
   | Readonly<{ type: "hold"; incarnation: string; run: number; prompt: number }>
   /** Issue #215: the developer ends the wait whose countdown the page shows; the run makes its request again at once. */
   | Readonly<{ type: "endWait"; incarnation: string; run: number; wait: number }>
+  /** Issue #219: the developer ends the rate-limit wait of a tab's listing, which the server then asks again at once. */
+  | Readonly<{ type: "endItemsWait"; incarnation: string; wait: number }>
   /** Open or close one scope of the run's shared state (issue #87). */
   | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>
   /** The chain's settings (issue #147): the mode on or off, a number of runs and the resolved cutoff instant, each optional. */
@@ -185,6 +187,11 @@ export type ServerMessage =
   | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
   | (Readonly<{ type: "items" }> & ItemsAnswer)
+  /**
+   * Issue #219: the tab's listing waits out the tracker's rate limit until `untilMs` (`stated` false where the tracker
+   * stated no reset); `wait` the server's wait, which endItemsWait ends. The listing's items frame follows.
+   */
+  | Readonly<{ type: "itemsWaiting"; mode: RunMode; tracker: string; fromMs: number; untilMs: number; stated: boolean; wait: number }>
   /** Why an action was not carried out, with the mode of the tab whose action it was, or null where it belongs to none (issue #120). */
   | Readonly<{ type: "refused"; mode: RunMode | null; reason: string }>
   /** The run's whole shared state after a change (issue #87); a tab keeps the state of the higher version. */
@@ -308,6 +315,7 @@ export const UiEventSchema = Schema.Union([
   tagged("NetworkRetrying", { agent: AgentSchema, purpose: Str, what: Str, attempt: Int, code: Schema.Literals(NETWORK_CODES), delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
   tagged("TransportRecovered", { agent: AgentSchema }),
   tagged("TrackerRetrying", { tracker: Str, what: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
+  tagged("TrackerRateLimitWaiting", { tracker: Str, what: Str, stated: Schema.Boolean, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
   tagged("TrackerRecovered", { tracker: Str }),
   tagged("UsageLimitWaiting", { agent: AgentSchema, purpose: Str, limitType: Schema.NullOr(Str), basis: LimitWaitBasisSchema, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
   // Issue #215: the developer ended a wait early.
@@ -380,6 +388,7 @@ export const ClientMessageSchema = Schema.Union([
   typed("stop", { incarnation: Str, run: Int }),
   typed("hold", { incarnation: Str, run: Int, prompt: Int }),
   typed("endWait", { incarnation: Str, run: Int, wait: Int }),
+  typed("endItemsWait", { incarnation: Str, wait: Int }),
   typed("ui", { incarnation: Str, run: Int, flag: UiFlagSchema }),
   typed("chain", {
     settings: Schema.Struct({
@@ -418,6 +427,7 @@ export const ServerMessageSchema = Schema.Union([
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
   typed("items", { mode: Schema.Literal("refinement"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema, terms: S.TermsMode }), UnavailableSchema]) }),
   typed("items", { mode: Schema.Literal("implementation"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema }), UnavailableSchema]) }),
+  typed("itemsWaiting", { mode: RunMode, tracker: Str, fromMs: Schema.Finite, untilMs: Schema.Finite, stated: Schema.Boolean, wait: Int }),
   typed("refused", { mode: Schema.NullOr(RunMode), reason: Str }),
   typed("ui", { run: Int, state: RunUiStateSchema }),
   typed("chain", { state: ChainStateSchema }),

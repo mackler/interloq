@@ -17,7 +17,7 @@ import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
 import { defectText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, chainEndedText, chainParkingText, chainReselectText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
-import { noTrackerQuestion, type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
+import { noTrackerQuestion, type RateLimitWait, rateLimitWaiting, type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
 import { type ItemComment, type ItemId, itemIdOf, type TrackerItem } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
@@ -43,7 +43,7 @@ import { recordsDirOf, type RunRoot } from "./artifacts.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { type AnswerTiming, makeWebUi, type WebUi } from "./webUi.ts";
 import type { OutputEvent } from "./liveOutput.ts";
-import { unendableWait, waitCounter } from "./waits.ts";
+import { makeWaits, unendableWait, waitCounter } from "./waits.ts";
 
 /** One event of a run as it is broadcast: the run's id, the event's sequence number in that run (from 0) and the time of its publication. */
 export type EventBroadcast = Readonly<{ _tag: "event"; run: number; seq: number; time: string; event: RunEvent }>;
@@ -80,8 +80,11 @@ export type RunManager = Readonly<{
   current: Effect.Effect<CurrentRuns>;
   /** Starts a run of the mode in the project from the item with that id (issue #120); its id, or why not. */
   start: (request: StartRequest) => Effect.Effect<number | Refusal>;
-  /** The items a mode's tab lists, or the notice of why the tracker cannot list them (issue #120). */
-  listItems: (mode: RunMode) => Effect.Effect<ItemsAnswer>;
+  /**
+   * The items a mode's tab lists, or the notice of why the tracker cannot list them (issue #120). Issue #219: a request
+   * refused for the tracker's rate limit is waited out, each wait told through `onWait`.
+   */
+  listItems: (mode: RunMode, onWait?: (wait: RateLimitWait) => Effect.Effect<void>) => Effect.Effect<ItemsAnswer>;
   /** Interrupts the run with that id of that incarnation, like Ctrl+C (behaviour 11). */
   stop: (incarnation: string, run: number) => Effect.Effect<Refusal | null>;
   /** The answer to a pending prompt of the run with that id of that incarnation. */
@@ -97,6 +100,11 @@ export type RunManager = Readonly<{
    * another run's wait is one this run never had), and for a wait that has already ended, each in the run's tab.
    */
   endWait: (incarnation: string, run: number, wait: number) => Effect.Effect<Refusal | null>;
+  /**
+   * Issue #219: the developer ends the rate-limit wait `wait` of a tab's listing, which asks again at once. Refused for
+   * another incarnation, a wait not open and a wait already ended, as endWait is; a refusal of no mode.
+   */
+  endItemsWait: (incarnation: string, wait: number) => Effect.Effect<Refusal | null>;
   /** Opens or closes one scope of the shared state of the run with that id of that incarnation, the current or the last one (issue #87). */
   setUi: (incarnation: string, run: number, flag: UiFlag) => Effect.Effect<Refusal | null>;
   /**
@@ -279,6 +287,8 @@ export const makeRunManager = (
     const listeners = yield* Ref.make<ReadonlySet<Listener<Broadcast>>>(new Set());
     /** Issue #215: one counter of wait ids for the server, so a wait id names exactly one wait of one run. */
     const allocateWait = yield* waitCounter;
+    /** Issue #219: the waits of the server's own tracker requests for a rate limit, ids from the same counter as the runs'. */
+    const serverWaits = yield* makeWaits(allocateWait);
     const step = yield* makeStepper(state, listeners);
     // Issue #49: a run's live output goes to every listener, outside the publisher's step, changing no State.
     const emitOutput = (id: number, event: OutputEvent): Effect.Effect<void> =>
@@ -381,7 +391,7 @@ export const makeRunManager = (
      * One operation of the project's tracker, from the configuration of `cwd` (issue #120): the server makes every tracker
      * call, never the page. Every failure is the text the page shows, which names a variable and never a credential.
      */
-    const withTracker = <A>(use: (tracker: TrackerShape, config: Config) => Effect.Effect<A, TrackerError>): Effect.Effect<Result.Result<A, string>> =>
+    const withTracker = <A>(use: (tracker: TrackerShape, config: Config) => Effect.Effect<A, TrackerError>, onWait: (wait: RateLimitWait) => Effect.Effect<void> = () => Effect.void): Effect.Effect<Result.Result<A, string>> =>
       Effect.gen(function* () {
         const invalid = yield* invalidProject(cwd);
         if (invalid !== null) return Result.fail(invalid);
@@ -389,12 +399,13 @@ export const makeRunManager = (
         if (Result.isFailure(config)) return Result.fail(describe(config.failure));
         const layer = access.tracker(config.success);
         if (Result.isFailure(layer)) return Result.fail(trackerFailureText(layer.failure));
-        const used = yield* Effect.result(Effect.flatMap(Tracker, (t) => use(t, config.success)).pipe(Effect.provide(layer.success)));
+        // Issue #219: every operation waits out a rate limit, the server's requests being repeated for no other failure.
+        const used = yield* Effect.result(Effect.flatMap(Tracker, (t) => use(rateLimitWaiting(t, serverWaits, onWait), config.success)).pipe(Effect.provide(layer.success)));
         return Result.mapError(used, trackerFailureText);
       });
 
     /** Issue #142: the Refinement tab's listing carries the configured choice of terms, read with the configuration. */
-    const listItems = (mode: RunMode): Effect.Effect<ItemsAnswer> =>
+    const listItems = (mode: RunMode, onWait: (wait: RateLimitWait) => Effect.Effect<void> = () => Effect.void): Effect.Effect<ItemsAnswer> =>
       // Issue #186 (F1): each item's comments read, the server's own requests (not repeated, as the listing is not), and
       // its send-backs counted; a failure of any of them answers the listing with its notice.
       withTracker((t, config) =>
@@ -408,6 +419,7 @@ export const makeRunManager = (
           ),
           Effect.map((items) => ({ items, terms: config.terms })),
         ),
+        onWait,
       ).pipe(
         // A listing of the Refinement tab wakes the pass (the tab asks each time it is shown).
         Effect.tap(() => (mode === "refinement" ? pass.wake : Effect.void)),
@@ -880,6 +892,10 @@ export const makeRunManager = (
             return found.run.ui.hold(prompt).pipe(Effect.as(null));
           }),
         ),
+      endItemsWait: (of, wait) =>
+        of !== incarnation
+          ? Effect.succeed(earlier(null))
+          : serverWaits.end(wait).pipe(Effect.map((result): Refusal | null => (result === "ended" ? null : { refused: result === "notWaiting" ? WAIT_NOT_WAITING_TEXT : WAIT_ALREADY_ENDED_TEXT, mode: null }))),
       endWait: (of, id, wait) =>
         currentRun(id).pipe(
           Effect.flatMap((found) => {

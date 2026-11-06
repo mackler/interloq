@@ -8,7 +8,8 @@ import { Cause, Clock, Effect, Exit, Fiber, Option, Ref, Result } from "effect";
 import { USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import { makeWebUi } from "../src/webUi.ts";
-import { FileSystemError, TrackerAuthRefused, TrackerRequestRefused, TrackerUnreachable } from "../src/errors.ts";
+import { FileSystemError, TrackerAuthRefused, TrackerRateLimited, TrackerRequestRefused, TrackerUnreachable } from "../src/errors.ts";
+import type { TrackerError } from "../src/services.ts";
 import * as prompts from "../src/prompts.ts";
 import { OPENING_LINE, readRefinement, refinementOf } from "../src/refinement.ts";
 import * as S from "../src/schema.ts";
@@ -490,4 +491,114 @@ test("W6-R1-1, the first read: the repeats interrupted after the question's prod
   assert.equal(await Effect.runPromise(web.pending), null);
   const asked = events.find((e) => e._tag === "Asked" && e.beside !== null);
   if (asked !== undefined && asked._tag === "Asked") assert.ok(events.some((e) => e._tag === "PromptCancelled" && e.prompt === asked.prompt), "no PromptCancelled followed the Asked");
+});
+
+// ---- issue #219: a rate limit is waited out, outside the repeats' budget -----------------------------------------------
+const rateLimited = (seconds: number | null) =>
+  new TrackerRateLimited({ tracker: "GitLab", status: 429, message: "GitLab answered GET 155 with status 429", reset: seconds === null ? { _tag: "Unstated" } : { _tag: "After", seconds } });
+const START = Date.UTC(2026, 10, 5, 12, 59, 23);
+
+test("#219: a read refused for the rate limit waits until the stated reset plus the margin, then succeeds, asking nothing", async () => {
+  const t = await setup();
+  await Effect.runPromise(t.fake.failNext("read", rateLimited(30)));
+  const { clock, sleeps } = steppingClock(START);
+  const item = await Effect.runPromise(readWithRetry(t.fake.tracker, ID, t.env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(item.id, ID);
+  assert.deepEqual(sleeps, [31_000]);
+  const waiting = tagged(t.ui.notified, "TrackerRateLimitWaiting");
+  assert.deepEqual(waiting.map((e) => e._tag === "TrackerRateLimitWaiting" && [e.tracker, e.stated, e.fromMs, e.untilMs]), [["GitLab", true, START, START + 31_000]]);
+  assert.deepEqual(t.ui.notified.map((e) => e._tag).filter((tag) => tag === "TrackerRateLimitWaiting" || tag === "TrackerRecovered"), ["TrackerRateLimitWaiting", "TrackerRecovered"]);
+  const line = prompts.trackerRateLimitLine("GitLab", "reading item 155", START + 31_000, true);
+  assert.ok(t.ui.said.includes(line));
+  assert.ok(t.held().some((r) => r.includes(line)));
+  assert.deepEqual(t.ui.asked, []);
+  assert.deepEqual(tagged(t.ui.notified, "TrackerRetrying"), []);
+});
+
+test("#219: an unstated reset waits the fallback minute", async () => {
+  const t = await setup();
+  await Effect.runPromise(t.fake.failNext("read", rateLimited(null)));
+  const { clock, sleeps } = steppingClock(START);
+  await Effect.runPromise(readWithRetry(t.fake.tracker, ID, t.env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.deepEqual(sleeps, [60_000]);
+});
+
+test("#219: rate limits spend none of the repeats: three in a row, then every repeat of the set", async () => {
+  const t = await setup([], 2);
+  for (let i = 0; i < 3; i += 1) await Effect.runPromise(t.fake.failNext("read", rateLimited(5)));
+  await t.failNext("read", unreached(), 2);
+  const { clock } = steppingClock(START);
+  const item = await Effect.runPromise(readWithRetry(t.fake.tracker, ID, t.env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(item.id, ID);
+  assert.equal(tagged(t.ui.notified, "TrackerRateLimitWaiting").length, 3);
+  assert.deepEqual(tagged(t.ui.notified, "TrackerRetrying").map((e) => e._tag === "TrackerRetrying" && [e.attempt, e.of]), [[1, 2], [2, 2]]);
+  assert.deepEqual(t.ui.asked, []);
+});
+
+test("#219: the developer ends the rate-limit wait early and the read is made at once", async () => {
+  const t = await setup();
+  await Effect.runPromise(t.fake.failNext("read", rateLimited(3600)));
+  const fiber = Effect.runFork(readWithRetry(t.fake.tracker, ID, t.env));
+  for (let waited = 0; tagged(t.ui.notified, "TrackerRateLimitWaiting").length === 0 && waited < 5000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  const [announced] = tagged(t.ui.notified, "TrackerRateLimitWaiting");
+  assert.ok(announced?._tag === "TrackerRateLimitWaiting", "the wait never began");
+  assert.equal(await Effect.runPromise(t.ui.endWait(announced.wait as never)), "ended");
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.ok(Exit.isSuccess(exit));
+  assert.equal(tagged(t.ui.notified, "WaitEndedEarly").length, 1);
+});
+
+test("#219: an interruption during the rate-limit wait ends the request", async () => {
+  const t = await setup();
+  await Effect.runPromise(t.fake.failNext("read", rateLimited(3600)));
+  const fiber = Effect.runFork(readWithRetry(t.fake.tracker, ID, t.env));
+  for (let waited = 0; tagged(t.ui.notified, "TrackerRateLimitWaiting").length === 0 && waited < 5000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+  assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+});
+
+/** A tracker whose read-backs (reads) and listings are scripted to fail first with the errors given. */
+const failingReads = (t: Awaited<ReturnType<typeof setup>>, reads: readonly TrackerError[], listings: readonly TrackerError[] = []) => {
+  let r = 0;
+  let l = 0;
+  let posts = 0;
+  const tracker = {
+    ...t.fake.tracker,
+    read: (id: ItemId) => Effect.suspend(() => (r < reads.length ? Effect.fail(reads[r++]!) : t.fake.tracker.read(id))),
+    comments: (id: ItemId) => Effect.suspend(() => (l < listings.length ? Effect.fail(listings[l++]!) : t.fake.tracker.comments(id))),
+    comment: (id: ItemId, text: string) => Effect.suspend(() => { posts += 1; return t.fake.tracker.comment(id, text); }),
+  };
+  return { tracker, posts: () => posts };
+};
+
+test("#219 (P1-R1-1): a write answered 500 whose read-back is rate limited waits it out and succeeds, its repeats unspent", async () => {
+  const t = await setup([], 2);
+  await t.failNext("setState", serverError());
+  const f = failingReads(t, [rateLimited(10)]);
+  const { clock, sleeps } = steppingClock(START);
+  await Effect.runPromise(writeWithRetry(f.tracker, setRefined, t.env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal((await t.item()).state, "refined");
+  assert.deepEqual(sleeps, [11_000]);
+  assert.deepEqual(tagged(t.ui.notified, "TrackerRetrying"), []);
+});
+
+test("#219 (P1-R1-1): the same in the unattended environment with one repeat still succeeds rather than stopping", async () => {
+  const t = await setup();
+  const held = Effect.runSync(Ref.make<readonly string[]>([]));
+  const env = unattendedTrackerEnv(heldTrackerEnv(t.ui, { ...S.defaultConfig, maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 }, held));
+  await t.failNext("setState", serverError());
+  const f = failingReads(t, [rateLimited(10), rateLimited(10)]);
+  const { clock } = steppingClock(START);
+  await Effect.runPromise(writeWithRetry(f.tracker, setRefined, env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal((await t.item()).state, "refined");
+});
+
+test("#219 (P1-R1-1): a comment answered 500 whose reconciling listing is rate limited lists again after the wait: one POST", async () => {
+  const t = await setup();
+  await Effect.runPromise(t.fake.failAfterNext("comment", serverError()));
+  const f = failingReads(t, [], [rateLimited(10)]);
+  const { clock } = steppingClock(START);
+  await Effect.runPromise(writeWithRetry(f.tracker, commentWrite("r/verdict-1"), t.env).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(f.posts(), 1);
+  assert.equal(((await t.item()).comments ?? []).length, 1);
 });

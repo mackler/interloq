@@ -9,7 +9,7 @@ import { claudePlannerLayer } from "../src/claude.ts";
 import { codexReviewerLayer } from "../src/codex.ts";
 import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
-import { describe, NoTracker, ServerFault, TrackerUnreachable } from "../src/errors.ts";
+import { describe, NoTracker, ServerFault, TrackerRateLimited, TrackerUnreachable } from "../src/errors.ts";
 import { program } from "../src/program.ts";
 import { listedState, type RunMode } from "../src/runMode.ts";
 import { defectText, answerExpiredText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
@@ -23,8 +23,14 @@ import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
 import { commentText, runCommentKey } from "../src/itemComments.ts";
 import { askedInPlanReview, issue, respond, startOf, withoutReturnLine } from "./helpers.ts";
-import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
+import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, steppingClock, trackerAccessOf } from "./helpers.ts";
 import { DEFAULT_SETTINGS, OFF_SETTINGS } from "../src/chain.ts";
+import { gitlabTracker } from "../src/gitlab.ts";
+import { githubTracker } from "../src/github.ts";
+import { gitlabCredential, githubCredential } from "../src/trackerConfig.ts";
+import { json, makeStub } from "./stubHttp.ts";
+import { GITLAB_LABELS, PROJECT } from "./gitlabLabels.ts";
+import { LABELS } from "./githubLabels.ts";
 import { seededId } from "./fakeTracker.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
@@ -971,3 +977,63 @@ test("issue #44: a run haltAll publishes past its bounds is halted with the serv
   if (live?.ending._tag !== "Halted") return;
   assert.equal(live.ending.reason, describe(new ServerFault({ message: "write EPIPE" })));
 });
+
+// ---- issue #219: the server's own tracker requests wait out a rate limit ----------------------------------------------
+const rateLimited = (seconds: number) => new TrackerRateLimited({ tracker: "GitLab", status: 429, message: "GitLab answered GET the refined issues with status 429", reset: { _tag: "After", seconds } });
+type ItemsWaited = Parameters<NonNullable<Parameters<RunManager["listItems"]>[1]>>[0];
+
+test("#219: a listing refused for the rate limit once tells its tab the wait, waits it out and answers Listed", async () => {
+  const h = await harness(tempRepo(), []);
+  await run(h.tracker.failNext("list", rateLimited(30)));
+  const { clock, sleeps } = steppingClock(Date.UTC(2026, 10, 5, 12, 59, 23));
+  const told: ItemsWaited[] = [];
+  const answer = await run(h.manager.listItems("implementation", (w) => Effect.sync(() => void told.push(w))).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(answer.result._tag, "Listed");
+  assert.deepEqual(sleeps, [31_000]);
+  assert.equal(told.length, 1);
+  assert.deepEqual([told[0]!.tracker, told[0]!.stated, told[0]!.untilMs - told[0]!.fromMs], ["GitLab", true, 31_000]);
+  assert.ok(told[0]!.wait > 0);
+});
+
+test("#219: endItemsWait ends the listing's wait at once; a second is refused as already ended, another incarnation's as earlier", async () => {
+  const h = await harness(tempRepo(), []);
+  await run(h.tracker.failNext("list", rateLimited(3600)));
+  const told: ItemsWaited[] = [];
+  const listing = Effect.runPromise(h.manager.listItems("implementation", (w) => Effect.sync(() => void told.push(w))));
+  await until("the listing's wait", () => told.length === 1);
+  const wait = told[0]!.wait;
+  assert.notEqual(await run(h.manager.endItemsWait("another", wait)), null);
+  assert.equal(await run(h.manager.endItemsWait(h.manager.incarnation, wait)), null);
+  assert.equal((await listing).result._tag, "Listed");
+  assert.deepEqual(await run(h.manager.endItemsWait(h.manager.incarnation, wait)), { refused: WAIT_ALREADY_ENDED_TEXT, mode: null });
+  assert.deepEqual(await run(h.manager.endItemsWait(h.manager.incarnation, 999_999)), { refused: WAIT_NOT_WAITING_TEXT, mode: null });
+});
+
+test("#219: a start whose read is refused for the rate limit once waits it out and starts the run", async () => {
+  const h = await harness(tempRepo(), [converging]);
+  await run(h.tracker.failNext("read", rateLimited(0)));
+  const id = await started(h);
+  await ended(h, id);
+  assert.equal(endCode(h, id), 0);
+});
+
+// Issue #219 (P1-R1-3): over each real adapter and its stub, a listing answered 429 and then 200 waits on the held clock
+// and answers Listed.
+for (const adapter of ["GitLab", "GitHub"] as const) {
+  test(`#219: a ${adapter} listing answered 429 then 200 waits out the stated reset and answers Listed`, async () => {
+    let answered = 0;
+    const now = Date.UTC(2026, 10, 5, 12, 59, 23);
+    const limitHeaders: Record<string, string> = adapter === "GitLab" ? { "ratelimit-reset": String(Math.floor(now / 1000) + 37) } : { "retry-after": "30" };
+    const stub = makeStub(() => (answered++ === 0 ? json({ message: "Retry later" }, 429, limitHeaders) : json([])));
+    const shape =
+      adapter === "GitLab"
+        ? Effect.runSync(gitlabTracker({ kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS, prepareLabel: null, obsoleteLabel: null }, Result.getOrThrow(gitlabCredential({ INTERLOQ_GITLAB_TOKEN: "glpat-FAKE" }))).pipe(Effect.provide(stub.layer)))
+        : Effect.runSync(githubTracker({ kind: "github", owner: "mackler", repo: "interloq", labels: LABELS, prepareLabel: null, obsoleteLabel: null }, Result.getOrThrow(githubCredential({ INTERLOQ_GITHUB_TOKEN: "github_pat_FAKE" }))).pipe(Effect.provide(stub.layer)));
+    const h = await harness(tempRepo(), [], undefined, [], { tracker: shape } as unknown as FakeTracker);
+    const { clock, sleeps } = steppingClock(now);
+    const answer = await run(h.manager.listItems("implementation").pipe(Effect.provideService(Clock.Clock, clock)));
+    assert.equal(answer.result._tag, "Listed");
+    assert.deepEqual(sleeps, [adapter === "GitLab" ? 38_000 : 31_000]);
+    assert.equal(stub.sent().length, 2);
+  });
+}

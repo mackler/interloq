@@ -175,7 +175,10 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
             return Effect.forkScoped(manager.start(message).pipe(Effect.flatMap((r) => (typeof r === "number" ? Effect.void : refuse(r))))).pipe(Effect.asVoid);
           case "items":
             // Issue #120: the server makes the tracker call; the page receives ids, titles and excerpts alone.
-            return Effect.forkScoped(manager.listItems(message.mode).pipe(Effect.flatMap((answer) => send({ type: "items", ...answer })))).pipe(Effect.asVoid);
+            // Issue #219: a wait for the tracker's rate limit is told to this tab, which may end it; a closed tab interrupts it.
+            return Effect.forkScoped(
+              manager.listItems(message.mode, (w) => send({ type: "itemsWaiting", mode: message.mode, tracker: w.tracker, fromMs: w.fromMs, untilMs: w.untilMs, stated: w.stated, wait: w.wait })).pipe(Effect.flatMap((answer) => send({ type: "items", ...answer }))),
+            ).pipe(Effect.asVoid);
           case "answer":
             return manager.answer(message.incarnation, message.run, message.prompt, message.text).pipe(Effect.flatMap(refuse));
           case "hold":
@@ -184,6 +187,9 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
           case "endWait":
             // Issue #215: the developer ends a wait; the run makes its request again at once.
             return manager.endWait(message.incarnation, message.run, message.wait).pipe(Effect.flatMap(refuse));
+          case "endItemsWait":
+            // Issue #219: the developer ends a listing's wait for the tracker's rate limit; the listing asks again at once.
+            return manager.endItemsWait(message.incarnation, message.wait).pipe(Effect.flatMap(refuse));
           case "stop":
             // The interruption waits for the run's finalizers; the connection keeps reading meanwhile.
             return Effect.forkScoped(manager.stop(message.incarnation, message.run).pipe(Effect.flatMap(refuse))).pipe(Effect.asVoid);

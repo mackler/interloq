@@ -100,14 +100,28 @@ test("a 500 and a 503 are TrackerUnreachable with their status, a transport fail
   }
 });
 
-test("a 404 on the repository, a 422 and a 429 are TrackerRequestRefused, over the plain and the filtered client", async () => {
+test("a 404 on the repository and a 422 are TrackerRequestRefused, over the plain and the filtered client", async () => {
   for (const filtered of [false, true]) {
-    for (const status of [404, 422, 429]) {
+    for (const status of [404, 422]) {
       const error = await failure(makeStub(() => json({ message: "x" }, status), { filtered }), (t) => t.list("refined"));
       assert.deepEqual(error._tag === "TrackerRequestRefused" && error.status, status);
     }
     const error = await failure(makeStub(() => json({ message: "x" }, 422), { filtered }), (t) => t.setState(id("4"), "refined"));
     assert.equal(error._tag, "TrackerRequestRefused");
+  }
+});
+
+// Issue #219: GitHub's rate limit, a 429 or a 403 with no requests remaining, is TrackerRateLimited with the reset its
+// answer states, over the plain and the filtered client; its text holds no token.
+test("a 429 and a 403 with no requests remaining are TrackerRateLimited carrying the stated reset, over the plain and the filtered client", async () => {
+  for (const filtered of [false, true]) {
+    const listed = await failure(makeStub(() => json({ message: "x" }, 429, { "retry-after": "30" }), { filtered }), (t) => t.list("refined"));
+    assert.equal(listed._tag, "TrackerRateLimited");
+    assert.deepEqual(listed._tag === "TrackerRateLimited" && listed.reset, { _tag: "After", seconds: 30 });
+    const read = await failure(makeStub(() => json({ message: "x" }, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1793980000" }), { filtered }), (t) => t.read(id("4")));
+    assert.equal(read._tag, "TrackerRateLimited");
+    assert.deepEqual(read._tag === "TrackerRateLimited" && read.reset, { _tag: "At", epochMs: 1_793_980_000_000 });
+    assert.doesNotMatch(JSON.stringify(read) + (read._tag === "TrackerRateLimited" ? read.message : ""), /SECRET/u);
   }
 });
 

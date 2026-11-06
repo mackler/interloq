@@ -159,6 +159,26 @@ describe("ItemList", () => {
   ];
   const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "refinement", items: { _tag: "Listed", items }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined, ...props });
 
+  // Issue #219: a listing waiting out the tracker's rate limit shows its text, its countdown and Try again now, which
+  // sends one frame for that wait and is then disabled.
+  test("a listing's rate-limit wait shows its text, countdown and Try again now, pressed once", () => {
+    const ended: number[] = [];
+    const sent = new Set<number>();
+    const now = Date.now();
+    const props = { items: { _tag: "Loading" }, itemsWait: { tracker: "GitLab", stated: true, fromMs: now, untilMs: now + 30_000, waitId: 7 }, onEndItemsWait: (wait: number) => { ended.push(wait); sent.add(wait); }, endItemsWaitSent: (wait: number) => sent.has(wait) };
+    const root = listed(props);
+    const wait = root.querySelector("[data-items-wait]")!;
+    expect(wait.textContent).toContain(prompts.itemsRateLimitText("GitLab", true));
+    expect(wait.querySelector("[data-remaining]")).not.toBe(null);
+    const button = wait.querySelector<HTMLButtonElement>("button[name=end-items-wait]")!;
+    expect(button.textContent?.trim()).toBe(prompts.END_WAIT_LABEL);
+    button.click();
+    flushSync();
+    expect(ended).toEqual([7]);
+    expect(listed(props).querySelector<HTMLButtonElement>("button[name=end-items-wait]")!.disabled).toBe(true);
+    expect(listed().querySelector("[data-items-wait]")).toBe(null);
+  });
+
   test("each item shows its id and title and its excerpt, and its button starts the tab's run with that item", () => {
     const started: unknown[] = [];
     const root = listed({ onStart: (item: unknown) => void started.push(item) });

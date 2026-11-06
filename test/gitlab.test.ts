@@ -129,8 +129,8 @@ test("a 401 and a 403 are TrackerAuthRefused, not an empty list", async () => {
 });
 
 // Issue #171: a 5xx is TrackerUnreachable with its status, a transport failure with none; a 404 on the listing (a wrong
-// project), a 422 and a 429 are TrackerRequestRefused, never repeated; a 404 on a read TrackerItemNotFound.
-test("a 500, a 503 and a transport failure are TrackerUnreachable; a 404 on the listing, a 422 and a 429 TrackerRequestRefused; a 404 on a read TrackerItemNotFound", async () => {
+// project) and a 422 are TrackerRequestRefused, never repeated; a 404 on a read TrackerItemNotFound.
+test("a 500, a 503 and a transport failure are TrackerUnreachable; a 404 on the listing and a 422 TrackerRequestRefused; a 404 on a read TrackerItemNotFound", async () => {
   for (const filtered of [false, true]) {
     for (const status of [500, 503]) {
       const error = await failure(makeStub(() => json({}, status), { filtered }), (t) => t.list("refined"));
@@ -138,11 +138,23 @@ test("a 500, a 503 and a transport failure are TrackerUnreachable; a 404 on the 
     }
     const unreached = await failure(makeStub(() => "transport", { filtered }), (t) => t.list("refined"));
     assert.equal(unreached._tag === "TrackerUnreachable" && unreached.status, null);
-    for (const status of [404, 422, 429]) {
+    for (const status of [404, 422]) {
       const error = await failure(makeStub(() => json({ message: "x" }, status), { filtered }), (t) => t.list("refined"));
       assert.deepEqual(error._tag === "TrackerRequestRefused" && error.status, status);
     }
     assert.equal((await failure(makeStub(() => json({ message: "404 Not found" }, 404), { filtered }), (t) => t.read(id("4"))))._tag, "TrackerItemNotFound");
+  }
+});
+
+// Issue #219: a 429 is TrackerRateLimited with GitLab's ratelimit-reset, on a listing and a read, its text holding no token.
+test("a 429 is TrackerRateLimited carrying the stated ratelimit-reset, on a listing and a read, over the plain and the filtered client", async () => {
+  for (const filtered of [false, true]) {
+    const listed = await failure(makeStub(() => json({ message: "Retry later" }, 429, { "ratelimit-reset": "1793980000", "ratelimit-limit": "100" }), { filtered }), (t) => t.list("refined"));
+    assert.equal(listed._tag, "TrackerRateLimited");
+    assert.deepEqual(listed._tag === "TrackerRateLimited" && listed.reset, { _tag: "At", epochMs: 1_793_980_000_000 });
+    const read = await failure(makeStub(() => json({ message: "Retry later" }, 429, { "retry-after": "12" }), { filtered }), (t) => t.read(id("4")));
+    assert.deepEqual(read._tag === "TrackerRateLimited" && read.reset, { _tag: "After", seconds: 12 });
+    assert.doesNotMatch(JSON.stringify(read) + trackerFailureText(read), new RegExp(SECRET, "u"));
   }
 });
 

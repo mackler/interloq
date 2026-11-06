@@ -26,8 +26,9 @@
   import type { RunMode } from "../../../src/runMode.ts";
   import { TERMS_MODES, type TermsMode } from "../../../src/schema.ts";
   import type { PreparationMark } from "../../../src/preparationSwitch.ts";
-  import { QUEUE_ADD, queuedMarkText, PREPARED_TERMS_NOTE, PREPARING_MARK, preparedMarkText, setAsideMarkText, ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE } from "../../../src/prompts.ts";
-  import type { ItemsView, StartableItems } from "../state.ts";
+  import { END_WAIT_LABEL, itemsRateLimitText, RATE_LIMIT_WAITING_LABEL, QUEUE_ADD, queuedMarkText, PREPARED_TERMS_NOTE, PREPARING_MARK, preparedMarkText, setAsideMarkText, ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE } from "../../../src/prompts.ts";
+  import { countdownView, type ItemsView, type ItemsWait, type StartableItems } from "../state.ts";
+  import Countdown from "./Countdown.svelte";
 
   // Issue #185: `abandoned`, the items whose run in the current chain stopped waiting for an answer, which carry a mark,
   // so an item back in the refined list does not look untouched [visibility of system status].
@@ -35,13 +36,29 @@
   // Issue #196: `queued`, the items of the chain's queue in its order, and `onQueue`, which adds an item to it; given in
   // the Implementation tab alone. A row not queued offers Add to queue, enabled while a run is in progress (unlike the
   // start), and a queued row shows its place in the queue instead [visibility of system status].
-  type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; markOf?: (item: ListedItem) => PreparationMark | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void; queued?: readonly string[]; onQueue?: ((item: ListedItem) => void) | null };
-  let { mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), markOf = (i: ListedItem) => i.preparation, onTerms = () => undefined, onStart, onRefresh, queued = [], onQueue = null }: Props = $props();
+  // Issue #219: `itemsWait`, the listing waiting out the tracker's rate limit, shown with its countdown and Try again now
+  // (as the status line shows a run's wait), which calls `onEndItemsWait` once per wait and is disabled once pressed
+  // [visibility of system status; user control and freedom]. It asserts only that the list is asked for again then.
+  type Props = { itemsWait?: ItemsWait | null; onEndItemsWait?: (wait: number) => void; endItemsWaitSent?: (wait: number) => boolean; mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; markOf?: (item: ListedItem) => PreparationMark | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void; queued?: readonly string[]; onQueue?: ((item: ListedItem) => void) | null };
+  let { itemsWait = null, onEndItemsWait = () => undefined, endItemsWaitSent = () => false, mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), markOf = (i: ListedItem) => i.preparation, onTerms = () => undefined, onStart, onRefresh, queued = [], onQueue = null }: Props = $props();
   const queueable = $derived(mode === "implementation" && onQueue !== null);
   const markText = (mark: PreparationMark): string => (mark._tag === "Preparing" ? PREPARING_MARK : mark._tag === "Prepared" ? preparedMarkText(mark.questions) : setAsideMarkText(mark.reason));
   const texts = $derived(TAB_TEXTS[mode]);
   const inProgress = (id: string): boolean => startable._tag === "Except" && startable.items.includes(id);
   const startableItem = (id: string): boolean => startable._tag === "Except" && !startable.items.includes(id);
+  let now = $state(Date.now());
+  $effect(() => {
+    if (itemsWait === null) return;
+    const until = itemsWait.untilMs;
+    now = Date.now();
+    const tick = setInterval(() => (now = Date.now()), 1000);
+    const end = setTimeout(() => (now = Math.max(Date.now(), until)), Math.max(until - Date.now(), 0));
+    return () => {
+      clearInterval(tick);
+      clearTimeout(end);
+    };
+  });
+  const endable = $derived(itemsWait !== null && countdownView(itemsWait, now) !== null ? itemsWait : null);
 </script>
 
 <section class="items" aria-label={texts.list}>
@@ -61,6 +78,15 @@
         {/each}
       </ConnectedButtons>
       {#if terms === "onRequest"}<p class="supporting terms-note" data-terms-note>{TERMS_ON_REQUEST_NOTE}</p>{/if}
+    </div>
+  {/if}
+  {#if itemsWait !== null}
+    <div class="items-wait" role="status" data-items-wait>
+      <p class="m3-font-body-medium">{itemsRateLimitText(itemsWait.tracker, itemsWait.stated)}</p>
+      <div class="wait-row">
+        <Countdown wait={itemsWait} label={RATE_LIMIT_WAITING_LABEL} attr="data-items-countdown" />
+        {#if endable !== null}<Button variant="text" type="button" name="end-items-wait" disabled={endItemsWaitSent(endable.waitId)} onclick={() => onEndItemsWait(endable.waitId)}>{END_WAIT_LABEL}</Button>{/if}
+      </div>
     </div>
   {/if}
   {#if items._tag === "Unasked" || items._tag === "Loading"}
@@ -103,6 +129,9 @@
 </section>
 
 <style>
+  .items-wait { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.5rem 1rem; }
+  .items-wait p { margin: 0; color: var(--m3c-on-surface-variant); }
+  .wait-row { display: flex; align-items: center; gap: 0.5rem; }
   .items { display: flex; flex-direction: column; gap: 0.5rem; max-width: 56rem; width: 100%; margin: 1rem auto; padding: 0 1rem; box-sizing: border-box; }
   .head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
   h2 { margin: 0; }

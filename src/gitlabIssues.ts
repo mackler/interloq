@@ -5,7 +5,8 @@
 // (the developer's decision of 9 Oct 2026). GitLab Free has no scoped labels, so nothing in GitLab enforces the one
 // label: an open issue with none or with several is a typed failure naming its labels, never a guess.
 import { Option, Result, Schema } from "effect";
-import { TrackerAuthRefused, TrackerItemNotFound, TrackerRequestRefused, TrackerUnreachable } from "./errors.ts";
+import { TrackerAuthRefused, TrackerItemNotFound, TrackerRateLimited, TrackerRequestRefused, TrackerUnreachable } from "./errors.ts";
+import { type Headers, rateLimitResetOf } from "./trackerRateLimit.ts";
 import { type ItemText, type Refinement, type SectionMalformed, withDeveloperText, withRefinement } from "./refinement.ts";
 import type { TrackerError } from "./services.ts";
 import { errorCode } from "./transport.ts";
@@ -126,9 +127,12 @@ export const gitlabTargetName = (target: GitlabTarget): string => (target.kind =
  * whose request carries the token. A 401 or 403 is the token refused, a refusal by its Planner role included. A 404 or
  * a 410 on an item is the item not found. A 404 on a listing is a project path that does not exist, a fault of the configuration, not a missing item: like any other 4xx
  * it is TrackerRequestRefused, never repeated (issue #171), and a status outside 2xx and 4xx is TrackerUnreachable.
+ * Issue #219: a 429 is GitLab's rate limit, TrackerRateLimited with the reset `headers` state (`ratelimit-reset`,
+ * `retry-after`).
  */
-export const gitlabStatusFailure = (status: number, method: string, target: GitlabTarget): TrackerError | null => {
+export const gitlabStatusFailure = (status: number, method: string, target: GitlabTarget, headers: Headers): TrackerError | null => {
   if (status >= 200 && status <= 299) return null;
+  if (status === 429) return new TrackerRateLimited({ tracker: TRACKER, status, message: `GitLab answered ${method} ${gitlabTargetName(target)} with status ${status}`, reset: rateLimitResetOf(headers) });
   if (status === 401 || status === 403) return new TrackerAuthRefused({ tracker: TRACKER, status });
   // Issue #216 (W6-R1-1): a 404 or a 410 on an item is not found, as GitHub's adapter maps it: a 410 means the issue is
   // gone. A listing keeps its mapping below.

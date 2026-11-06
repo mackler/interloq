@@ -6,7 +6,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
-import { describe, TrackerAuthRefused, TrackerUnreachable } from "../src/errors.ts";
+import { describe, TrackerAuthRefused, TrackerRateLimited, TrackerUnreachable } from "../src/errors.ts";
+import { program } from "../src/program.ts";
 import * as prompts from "../src/prompts.ts";
 import { OPENING_LINE, readRefinement, refinementOf, withRefinement } from "../src/refinement.ts";
 import { implementationRun, refinementRun } from "../src/run.ts";
@@ -15,7 +16,7 @@ import type * as S from "../src/schema.ts";
 import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
-import { sourceOf, fakeTrackerOf, finished, questionEntry, summaryReply, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { sourceOf, fakeTrackerOf, finished, questionEntry, summaryReply, scriptedItem, scriptedStart, type TestOptions, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
@@ -124,4 +125,17 @@ test("the same answered Retry again, then succeeding: the run goes on and finish
   ok(exit);
   assert.equal((await itemOf(tracker, refined.id)).state, "implemented");
   assert.ok(conversation().includes(prompts.trackerDecisionLine("retry", "GitHub", "setting item 171 to implementing")));
+});
+
+// Issue #219: the iou-notes run of item #130 halted at its first read on GitLab's 429. A run's first read refused for
+// the rate limit is waited out (here a reset 0 s away, so the margin's second) and the run ends 0, the line in
+// conversation.md, nothing asked.
+test("#219: an implementation run whose first read is refused for the rate limit once waits it out and ends 0", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  await Effect.runPromise(tracker.failNext("read", new TrackerRateLimited({ tracker: "GitLab", status: 429, message: "GitLab answered GET 1 with status 429", reset: { _tag: "After", seconds: 0 } })));
+  const { wiring, probe } = testWiring(tempRepo(), { ...converging(), tracker });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.match(conversation, /GitLab refused the request while reading item 1 for its rate limit; trying again at \d\d:\d\d:\d\d UTC/u);
+  assert.deepEqual(probe.ui.asked, []);
 });

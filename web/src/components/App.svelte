@@ -39,7 +39,7 @@
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
-  import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, queueFrame, startFrame } from "../tabs.ts";
+  import { chainFrame, endItemsWaitFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, queueFrame, startFrame } from "../tabs.ts";
   import { itemIdOf } from "../../../src/tracker.ts";
   import { fullTime } from "../time.ts";
   import { awaitedKey, carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
@@ -91,6 +91,15 @@
     if (endWaitsSent.has(key)) return;
     endWaitsSent = new Set([...endWaitsSent, key]);
     send(endWaitFrame(view.incarnation ?? "", target.id, wait));
+  };
+  // Issue #219: the listing waits this page asked to end, by incarnation and wait id (unique across the server).
+  let endItemsWaitsSent = $state<ReadonlySet<string>>(new Set());
+  const endItemsWaitKey = (wait: number) => `${view.incarnation ?? ""}/${wait}`;
+  const endItemsWait = (wait: number) => {
+    const key = endItemsWaitKey(wait);
+    if (endItemsWaitsSent.has(key)) return;
+    endItemsWaitsSent = new Set([...endItemsWaitsSent, key]);
+    send(endItemsWaitFrame(view.incarnation ?? "", wait));
   };
   const answer = (target: RunView, prompt: number, text: string) => {
     const key = draftKeyOf(target.id);
@@ -514,7 +523,7 @@
       {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} runsOpen={view.chainRunsOpen} onRunsToggle={toggleChainRuns} />{/if}
       {#if preparation !== null}<PreparationControl view={preparation} onChange={setPreparation} />{/if}
       {#if queueOn && queue !== null && queue.source === "queue"}<QueueEditor {queue} listed={listedIds} {offline} onEdit={editQueue} />{/if}
-      <ItemList {mode} queued={queueOn ? (queue?.entries.map((e) => e.item) ?? []) : []} onQueue={mode === "implementation" && queueOn ? addToQueue : null} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} markOf={(item: ListedItem) => preparationMarkOf(view, item)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
+      <ItemList {mode} queued={queueOn ? (queue?.entries.map((e) => e.item) ?? []) : []} onQueue={mode === "implementation" && queueOn ? addToQueue : null} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} markOf={(item: ListedItem) => preparationMarkOf(view, item)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} itemsWait={tab.itemsWait} onEndItemsWait={endItemsWait} endItemsWaitSent={(w: number) => endItemsWaitsSent.has(endItemsWaitKey(w))} />
     </main>
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch

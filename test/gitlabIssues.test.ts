@@ -99,21 +99,23 @@ test("gitlabPageProblem finds a repeated issue and a next page not after the cur
 test("the status of GitLab's answer maps to the tracker's errors", () => {
   const item = { kind: "item", id: "42" as ItemId } as const;
   const listing = { kind: "listing", what: "the refined issues" } as const;
-  assert.equal(gitlabStatusFailure(200, "GET", item), null);
-  assert.equal(gitlabStatusFailure(204, "PUT", item), null);
-  for (const status of [401, 403]) assert.deepEqual(gitlabStatusFailure(status, "GET", item), new TrackerAuthRefused({ tracker: "GitLab", status }));
-  assert.deepEqual(gitlabStatusFailure(404, "GET", item), new TrackerItemNotFound({ id: "42" }));
+  assert.equal(gitlabStatusFailure(200, "GET", item, {}), null);
+  assert.equal(gitlabStatusFailure(204, "PUT", item, {}), null);
+  for (const status of [401, 403]) assert.deepEqual(gitlabStatusFailure(status, "GET", item, {}), new TrackerAuthRefused({ tracker: "GitLab", status }));
+  assert.deepEqual(gitlabStatusFailure(404, "GET", item, {}), new TrackerItemNotFound({ id: "42" }));
   // Issue #216 (W6-R1-1): a 410 on an item is not found too, as GitHub's adapter maps it.
-  assert.deepEqual(gitlabStatusFailure(410, "GET", item), new TrackerItemNotFound({ id: "42" }));
+  assert.deepEqual(gitlabStatusFailure(410, "GET", item, {}), new TrackerItemNotFound({ id: "42" }));
   // Issue #171: any other 4xx is refused for good; anything else is unreachable with its status.
-  for (const [status, target] of [[404, listing], [410, listing], [422, item], [429, listing]] as const) {
-    const failure = gitlabStatusFailure(status, "GET", target);
+  for (const [status, target] of [[404, listing], [410, listing], [422, item]] as const) {
+    const failure = gitlabStatusFailure(status, "GET", target, {});
     assert.equal(failure?._tag, "TrackerRequestRefused", String(status));
     assert.equal(failure?._tag === "TrackerRequestRefused" && failure.status, status);
     assert.match(failure?._tag === "TrackerRequestRefused" ? failure.message : "", new RegExp(`GitLab answered GET ${target.kind === "item" ? "42" : "the refined issues"} with status ${status}`, "u"));
   }
+  // Issue #219: a 429 is the rate limit, apart from the permanent 4xx.
+  assert.equal(gitlabStatusFailure(429, "GET", listing, {})?._tag, "TrackerRateLimited");
   for (const [status, target] of [[500, listing], [503, item]] as const) {
-    const failure = gitlabStatusFailure(status, "GET", target);
+    const failure = gitlabStatusFailure(status, "GET", target, {});
     assert.equal(failure?._tag === "TrackerUnreachable" && failure.status, status);
     assert.match(failure?._tag === "TrackerUnreachable" ? failure.message : "", new RegExp(`GitLab answered GET ${target.kind === "item" ? "42" : "the refined issues"} with status ${status}`, "u"));
   }
