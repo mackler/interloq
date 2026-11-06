@@ -54,7 +54,7 @@ test("clarificationCount: the agreed and the asked questions make the total, the
   assert.deepEqual(clarificationCount(["Q1", "Q2"], ["Q1", "Q2"], ["Q1"], ["Q2"]), { answered: 1, total: 1 }, "issue #99: nor is a skipped one asked earlier");
 });
 
-// S3: the question an interview turn asks now reaches the Ui whole, with its context, terms and options.
+// S3: the question a clarification turn asks now reaches the Ui whole, with its context, terms and options.
 test("normalizeTurn keeps the current question's context, terms and options", () => {
   const current = currentOf({ id: "F1", context: "Interloq, the orchestrator, asks.", text: "Which one?", terms: [{ term: "Interloq", explanation: "the program" }], options: [{ label: "A", description: "a" }] });
   assert.deepEqual(normalizeTurn({ ...turn(false, ""), current_question: current }).current, current);

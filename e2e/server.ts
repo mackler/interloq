@@ -2,12 +2,12 @@
 // agents of test/helpers.ts, in a temporary repository, so that no agent is reached. SCENARIO chooses the script
 // of every run: "converge" (one accepted issue, then convergence), "decision" (a question from Claude Code),
 // "stop" (a planning call that waits until it is interrupted), and those of finding 10 of docs/gui-review.md:
-// "interview", "workCorrection", "tabs", "drop", "long"; and "questionReview", the question phase whose review raises
+// "clarification", "workCorrection", "tabs", "drop", "long"; and "questionReview", the question phase whose review raises
 // an issue, so that Claude Code's response carries the amended list (defect A of docs/page-question-phase-defects.md);
-// "longChoices", an interview turn whose numbered answers are paragraphs (issue #12); "decide", a plan writer's question
+// "longChoices", a clarification turn whose numbered answers are paragraphs (issue #12); "decide", a plan writer's question
 // with two options on which the user takes "Help me decide" (decision support); "decideLong", the same with a
 // recommendation of several paragraphs (W1-R1-3); "decideRevise", an analysis whose first review raises an issue that
-// Claude accepts with an amended analysis (W2-R1-1); "decideBlank", an interview turn with numbered answers on which the
+// Claude accepts with an amended analysis (W2-R1-1); "decideBlank", a clarification turn with numbered answers on which the
 // user takes "Help me decide" and then sends an empty message, which the run rejects (W3-R1-1); "planSteps" (issue #6),
 // a plan of two stages whose execution reports its steps and stops, a revision with a new step whose text is long, and
 // a second execution that reports a step and then waits until it is stopped; "termsWait" (issue #217), a refinement
@@ -158,12 +158,12 @@ export const SCENARIOS: Record<string, TestOptions> = {
   }),
 
   // Finding 10 of docs/gui-review.md: the scenarios the review names.
-  // The question phase: a question list, an interview message, /done, a proposed summary.
-  interview: {
+  // The question phase: a question list, a clarification message, /done, a proposed summary.
+  clarification: {
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
     ],
-    // Issue #184: the first interview presents Q1 itself; Claude Code's reply to the answer and its closing reply.
+    // Issue #184: the first clarification presents Q1 itself; Claude Code's reply to the answer and its closing reply.
     // Issue #184: once the agreed question is answered, the closing reply asks the developer for anything further, and
     // after /done the next closing reply proposes the summary.
     closings: [{ output: ack("Anything else?") }, { output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }],
@@ -195,7 +195,7 @@ export const SCENARIOS: Record<string, TestOptions> = {
     steps: [{ output: { questions: [] } }],
     reviews: [{ issues: [] }],
   },
-  // Issue #12: the interview's numbered answers are paragraphs.
+  // Issue #12: the clarification's numbered answers are paragraphs.
   longChoices: {
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "How should a message show its time?", reason: "r", proposed_answers: LONG_ANSWERS.map((a) => { const [label, ...rest] = a.replace(/^\d+\. /, "").split(": "); return { label, description: rest.join(": ") }; }), default_answer: "Absolute clock time" })] } },
@@ -205,7 +205,7 @@ export const SCENARIOS: Record<string, TestOptions> = {
     reviews: [{ issues: [] }, { issues: [] }],
   },
   // Defect A of docs/page-question-phase-defects.md: the question list, its review with one issue, Claude Code's
-  // response with the amended list, a second round without an issue, one interview turn with numbered answers, the
+  // response with the amended list, a second round without an issue, one clarification turn with numbered answers, the
   // user's answer, a summary and the requirements review; issue #120: a refinement run ends there.
   questionReview: {
     steps: [
@@ -534,7 +534,7 @@ SCENARIOS.transportLong = {
 // Issue #120: the server of two runs at once, a refinement run waiting on its first question and an implementation run
 // waiting on the plan writer's question, each mode with its own script.
 const BY_MODE: Partial<Record<string, Readonly<Record<RunMode, TestOptions>>>> = {
-  twoModes: { refinement: SCENARIOS.interview, implementation: SCENARIOS.decision },
+  twoModes: { refinement: SCENARIOS.clarification, implementation: SCENARIOS.decision },
 };
 // Issue #147: the server of the chain, the one with the mode on: its first run finishes, and every later run waits in
 // its planning call, so the test can turn the mode off while the chained run is in progress.
@@ -548,7 +548,7 @@ const chainQueueScript = (): TestOptions => (++chainQueueRuns === 1 ? SCENARIOS.
 // Issue #131: the server of the preparation: its first wiring prepares the marked item's one question, unattended; the
 // second is the refinement run of that item, which asks the prepared question at once and needs only its answer's
 // closing reply and the requirements review.
-const PREPARE_LIST: TestOptions = { steps: SCENARIOS.interview!.steps, reviews: [{ issues: [] }] };
+const PREPARE_LIST: TestOptions = { steps: SCENARIOS.clarification!.steps, reviews: [{ issues: [] }] };
 const PREPARED_RUN: TestOptions = { closings: [{ output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }], reviews: [{ issues: [] }] };
 let prepareWirings = 0;
 const prepareScript = (): TestOptions => (++prepareWirings === 1 ? PREPARE_LIST : PREPARED_RUN);

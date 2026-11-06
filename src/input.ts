@@ -14,7 +14,7 @@ export const parseAskLine = (line: string): { kind: "quit" } | { kind: "answer";
   return text === "q" ? { kind: "quit" } : { kind: "answer", text };
 };
 
-/** What a message of the interview means: the run ends on "/quit", anything else is the (trimmed) message. */
+/** What a message of the clarification means: the run ends on "/quit", anything else is the (trimmed) message. */
 export const parseMessage = (message: string): { kind: "quit" } | { kind: "message"; text: string } => {
   const text = message.trim();
   return text === "/quit" ? { kind: "quit" } : { kind: "message", text };
@@ -52,8 +52,8 @@ export const chooseOption = (reply: string, count: number): number | null => {
   return index < count ? index : null;
 };
 
-/** What a message of the interview means beyond quitting: nothing, the end of the interview, or text. */
-export const parseInterviewMessage = (message: string): { kind: "empty" } | { kind: "done" } | { kind: "text"; text: string } => {
+/** What a message of the clarification means beyond quitting: nothing, the end of the clarification, or text. */
+export const parseClarificationMessage = (message: string): { kind: "empty" } | { kind: "done" } | { kind: "text"; text: string } => {
   const text = message.trim();
   if (text === "") return { kind: "empty" };
   if (text === "/done") return { kind: "done" };

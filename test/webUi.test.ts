@@ -63,8 +63,8 @@ test("q at an ask prompt and /quit at a message prompt stop the run, as src/inpu
     assert.ok(Exit.isFailure(exit) && String(exit.cause).includes("UserStopped"), `${answer} did not stop`);
   };
   await stopped(ui.ask(prompts.optionOrTextPrompt), "q");
-  await stopped(ui.askMessage(prompts.interviewMessagePrompt), "/quit");
-  const fiber = Effect.runFork(ui.askMessage(prompts.interviewMessagePrompt));
+  await stopped(ui.askMessage(prompts.clarificationMessagePrompt), "/quit");
+  const fiber = Effect.runFork(ui.askMessage(prompts.clarificationMessagePrompt));
   await run(ui.answer(await pendingPrompt(ui), "q"));
   assert.equal(await run(Fiber.join(fiber)), "q", "q is a message like any other");
 });

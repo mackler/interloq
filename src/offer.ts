@@ -96,7 +96,7 @@ export const saveOptionFigures = (options: readonly Pick<PieceOption, "figure">[
   });
 
 /**
- * Options chosen by their number or their exact label: the interview, a relayed question, a pause, a plan writer's
+ * Options chosen by their number or their exact label: the clarification, a relayed question, a pause, a plan writer's
  * question. An option given as pieces is chosen by its words; one given as text is shown as plain pieces.
  */
 export const numberedOptions = (options: readonly (Readonly<{ label: string; description: string }> | PieceOption)[]): readonly OfferedOption[] =>
@@ -159,8 +159,8 @@ export const permissionDraft = (tool: string, input: unknown): QuestionDraft => 
   };
 };
 /** The pause of issue #30: Retry, Proceed and Stop, each chosen by the answers parseUnchangedAnswer reads as it. */
-export const unchangedOptions = (interview: boolean, pass: prompts.PassNoun): readonly OfferedOption[] => {
-  const d = prompts.unchangedOptionDescriptions(interview, pass);
+export const unchangedOptions = (clarification: boolean, pass: prompts.PassNoun): readonly OfferedOption[] => {
+  const d = prompts.unchangedOptionDescriptions(clarification, pass);
   return [
     own(prompts.UNCHANGED_RETRY, d.retry, { token: prompts.UNCHANGED_ANSWERS.retry }, (answer: string) => parseUnchangedAnswer(answer) === "retry"),
     own(prompts.UNCHANGED_PROCEED, d.proceed, { token: prompts.UNCHANGED_ANSWERS.proceed }, (answer: string) => parseUnchangedAnswer(answer) === "proceed"),
@@ -279,7 +279,7 @@ export const askUnoffered = <E>(
 export type Asking<E> = Readonly<{ kind: AskKind; ask: (prompt: string) => Effect.Effect<string, E> }>;
 /** A one-line prompt ("q" ends the run). */
 export const byLine = <E>(ask: (prompt: string) => Effect.Effect<string, E>): Asking<E> => ({ kind: "line", ask });
-/** An interview message ("/quit" ends the run). */
+/** A clarification message ("/quit" ends the run). */
 export const byMessage = <E>(ask: (prompt: string) => Effect.Effect<string, E>): Asking<E> => ({ kind: "message", ask });
 
 /**

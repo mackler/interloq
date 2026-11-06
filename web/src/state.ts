@@ -12,8 +12,8 @@ import type { Asked, Countdown as AnswerCountdown, ChainFrameSettings, CurrentRu
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import { added, afterHello as noticesAfterHello, type ConnectionCondition, dismissed, EMPTY_NOTICES, type NoticeId, type Notices } from "./notices.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, planWrittenBody, documentLabel, modelLine, NO_UNANSWERED_QUESTIONS, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
-import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
+import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, clarificationHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, planWrittenBody, documentLabel, modelLine, NO_UNANSWERED_QUESTIONS, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
+import { clarificationSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
 import { correctionCount } from "../../src/issueLog.ts";
@@ -69,7 +69,7 @@ export type TimelineState = "ahead" | "active" | "done" | "stopped" | "notReache
 export type StepState = TimelineState | "skipped";
 /**
  * Issue #51 (Q4): the follow-up clarifications are one conversation with the clarification, so they fold into its step:
- * `base` holds the counts of the interviews before the current one, and `count` is `base` plus the current interview's.
+ * `base` holds the counts of the clarifications before the current one, and `count` is `base` plus the current clarification's.
  */
 export type StepCount = Readonly<{ answered: number; total: number }>;
 export type TimelineStep = Readonly<{ kind: "formulate" | "terms" | "clarification"; label: string; state: StepState; count: StepCount | null; base: StepCount; groups: readonly RoundGroup[] }>;
@@ -118,7 +118,7 @@ export type TimelineEntry = Readonly<{
 /** An agent call that runs; calls nest when a decision is taken inside an execution call (P1-R2-1). */
 export type AgentCall = Readonly<{ agent: Agent; purpose: string; label: string; startedAt: string; callId: string }>;
 /** The prompt the run waits on, with every choice it offers (the catalog's and those of the preceding event). */
-/** A pending prompt: the agent's options (an interview turn's numbered answers or a relayed question's options,
+/** A pending prompt: the agent's options (a clarification turn's numbered answers or a relayed question's options,
  * rendered as cards) apart from the catalog's fixed choices (buttons), issue #12. */
 /**
  * S26: `question`, the question the prompt asks, as it was last presented, and `hint`, the prompt's text in the page's
@@ -169,7 +169,7 @@ export type Expired = Readonly<{ prompt: number; seconds: number }>;
  * Interloq's last line in place: the line at the end of a run stays, since nothing replaces it.
  */
 export type Status = Readonly<{ _tag: "Idle" }> | Readonly<{ _tag: "Activity"; text: string }> | Readonly<{ _tag: "Interloq"; text: string }>;
-/** Claude Code's latest message (issue #22): its prose while it works, an interview message, a plan's result text; Markdown. */
+/** Claude Code's latest message (issue #22): its prose while it works, a clarification message, a plan's result text; Markdown. */
 export type ClaudeLatest = Readonly<{ heading: string | null; body: string; running: readonly string[] }>;
 /**
  * What the page showed of the prompt an answer answers: the question as it was presented, the prompt's hint where it
@@ -187,8 +187,8 @@ export type Dashboard = Readonly<{
   models: Readonly<{ claude: string | null; codex: string | null }>;
   status: Status;
   claude: ClaudeLatest | null;
-  /** The interview's opening and its help while the interview lasts. */
-  interviewHelp: string | null;
+  /** The clarification's opening and its help while the clarification lasts. */
+  clarificationHelp: string | null;
   answers: readonly AnsweredEntry[];
   /**
    * Issue #86 (requirements Q1): the latest document under review of every subject but a decision, replaced in place by
@@ -203,7 +203,7 @@ export type Dashboard = Readonly<{
    */
   draft: Readonly<{ decision: number; question: number | null; analysis: DecisionAnalysis }> | null;
 }>;
-export const emptyDashboard: Dashboard = { models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [], document: null, preparing: null, draft: null };
+export const emptyDashboard: Dashboard = { models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, clarificationHelp: null, answers: [], document: null, preparing: null, draft: null };
 /** The status line's text: empty while nothing happens. */
 export const statusText = (status: Status): string => (status._tag === "Idle" ? "" : status.text);
 /** The last answer the developer gave, or null before the first. */
@@ -253,7 +253,7 @@ export type RunView = Readonly<{
   timeline: readonly TimelineEntry[];
   /** Issue #44: the run's ending as the program concluded it, null while it runs. */
   ended: Ending | null;
-  /** Internal to the fold: the lines said for the last interview turn still to absorb, and the options of the last question presented (S5). */
+  /** Internal to the fold: the lines said for the last clarification turn still to absorb, and the options of the last question presented (S5). */
   absorb: readonly string[];
   questionOptions: readonly Choice[];
   /** The question presented last and not yet asked (S26), with the time it was presented. */
@@ -894,7 +894,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // S17: the terms review's first round opens its own step of Gather Requirements, before the clarification.
       if (isDecision(event.subject)) return run;
       // Issue #185: a review that went on after its limit's expiry has moved on.
-      // Issue #22: the round of a review after the interview ends it, and its help with it.
+      // Issue #22: the round of a review after the clarification ends it, and its help with it.
       return { ...withoutHelp(run), timeline: roundBegan(event.subject === "terms" ? inQuestionPhase(run.timeline, termsStep) : run.timeline, event.subject, event.round) };
     case "QuestionExplained": {
       // Issue #142 (S15, W2-R1-1): "/terms" answered the prompt the analysis belongs to, and the same question is asked
@@ -936,18 +936,18 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       const stage = phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase }));
       return withClaude(run, { heading: planWrittenHeading(stage), body: planWrittenBody(event.revised, stage, documentLabel({ plan: event.phase })), running: [] });
     }
-    case "InterviewTurn": {
+    case "ClarificationTurn": {
       const turn = event.summary === null ? { kind: "continuing" as const, message: event.message } : { kind: "summary_proposed" as const, message: event.message, summary: event.summary };
       const body = event.summary === null ? event.message : `${event.message}\n\n**${SUMMARY_PROPOSED_HEADING}**\n\n${event.summary}`;
-      // Issue #5: the interview's turns are Claude's words, so they are Claude's messages.
+      // Issue #5: the clarification's turns are Claude's words, so they are Claude's messages.
       // Issue #21: the turn's count is the active clarification step's.
       const timeline = counted(run.timeline, { answered: event.answered, total: event.total });
-      return { ...withClaude({ ...run, timeline }, { heading: event.heading, body, running: [] }), absorb: interviewSays(turn) };
+      return { ...withClaude({ ...run, timeline }, { heading: event.heading, body, running: [] }), absorb: clarificationSays(turn) };
     }
-    case "InterviewCounted":
+    case "ClarificationCounted":
       // Issue #184: Interloq counts each answer as it is given; the count alone changes, and no message is added.
       return { ...run, timeline: counted(run.timeline, { answered: event.answered, total: event.total }) };
-    case "InterviewOpened": {
+    case "ClarificationOpened": {
       // Issue #21: the step before ends, and the clarification opens as a step with its total.
       const fresh = { answered: 0, total: event.total };
       const step = newStep("clarification", fresh);
@@ -964,7 +964,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       };
       const timeline = inQuestionPhase(run.timeline, opened);
       // The page's own help (finding 8).
-      return { ...run, timeline, dashboard: { ...run.dashboard, interviewHelp: interviewHelp(event.heading) } };
+      return { ...run, timeline, dashboard: { ...run.dashboard, clarificationHelp: clarificationHelp(event.heading) } };
     }
     case "AgentCallStarted": {
       const label = `${AGENT_DISPLAY[event.agent].short} — ${purposeLabel(event.purpose)}`;
@@ -1023,7 +1023,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       };
     case "AgentCallEnded": {
       // P1-R2-1: a nested call ends and the one it ran in is shown again. Issue #184: calls may overlap and end in any
-      // order (the interview's request beside a terms request or a decision), so the call removed is the one whose id
+      // order (the clarification's request beside a terms request or a decision), so the call removed is the one whose id
       // ended, and an end of no running call changes nothing.
       const at = run.calls.map((c) => c.callId).lastIndexOf(event.callId);
       if (at < 0) return run;
@@ -1147,8 +1147,8 @@ const withActivity = (run: RunView, activity: string): RunView => ({
 /** Interloq's own line as the status (issue #22): its leading and trailing line breaks removed. */
 /** Claude Code's latest message on the dashboard (issue #22): a newer one replaces it. */
 const withClaude = (run: RunView, claude: ClaudeLatest): RunView => ({ ...run, dashboard: { ...run.dashboard, claude } });
-/** The dashboard without the interview's help: the interview has ended (the requirements' default). */
-const withoutHelp = (run: RunView): RunView => (run.dashboard.interviewHelp === null ? run : { ...run, dashboard: { ...run.dashboard, interviewHelp: null } });
+/** The dashboard without the clarification's help: the clarification has ended (the requirements' default). */
+const withoutHelp = (run: RunView): RunView => (run.dashboard.clarificationHelp === null ? run : { ...run, dashboard: { ...run.dashboard, clarificationHelp: null } });
 const withInterloqLine = (run: RunView, text: string): RunView => ({ ...run, dashboard: { ...run.dashboard, status: { _tag: "Interloq", text: text.replace(/^[\r\n]+|[\r\n]+$/g, "") } } });
 
 /**
@@ -1187,7 +1187,7 @@ const withoutKey = <K, V>(m: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> => (m
 
 /** One event of a run with its time, in its order. Pure; the replay folds the same function. */
 export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
-  // The lines said for an interview turn or a relayed question are absorbed only while they follow it directly.
+  // The lines said for a clarification turn or a relayed question are absorbed only while they follow it directly.
   if (event._tag === "Said" && run.absorb.length > 0 && run.absorb[0] === event.text) return { ...run, absorb: run.absorb.slice(1), nextSeq: run.nextSeq + 1 };
   const r: RunView = { ...run, absorb: [] };
   const next = ((): RunView => {

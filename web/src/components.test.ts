@@ -282,7 +282,7 @@ describe("QuestionPane", () => {
     const sent: string[] = [];
     const options = [1, 2, 3].map((n) => ({ label: paragraph(n, `Answer ${n}`), sends: String(n) }));
     expect(options.every((o) => o.label.length > 300)).toBe(true);
-    const root = show(QuestionPane, { widget: widget(prompts.interviewMessagePrompt, options), onAnswer: (_p: number, t: string) => void sent.push(t) });
+    const root = show(QuestionPane, { widget: widget(prompts.clarificationMessagePrompt, options), onAnswer: (_p: number, t: string) => void sent.push(t) });
     const cards = cardsOf(root);
     expect(cards.map((c) => c.textContent?.trim())).toEqual(options.map((o) => o.label));
     for (const card of cards) {
@@ -346,9 +346,9 @@ describe("QuestionPane", () => {
     expect(sent).toEqual([[7, ""], [7, "keep the rejection"]]);
   });
 
-  test("an interview's numbered answer sends its number; a permission prompt has no text field", () => {
+  test("a clarification's numbered answer sends its number; a permission prompt has no text field", () => {
     const sent: string[] = [];
-    const root = show(QuestionPane, { widget: widget(prompts.interviewMessagePrompt, [{ label: "1. PostgreSQL", sends: "1" }, { label: "2. SQLite", sends: "2" }]), onAnswer: (_p: number, t: string) => void sent.push(t) });
+    const root = show(QuestionPane, { widget: widget(prompts.clarificationMessagePrompt, [{ label: "1. PostgreSQL", sends: "1" }, { label: "2. SQLite", sends: "2" }]), onAnswer: (_p: number, t: string) => void sent.push(t) });
     const two = [...cardsOf(root)].find((b) => b.textContent?.trim() === "2. SQLite") as HTMLButtonElement;
     two.click();
     expect(sent).toEqual(["2"]);
@@ -368,7 +368,7 @@ describe("QuestionPane", () => {
     const input = one(line, "input[name=answer]") as HTMLInputElement;
     type(input, "unfinished composition");
     key(input, { isComposing: true });
-    const message = show(QuestionPane, { widget: widget(prompts.interviewMessagePrompt), onAnswer: (_p: number, t: string) => void sent.push(t) });
+    const message = show(QuestionPane, { widget: widget(prompts.clarificationMessagePrompt), onAnswer: (_p: number, t: string) => void sent.push(t) });
     const area = one(message, "textarea[name=answer]") as HTMLTextAreaElement;
     type(area, "unfinished too");
     key(area, { isComposing: true });
@@ -391,7 +391,7 @@ describe("QuestionPane", () => {
     expect(sent).toEqual(["keep it"]);
     expect(root.querySelector("label")?.textContent).toBe("Your answer");
     expect(root.querySelector(".hint")?.textContent).toBe(prompts.answerHint("line"));
-    const message = show(QuestionPane, { widget: widget(prompts.interviewMessagePrompt), onAnswer: () => undefined });
+    const message = show(QuestionPane, { widget: widget(prompts.clarificationMessagePrompt), onAnswer: () => undefined });
     expect(message.querySelector("label")?.textContent).toBe("Your message");
   });
 
@@ -503,21 +503,21 @@ describe("TimelineRail", () => {
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `active:${prompts.stepLabel("clarification")}:step`]);
     expect([...root.querySelectorAll("[data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 1, "converged")]);
     expect(root.querySelector("[data-step=active] [data-count]")?.textContent?.trim()).toBe("3 of 7 answered");
-    expect(root.textContent).not.toMatch(/Question phase|Interview|round/);
+    expect(root.textContent).not.toMatch(/Question phase|round/);
   });
 
   // Issue #51 (Q4), the seam of the reducer and the rail: a clarification of 8 and a follow-up of 2 are one step, 10 of 10
   // answered, and the requirements review's two cycles are one line.
   test("a finished phase with a follow-up shows one Clarification step with the summed count and one loop summary", () => {
     const q = { kind: "questions" as const };
-    const turn = (answered: number, total: number): UiEvent => ({ _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Hi", summary: null, answered, total });
+    const turn = (answered: number, total: number): UiEvent => ({ _tag: "ClarificationTurn", heading: prompts.clarificationHeading("first"), message: "Hi", summary: null, answered, total });
     const events: UiEvent[] = [
       { _tag: "PhaseBegan", phase: q },
-      { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 8 },
+      { _tag: "ClarificationOpened", heading: prompts.clarificationHeading("first"), stage: "first", total: 8 },
       turn(8, 8),
       { _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 },
       { _tag: "ReviewReceived", subject: "requirements", round: 1, review: { issues: [] }, counted: 2 },
-      { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "followUp", total: 2 },
+      { _tag: "ClarificationOpened", heading: prompts.clarificationHeading("first"), stage: "followUp", total: 2 },
       turn(2, 2),
       { _tag: "RoundBegan", subject: "requirements", round: 2, limit: 5 },
       { _tag: "LoopFinished", subject: "requirements", result: "converged" },
@@ -546,7 +546,7 @@ describe("TimelineRail", () => {
     expect([...root.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(["Gather Requirements", "Planning 1", "Implementation 1"]);
     expect([...root.querySelectorAll("[data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 1, "converged"), prompts.loopSummary(2, 2, "converged")]);
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `done:${prompts.stepLabel("clarification")}:-`]);
-    expect(root.textContent).not.toMatch(/Question phase|Execution|Interview|round| of 5/);
+    expect(root.textContent).not.toMatch(/Question phase|Execution|round| of 5/);
   });
 
   test("a stopped step shows the stopped mark and is not the current step", () => {
@@ -677,7 +677,7 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     const question = { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Which database?"), options: [{ label: plainPieces("SQLite"), description: [], figure: null, answer: { token: "1" } }, { label: plainPieces("PostgreSQL"), description: [], figure: null, answer: { token: "2" } }], attached: null, decision: null };
     const explainedQuestion = { ...question, explanations: [{ id: "t", term: "database", senses: ["A program that keeps data."] }] };
-    const first = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.interviewMessagePrompt))), countdown: null };
+    const first = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.clarificationMessagePrompt))), countdown: null };
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "QuestionPresented", question } }, first]) }] });
     const button = () => [...root.querySelectorAll<HTMLButtonElement>(".choices button")].find((b) => b.textContent?.trim() === prompts.EXPLAIN_TERMS);
     expect(button()?.classList.contains("text")).toBe(true);
@@ -692,7 +692,7 @@ describe("App and the draft", () => {
       { _tag: "Answered", prompt: 1, text: "/terms" },
       { _tag: "Notified", event: { _tag: "QuestionExplained", question: explainedQuestion } },
       { _tag: "Notified", event: { _tag: "QuestionPresented", question: explainedQuestion } },
-      { _tag: "Asked", prompt: 2, ...promptOf(prompts.withOffer(prompts.interviewMessagePrompt)), countdown: null },
+      { _tag: "Asked", prompt: 2, ...promptOf(prompts.withOffer(prompts.clarificationMessagePrompt)), countdown: null },
     ];
     events.forEach((event, i) => ws.receive({ type: "event", run: 1, seq: 3 + i, time: TIME, event }));
     expect(field().value).toBe("half an answer");
@@ -2120,7 +2120,7 @@ describe("App: several refinement runs", () => {
   const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));
   const startedOf = (id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id, title: `title ${id}` } });
   const question = (text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null } } });
-  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt), countdown: null });
+  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.clarificationMessagePrompt), countdown: null });
   const secondRow = (root: HTMLElement) => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.RUN_TABS_LABEL}"]`);
   /** Issue #44: each tab's visible text, without the words a tab says to assistive technology alone. */
   const runTabNames = (root: HTMLElement) =>
@@ -3209,7 +3209,7 @@ describe("QuestionPane's order", () => {
 
   test("a context the program wrote carries the note; the attached material is inside the pane", () => {
     const agreed: PresentedQuestion = { ...question, origin: { kind: "clarification", id: "Q1" }, context: { blocks: plainBlocks("Interloq asks."), by: "program" }, options: [], explanations: [], attached: { kind: "reason", blocks: [{ kind: "document", markdown: "The plan needs a database." }] }, question: plainPieces("Which database?") };
-    const root = show(QuestionPane, { widget: withQuestion(agreed, prompts.interviewMessagePrompt), onAnswer: () => undefined });
+    const root = show(QuestionPane, { widget: withQuestion(agreed, prompts.clarificationMessagePrompt), onAnswer: () => undefined });
     openSections(root);
     expect(one(root, ".context").textContent).toContain(prompts.PROGRAM_CONTEXT_NOTE);
     expect(one(root, ".details").textContent).toContain("The plan needs a database.");
@@ -3325,7 +3325,7 @@ describe("the confirmation before a run ends, in the page", () => {
   });
 
   test("typed /quit in a message opens the dialog", () => {
-    const { root, sent } = pane(prompts.interviewMessagePrompt);
+    const { root, sent } = pane(prompts.clarificationMessagePrompt);
     const field = one(root, "textarea[name=answer]") as HTMLTextAreaElement;
     type(field, "/quit");
     enter(field);
@@ -3876,7 +3876,7 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
   const sentOf = (ws: FakeWebSocket) => ws.sent.map((m) => JSON.parse(m) as ClientMessage);
   const startedOf = (id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id, title: `title ${id}` } });
   const question = (text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null } } });
-  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt), countdown: null, deciding: null, beside: null });
+  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.clarificationMessagePrompt), countdown: null, deciding: null, beside: null });
   const secondRow = (root: HTMLElement) => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.IMPLEMENTATION_RUN_TABS_LABEL}"]`);
   /** Issue #44: each tab's visible text, without the words a tab says to assistive technology alone. */
   const runTabNames = (root: HTMLElement) =>

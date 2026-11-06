@@ -56,7 +56,7 @@ therefore never once carried a question phase, in a test or in a real run.
    `src/uiEvents.ts`. Check every other event whose payload is a subject-dependent shape for the same
    mistake, `ReviewReceived` in particular.
 3. **The scenario that would have caught it.** Red in `web/src/state.test.ts`: folding a replay whose
-   events include a question review's response and an `InterviewTurn` yields both panels and a pending
+   events include a question review's response and an `ClarificationTurn` yields both panels and a pending
    prompt. And in `e2e/run.spec.ts`, a scripted scenario with a question phase: the list, its review,
    one interview turn, an answer, and the requirements review. Finding 10's remedy named this
    scenario; it was deferred and this is the cost.

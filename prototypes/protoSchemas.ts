@@ -101,8 +101,8 @@ export const protoSchemas: Record<string, Schema.Top> = {
   execReport: Schema.Struct({ status: Schema.Literals(["finished", "continuing", "needs_input", "blocked", "not_refined"]), summary: Str, question: Str, remaining_work: Str, checks: Schema.Array(Schema.Struct({ step: Str, command: Str, seconds: Schema.Finite, selection: Schema.Boolean, counts: Schema.NullOr(Schema.Struct({ passed: Schema.Int, failed: Schema.Int, skipped: Schema.Int })) })), test_first: Schema.Array(Schema.Struct({ step: Str, tests: Schema.Array(Schema.Struct({ test: Str, observed: Str })), refactor: Str })), missing: Str }),
   questionList: Schema.Struct({ questions: Schema.Array(QuestionEntry) }),
   questionListResponse: Schema.Struct({ ...markedFields, ...correctionPassages, questions: Schema.Array(QuestionEntry) }),
-  interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
-  interviewReply: Schema.Struct({
+  clarificationTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
+  clarificationReply: Schema.Struct({
     message_to_user: Str,
     follow_ups: Schema.Array(Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) })),
     unnecessary: Schema.Array(Schema.Struct({ id: Str, reason: Str })),

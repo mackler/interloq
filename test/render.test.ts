@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { Result, Schema } from "effect";
 import * as S from "../src/schema.ts";
 import { marked } from "marked";
-import { attachedMarkdown, renderQuestionRecord as recordOf, interviewSays, recordHeading, renderTerms, termItem, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
+import { attachedMarkdown, renderQuestionRecord as recordOf, clarificationSays, recordHeading, renderTerms, termItem, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
 import { issue, para, plain, questionEntry, readTerms, respond, senseRead, shownOf, term } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 import { attachedOf, type PresentedQuestion } from "../src/question.ts";
@@ -46,10 +46,10 @@ test("renderFeedback and renderQuestions", () => {
   assert.match(renderQuestions({ questions: [{ ...list.questions[0], default_answer: null }] }, "link"), /- B: b\n$/);
 });
 
-// Plan step 1.5: the lines said for an interview turn, shared with the page's reducer (4.2).
-test("interviewSays gives the lines of a continuing turn and of a proposed summary", () => {
-  assert.deepEqual(interviewSays({ kind: "continuing", message: "Hello" }), ["\nHello\n"]);
-  assert.deepEqual(interviewSays({ kind: "summary_proposed", message: "Done.", summary: "# R" }), ["\nDone.\n", "Summary proposed by Claude Code:\n\n# R\n"]);
+// Plan step 1.5: the lines said for a clarification turn, shared with the page's reducer (4.2).
+test("clarificationSays gives the lines of a continuing turn and of a proposed summary", () => {
+  assert.deepEqual(clarificationSays({ kind: "continuing", message: "Hello" }), ["\nHello\n"]);
+  assert.deepEqual(clarificationSays({ kind: "summary_proposed", message: "Done.", summary: "# R" }), ["\nDone.\n", "Summary proposed by Claude Code:\n\n# R\n"]);
 });
 
 // Plan step 1.6: the page shows the two halves of a round as two messages; conversation.md keeps the whole.
@@ -65,10 +65,10 @@ test("the heading of a work review", () => {
   assert.equal(subjectHeading({ work: 2 }), "Work review 2");
 });
 
-// The records keep their headings when the user-facing name becomes "clarification" (issue #21, Q5 follow-up).
-test("conversation.md's headings of the interviews are unchanged", () => {
-  assert.equal(recordHeading("clarification"), "Interview");
-  assert.equal(recordHeading("followUp"), "Second interview");
+// The records name the two rounds of clarification in conversation.md (issue #24; the user-facing names are those of issue #113).
+test("conversation.md's headings name the first and the follow-up clarification", () => {
+  assert.equal(recordHeading("first"), "First clarification");
+  assert.equal(recordHeading("followUp"), "Follow-up clarification");
 });
 
 // S8: every question is recorded in the one shape, in conversation.md: heading with its number, the line saying where it

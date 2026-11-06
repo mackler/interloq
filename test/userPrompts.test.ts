@@ -18,7 +18,7 @@ const catalog: [string, Partial<UserPrompt> & { kind: UserPrompt["kind"] }, stri
   [prompts.transportPrompt, { kind: "transport", mode: "ask", free: "none" }, ["End the run=q"]],
   [prompts.optionOrTextPrompt, { kind: "optionOrText", mode: "ask", free: "line" }, ["End the run=q"]],
   [prompts.permissionPrompt, { kind: "permission", mode: "ask", free: "none" }, ["End the run=q"]],
-  [prompts.interviewMessagePrompt, { kind: "interviewMessage", mode: "message", free: "message" }, ["Finish clarification and start planning=/done", "End the run=/quit"]],
+  [prompts.clarificationMessagePrompt, { kind: "clarificationMessage", mode: "message", free: "message" }, ["Finish clarification and start planning=/done", "End the run=/quit"]],
 ];
 
 // Issue #138: the confirmation of the summary is gone; its former hint is no prompt the page recognizes.
@@ -101,16 +101,16 @@ test("the controls' labels are the constants of src/prompts.ts, and none is a li
 import { endingOf, isDecide, isTermsRequest } from "../src/input.ts";
 
 test("the terms line gives the choice Explain the terms, whose answer is the terms request, before Help me decide", () => {
-  const hint = prompts.interviewMessagePrompt;
+  const hint = prompts.clarificationMessagePrompt;
   for (const [text, decide] of [[prompts.withTermsOffer(prompts.withOffer(hint)), true], [prompts.withTermsOffer(hint), false]] as const) {
     const widget = promptOf(text);
-    assert.equal(widget.kind, "interviewMessage");
+    assert.equal(widget.kind, "clarificationMessage");
     const labels = widget.choices.map((c) => c.label);
     const terms = widget.choices.find((c) => c.label === prompts.EXPLAIN_TERMS);
     assert.ok(terms !== undefined && isTermsRequest(terms.sends), labels.join(", "));
     assert.equal(widget.choices.some((c) => c.label === prompts.HELP_ME_DECIDE && isDecide(c.sends)), decide);
     if (decide) assert.ok(labels.indexOf(prompts.EXPLAIN_TERMS) < labels.indexOf(prompts.HELP_ME_DECIDE));
-    assert.equal(prompts.pagePromptText(widget.kind, text), prompts.pagePromptText("interviewMessage", hint));
+    assert.equal(prompts.pagePromptText(widget.kind, text), prompts.pagePromptText("clarificationMessage", hint));
     assert.equal(endingOf(widget.kind, widget.mode, terms.sends), null);
   }
   assert.ok(!promptOf(prompts.withOffer(hint)).choices.some((c) => c.label === prompts.EXPLAIN_TERMS));

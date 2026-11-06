@@ -1,6 +1,6 @@
 // Issue #47: each accepted finding of the requirements review is handled by what it is: one the developer already
 // answered is written into requirements.md and not asked; a correction is written with no question; an unresolved one,
-// or a reopened one with what changed, is asked in the second interview.
+// or a reopened one with what changed, is asked in the follow-up clarification.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -15,9 +15,9 @@ import { fakeTrackerOf, haltConversationOf, haltReasonOf, issue, questionEntry, 
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
 const q = (id: string): S.QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
 const none = { id: "", context: [], history: [], text: [], explanations: [], options: [] };
-const turn = (message: string, answered: string[], summary = ""): S.InterviewTurn => ({ message_to_user: message, current_question: none, asked_ids: answered, answered_ids: answered, complete: summary !== "", summary });
+const turn = (message: string, answered: string[], summary = ""): S.ClarificationTurn => ({ message_to_user: message, current_question: none, asked_ids: answered, answered_ids: answered, complete: summary !== "", summary });
 const closing = [{ output: summaryReply("Q1: A", "Complete.") }];
-const followUpsOpened = (ui: ScriptedUi): number => ui.notified.filter((e) => e._tag === "InterviewOpened" && e.stage === "followUp").length;
+const followUpsOpened = (ui: ScriptedUi): number => ui.notified.filter((e) => e._tag === "ClarificationOpened" && e.stage === "followUp").length;
 const gapsPrompt = (prompts_: readonly string[]): string | undefined => prompts_.find((p) => p.includes("You classified these accepted issues as needing the user"));
 const shownRequirements = (ui: ScriptedUi): string[] => ui.notified.flatMap((e) => (e._tag === "DocumentShown" && e.subject === "requirements" && e.document._tag === "Markdown" ? [(e.document as Extract<ShownDocument, { _tag: "Markdown" }>).text] : []));
 const retryQuestion = userQuestion("How many retries do you want?", [["Three retries", "three"], ["Five retries", "five"]]);
@@ -62,7 +62,7 @@ test("the application of decisions writes the document it returns", async () => 
   assert.equal(followUpsOpened(probe.ui), 0);
 });
 
-test("an unresolved finding is asked in the second interview", async () => {
+test("an unresolved finding is asked in the follow-up clarification", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "retries: 3"],
     closings: closing,
@@ -76,7 +76,7 @@ test("an unresolved finding is asked in the second interview", async () => {
   });
   await runRefinement(layer);
   const opening = gapsPrompt(probe.planner.prompts);
-  assert.ok(opening !== undefined, "no second interview was opened");
+  assert.ok(opening !== undefined, "no follow-up clarification was opened");
   assert.ok(opening.includes("- G-R1-1"));
   assert.ok(!opening.includes("Treat each accepted issue as an agreed question"));
   assert.equal(followUpsOpened(probe.ui), 1);
@@ -103,7 +103,7 @@ test("a reopened finding is asked again, the opening stating what changed", asyn
   assert.equal(read(probe.dir, "requirements.md"), "Q1: A\nRetries: 5\n");
 });
 
-test("every finding a correction: the requirements are revised and reviewed again with no interview", async () => {
+test("every finding a correction: the requirements are revised and reviewed again with no clarification", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A"],
     closings: closing,
@@ -127,7 +127,7 @@ test("every finding a correction: the requirements are revised and reviewed agai
   assert.equal(probe.reviewer.prompts.filter((p) => p.includes("requirements.md")).length, 2);
 });
 
-test("an answered and an unresolved finding: the document is written before the interview, which asks the unresolved one alone", async () => {
+test("an answered and an unresolved finding: the document is written before the clarification, which asks the unresolved one alone", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "retries: 3"],
     closings: closing,

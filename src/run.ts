@@ -13,7 +13,7 @@ import type { ItemComment, ItemId } from "./tracker.ts";
 import { describe, isTrackerError, NotRefinedStopped, type RunError, SuiteStopped, TrackerStepFailed, trackerFailureText, type UserStopped } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
-import { askAgreed, questionPhase } from "./interview.ts";
+import { askAgreed, questionPhase } from "./gatherRequirements.ts";
 import { type PreparationFound, preparationOf } from "./preparedComments.ts";
 import { renderQuestions } from "./render.ts";
 import { type EarlierPlan, undonePlan } from "./earlierPlan.ts";

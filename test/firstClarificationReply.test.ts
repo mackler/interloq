@@ -1,4 +1,4 @@
-// Issue #184 (S2): the first interview's reply (S.InterviewReply), the prompt that asks for it, its validation and its
+// Issue #184 (S2): the first clarification's reply (S.ClarificationReply), the prompt that asks for it, its validation and its
 // normalization, tested together (CLAUDE.md: a prompt and the validation of the value it asks for change together).
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -7,10 +7,11 @@ import * as S from "../src/schema.ts";
 import * as prompts from "../src/prompts.ts";
 import { replyValidation } from "../src/conversation.ts";
 import { normalizeReply } from "../src/schemaNormalize.ts";
+import { describe } from "../src/errors.ts";
 import { TEST_ROOT, opt } from "./helpers.ts";
 
-const reply = (extra: Partial<S.InterviewReply> = {}): S.InterviewReply => ({ message_to_user: "", follow_ups: [], unnecessary: [], complete: false, summary: "", ...extra });
-const followUp = (id: string): S.InterviewReply["follow_ups"][number] => ({
+const reply = (extra: Partial<S.ClarificationReply> = {}): S.ClarificationReply => ({ message_to_user: "", follow_ups: [], unnecessary: [], complete: false, summary: "", ...extra });
+const followUp = (id: string): S.ClarificationReply["follow_ups"][number] => ({
   id,
   context: [{ kind: "paragraph", pieces: [{ text: "The page shows one question at a time.", ref: "", code: false }] }],
   history: [],
@@ -21,17 +22,18 @@ const followUp = (id: string): S.InterviewReply["follow_ups"][number] => ({
 const premises = { questions: [{ id: "Q1", context: [], history: [], question: [], reason: [], proposed_answers: [opt("a"), opt("b")], default_answer: null, skip_if: null }, { id: "Q2", context: [], history: [], question: [], reason: [], proposed_answers: [opt("a")], default_answer: null, skip_if: { question: "Q1", answer: "a" } }], answers: new Map([["Q1", { kind: "option" as const, label: "a" }]]) };
 
 test("the rules name every field of the reply", () => {
-  const rules = prompts.clarificationOpenPrompt(TEST_ROOT);
-  for (const field of Object.keys(S.InterviewReply.fields)) assert.ok(rules.includes(field), field);
-  assert.ok(prompts.clarificationRequestPrompt([], [], { kind: "listDone" }).includes(prompts.LIST_DONE_SENTENCE));
-  assert.ok(!prompts.clarificationRequestPrompt([{ kind: "agreed", id: "Q1", text: "a", option: "a" }], [], null).includes(prompts.LIST_DONE_SENTENCE));
+  const rules = prompts.firstClarificationOpenPrompt(TEST_ROOT);
+  for (const field of Object.keys(S.ClarificationReply.fields)) assert.ok(rules.includes(field), field);
+  assert.ok(prompts.firstClarificationRequestPrompt([], [], { kind: "listDone" }).includes(prompts.LIST_DONE_SENTENCE));
+  assert.ok(!prompts.firstClarificationRequestPrompt([{ kind: "agreed", id: "Q1", text: "a", option: "a" }], [], null).includes(prompts.LIST_DONE_SENTENCE));
 });
 
 test("a blank or reused follow-up id is refused with a repair prompt naming it", () => {
   const validate = replyValidation(["Q1", "Q2"], ["F1"], premises, false);
   const blank = validate(reply({ follow_ups: [followUp(" ")] }));
   assert.ok(Result.isFailure(blank));
-  assert.equal(blank.failure.error._tag, "InterviewTurnInvalid");
+  assert.equal(blank.failure.error._tag, "ClarificationTurnInvalid");
+  assert.match(describe(blank.failure.error), /^a clarification turn is invalid: /);
   assert.match(blank.failure.repair, /blank id/);
   const reused = validate(reply({ follow_ups: [followUp("F1")] }));
   assert.ok(Result.isFailure(reused) && reused.failure.repair.includes("F1"));

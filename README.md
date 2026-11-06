@@ -19,7 +19,7 @@ more achieving. That's Interloq.
 ## What it does, in plain words
 
 1. **Questions.** Claude Code proposes questions about your task, Codex reviews them, and you answer
-   them in an interview.
+   them in a clarification.
 2. **Plan.** Claude Code writes a plan, and Codex reviews it in rounds until a review raises no
    issue.
 3. **Work.** Claude Code carries out the plan.

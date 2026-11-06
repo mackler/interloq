@@ -1,4 +1,4 @@
-// Issue #184 (S6, S7): the first interview presents each agreed question without waiting for Claude Code. Every answer is
+// Issue #184 (S6, S7): the first clarification presents each agreed question without waiting for Claude Code. Every answer is
 // sent at once and Claude Code's replies are taken up when they arrive; the summary comes after every reply arrived and
 // every follow-up was answered. The scenarios run a refinement over the scripted agents of test/helpers.ts.
 import assert from "node:assert/strict";
@@ -16,17 +16,17 @@ import { sourceOf, ack, steppingClock, followUpOf, type PlanningStep, presentedQ
 const q = (id: string, skip: S.SkipCondition | null = null): S.QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { default_answer: "A", skip_if: skip });
 const SUMMARY = "# Requirements\n\nQ1, Q2, Q3: A.";
 
-/** The ids of the questions the interview presented, in order (agreed questions and follow-ups). */
+/** The ids of the questions the clarification presented, in order (agreed questions and follow-ups). */
 const presentedIds = (ui: ScriptedUi): string[] =>
   presentedQuestions(ui).flatMap((p) => (p.origin.kind === "clarification" || p.origin.kind === "followUp" ? [p.origin.id] : []));
-/** Resolves once the interview has presented question `id`. */
+/** Resolves once the clarification has presented question `id`. */
 const presented = (ui: () => ScriptedUi, id: string) => async (): Promise<void> => {
   while (!presentedIds(ui()).includes(id)) await new Promise((r) => setTimeout(r, 5));
 };
 
 /** Resolves once Claude Code's reply with this message has been applied. */
 const replied = (ui: () => ScriptedUi, message: string) => async (): Promise<void> => {
-  while (!ui().notified.some((e) => e._tag === "InterviewCounted") || !ui().notified.some((e) => e._tag === "InterviewTurn" && e.message === message)) await new Promise((r) => setTimeout(r, 5));
+  while (!ui().notified.some((e) => e._tag === "ClarificationCounted") || !ui().notified.some((e) => e._tag === "ClarificationTurn" && e.message === message)) await new Promise((r) => setTimeout(r, 5));
 };
 
 const scenario = (questions: readonly S.QuestionEntry[], options: TestOptions, terms: "unchecked" | "onRequest" = "unchecked", clock: Clock.Clock | null = null) => {
@@ -45,7 +45,7 @@ const succeeded = (exit: Exit.Exit<unknown, unknown>) => assert.ok(Exit.isSucces
 const promptIndex = (prompts: readonly string[], text: string) => prompts.findIndex((p) => p.includes(text));
 
 const answered = (id: string, option: string) => `The user answers agreed question ${id} with the option ${JSON.stringify(option)}.`;
-const OPENING = "Take part in an interview with the user.";
+const OPENING = "Take part in clarifying the requirements with the user.";
 /** A test's late-bound Ui, so that a gate scripted before the layer exists can read it. */
 const late = () => {
   let get: () => ScriptedUi = () => assert.fail("the Ui is not bound yet");
@@ -136,7 +136,7 @@ test("8: /done at Q1 presents no further agreed question and closes with the don
   const s = scenario([q("Q1"), q("Q2")], { answers: ["/done"], closings: [{ output: summaryReply(SUMMARY) }] });
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1"]);
-  assert.ok(s.probe.planner.clarificationPrompts.some((p) => p.includes(prompts.interviewDonePrompt)));
+  assert.ok(s.probe.planner.clarificationPrompts.some((p) => p.includes(prompts.clarificationDonePrompt)));
 });
 
 test("9: after /done, a follow-up is asked and Q2 never is", timeout, async () => {
@@ -145,23 +145,23 @@ test("9: after /done, a follow-up is asked and Q2 never is", timeout, async () =
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "F1"]);
   const sent = s.probe.planner.clarificationPrompts.filter((p) => p.includes(prompts.LIST_DONE_SENTENCE));
-  assert.ok(sent[1].includes(prompts.interviewDonePrompt), sent[1]);
+  assert.ok(sent[1].includes(prompts.clarificationDonePrompt), sent[1]);
 });
 
 test("10: the count reaches the agreed questions not skipped", timeout, async () => {
   const s = scenario([q("Q1"), q("Q2", { question: "Q1", answer: "B" }), q("Q3")], { answers: ["B", "A"], closings: [{ output: summaryReply(`${SUMMARY} Skipped questions: Q2.`) }] });
   succeeded(await s.run());
-  const counts = s.probe.ui.notified.flatMap((e) => (e._tag === "InterviewCounted" ? [`${e.answered}/${e.total}`] : []));
+  const counts = s.probe.ui.notified.flatMap((e) => (e._tag === "ClarificationCounted" ? [`${e.answered}/${e.total}`] : []));
   assert.deepEqual(counts, ["1/2", "2/2"]);
 });
 
-test("11: an interview that ends writes requirements.md with no prompt in between, and the requirements review runs", timeout, async () => {
+test("11: a clarification that ends writes requirements.md with no prompt in between, and the requirements review runs", timeout, async () => {
   const s = scenario([q("Q1")], { answers: ["A"], closings: [{ output: summaryReply(SUMMARY) }] });
   succeeded(await s.run());
   assert.equal(fs.readFileSync(path.join(s.probe.dir, "requirements.md"), "utf8"), `${SUMMARY}\n`);
   assert.equal(s.probe.ui.asked.length, 1, s.probe.ui.asked.join("\n---\n"));
   const notified = s.probe.ui.notified;
-  const summaryTurn = notified.findIndex((e) => e._tag === "InterviewTurn" && e.summary !== null);
+  const summaryTurn = notified.findIndex((e) => e._tag === "ClarificationTurn" && e.summary !== null);
   assert.ok(summaryTurn >= 0, "no turn carried the summary");
   assert.ok(!notified.slice(summaryTurn).some((e) => e._tag === "QuestionPresented"), "a question was presented after the summary");
   assert.equal(s.probe.reviewer.prompts.length, 2, "the requirements review did not run");
@@ -178,7 +178,7 @@ test("12: a halt of Claude Code's request ends the run while a question is pendi
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "Q2"]);
 });
 
-test("13: a terms request beside the interview's request: each call's start and end carry its own id, each ended once", timeout, async () => {
+test("13: a terms request beside the clarification's request: each call's start and end carry its own id, each ended once", timeout, async () => {
   let termsStarted = false;
   const { id, context, history, question, reason, proposed_answers } = q("Q1");
   const s = scenario(
@@ -196,7 +196,7 @@ test("13: a terms request beside the interview's request: each call's start and 
   const starts = events.filter((e) => e.startsWith("start")).map((e) => e.split(" ")[2]);
   assert.equal(new Set(starts).size, starts.length, events.join("\n"));
   for (const id of starts) assert.equal(events.filter((e) => e === `end ${id}`).length, 1, `${id} did not end exactly once`);
-  assert.ok(events.some((e) => e.startsWith("start interview")) && events.some((e) => e.startsWith("start planning")), events.join("\n"));
+  assert.ok(events.some((e) => e.startsWith("start clarification")) && events.some((e) => e.startsWith("start planning")), events.join("\n"));
 });
 
 // S7 (decision G-R1-1): a request whose first attempts fail goes on being tried every five minutes while agreed questions
@@ -221,7 +221,7 @@ test("S7-1: the opening request is tried in the background while the questions a
   succeeded(await s.run());
   assert.deepEqual(sleeps.filter((ms) => ms === BACKGROUND_MS), [BACKGROUND_MS, BACKGROUND_MS]);
   for (const n of [1, 2]) {
-    const line = prompts.backgroundRetryLine("claude", prompts.transportWhat("interview"), n, USAGE_LIMIT_RETRY_SECONDS);
+    const line = prompts.backgroundRetryLine("claude", prompts.transportWhat("clarification"), n, USAGE_LIMIT_RETRY_SECONDS);
     assert.ok(s.probe.ui.said.includes(line), `try ${n} not said`);
     assert.ok(s.conversation().includes(line), `try ${n} not recorded`);
   }
@@ -232,7 +232,7 @@ test("S7-1: the opening request is tried in the background while the questions a
 
 /** Background sleeps that never end by themselves: only the developer's reaching the end of the list wakes them. */
 /** The developer's last answer, held until the first background try was said, so that it comes while the request is in the background. */
-const afterFirstTry = (ui: () => ScriptedUi, text: string) => ({ text, when: until(() => ui().said.includes(prompts.backgroundRetryLine("claude", prompts.transportWhat("interview"), 1, USAGE_LIMIT_RETRY_SECONDS))) });
+const afterFirstTry = (ui: () => ScriptedUi, text: string) => ({ text, when: until(() => ui().said.includes(prompts.backgroundRetryLine("claude", prompts.transportWhat("clarification"), 1, USAGE_LIMIT_RETRY_SECONDS))) });
 const heldClock = () => steppingClock(Date.UTC(2026, 9, 19, 12), (ms) => (ms === BACKGROUND_MS ? Effect.never : Effect.void)).clock;
 
 test("S7-2: once the list is used up with the connection still down, the question is asked; Stop ends the run with AgentUnreachable", timeout, async () => {
@@ -247,7 +247,7 @@ test("S7-2: once the list is used up with the connection still down, the questio
   assert.ok(!fs.existsSync(path.join(s.probe.dir, "requirements.md")));
 });
 
-test("S7-3: Retry again at that question runs a full set of attempts, and on success the interview goes on to the summary", timeout, async () => {
+test("S7-3: Retry again at that question runs a full set of attempts, and on success the clarification goes on to the summary", timeout, async () => {
   const l = late();
   const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), { beside: prompts.TRANSPORT_ANSWERS.retry }], replies: [FAULT, FAULT, FAULT, FAULT, { output: ack() }], closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", heldClock());
   l.bind(s.ui);

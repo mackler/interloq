@@ -1,11 +1,11 @@
-// Issue #184 (S1): properties of Interloq's choice of the next agreed question of the first interview
-// (src/clarificationState.ts) over lists with chains of skip conditions.
+// Issue #184 (S1): properties of Interloq's choice of the next agreed question of the first clarification
+// (src/firstClarificationState.ts) over lists with chains of skip conditions.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
 import fc from "fast-check";
 import { type AgreedAnswer, type PremiseEntry, orderBySkipCondition, skippedQuestions, waitingFor } from "../src/premises.ts";
-import { type ClarificationState, INITIAL_CLARIFICATION, nextAgreed, nextQuestion, progressOf, withAnswer, withEnded, withFollowUps, withShown } from "../src/clarificationState.ts";
+import { type FirstClarificationState, INITIAL_FIRST_CLARIFICATION, nextAgreed, nextQuestion, progressOf, withAnswer, withEnded, withFollowUps, withShown } from "../src/firstClarificationState.ts";
 import { opt } from "./helpers.ts";
 
 const RUNS = { numRuns: 150, seed: 20261019 };
@@ -31,10 +31,10 @@ const arbAnswer: fc.Arbitrary<AgreedAnswer> = fc.oneof(fc.constantFrom(...LABELS
 /** A state reached by answering, in turn, some of the questions nextAgreed returns. */
 const arbRun = arbList.chain((questions) =>
   fc.tuple(fc.constant(questions), fc.array(arbAnswer, { maxLength: 8 }), fc.boolean()).map(([qs, answers, showNext]) => {
-    const state = answers.reduce<ClarificationState>((s, a) => {
+    const state = answers.reduce<FirstClarificationState>((s, a) => {
       const q = nextAgreed(qs, s);
       return q === null ? s : withAnswer(withShown(s, q.id), q.id, a);
-    }, INITIAL_CLARIFICATION);
+    }, INITIAL_FIRST_CLARIFICATION);
     const next = nextAgreed(qs, state);
     return { questions: qs, state: showNext && next !== null ? withShown(state, next.id) : state };
   }),
@@ -64,11 +64,11 @@ test("nextAgreed never returns a question whose premise is unanswered", () => {
 test("answering every question returned visits each question not skipped exactly once", () => {
   fc.assert(
     fc.property(arbList, fc.array(arbAnswer, { minLength: 8, maxLength: 8 }), (questions, answers) => {
-      const visit = (s: ClarificationState, i: number, seen: readonly string[]): Readonly<{ s: ClarificationState; seen: readonly string[] }> => {
+      const visit = (s: FirstClarificationState, i: number, seen: readonly string[]): Readonly<{ s: FirstClarificationState; seen: readonly string[] }> => {
         const q = nextAgreed(questions, s);
         return q === null ? { s, seen } : visit(withAnswer(withShown(s, q.id), q.id, answers[i % answers.length]), i + 1, [...seen, q.id]);
       };
-      const { s, seen } = visit(INITIAL_CLARIFICATION, 0, []);
+      const { s, seen } = visit(INITIAL_FIRST_CLARIFICATION, 0, []);
       const skipped = skippedQuestions(questions, s.answers).map((k) => k.id);
       assert.deepEqual(new Set(seen).size, seen.length);
       assert.deepEqual([...seen].sort(), questions.map((q) => q.id).filter((id) => !skipped.includes(id)).sort());

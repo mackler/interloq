@@ -340,20 +340,20 @@ const piecesOfWords = (w: Words, text: string) => {
 };
 /** A question for the user (UserQuestion) from words written as strings; each term's words become pieces that refer to it. */
 export const questionOf = (w: Words & Readonly<{ question: string }>): S.UserQuestion => piecesOfWords(w, w.question);
-/** An interview turn's current question from words written as strings. */
-export const currentOf = (w: Words & Readonly<{ id: string; text: string }>): S.InterviewTurn["current_question"] => {
+/** A clarification turn's current question from words written as strings. */
+export const currentOf = (w: Words & Readonly<{ id: string; text: string }>): S.ClarificationTurn["current_question"] => {
   const { question, ...rest } = piecesOfWords(w, w.text);
   return { id: w.id, ...rest, text: question };
 };
-/** Issue #184: a reply of the first interview that acknowledges, with a message and anything else it carries. */
-export const ack = (message = "", extra: Partial<S.InterviewReply> = {}): S.InterviewReply => ({ message_to_user: message, follow_ups: [], unnecessary: [], complete: false, summary: "", ...extra });
+/** Issue #184: a reply of the first clarification that acknowledges, with a message and anything else it carries. */
+export const ack = (message = "", extra: Partial<S.ClarificationReply> = {}): S.ClarificationReply => ({ message_to_user: message, follow_ups: [], unnecessary: [], complete: false, summary: "", ...extra });
 /** Issue #184: a follow-up question of a reply, from words written as strings. */
-export const followUpOf = (id: string, question: string, answers: readonly string[]): S.InterviewReply["follow_ups"][number] => {
+export const followUpOf = (id: string, question: string, answers: readonly string[]): S.ClarificationReply["follow_ups"][number] => {
   const { question: text, ...rest } = piecesOfWords({ context: `Context of ${id}.`, options: answers.map((a) => ({ label: a, description: "" })) }, question);
   return { id, ...rest, text };
 };
 /** Issue #184: a closing reply that proposes the summary. */
-export const summaryReply = (summary: string, message = "Here is the summary."): S.InterviewReply => ack(message, { complete: true, summary });
+export const summaryReply = (summary: string, message = "Here is the summary."): S.ClarificationReply => ack(message, { complete: true, summary });
 /** An agreed question-list entry from words written as strings. */
 export const entryOf = (w: Readonly<{ id: string; context: string; question: string; reason: string; proposed_answers: readonly Readonly<{ label: string; description: string }>[]; default_answer: string }>): S.QuestionEntry => ({
   id: w.id,
@@ -507,10 +507,10 @@ export class ScriptedPlanner implements PlannerShape {
         );
       });
     }
-    // Issue #184: the first interview's replies have their own scripts: a closing request (one carrying
+    // Issue #184: the first clarification's replies have their own scripts: a closing request (one carrying
     // LIST_DONE_SENTENCE) takes from `closings`, which a test must script, and any other from `replies`, an empty
     // acknowledgment without one; how many requests there are depends on how answers were batched.
-    if (schema === S.InterviewReply) {
+    if (schema === S.ClarificationReply) {
       return Effect.suspend(() => {
         const root = this.root;
         this.sent(prompt);
@@ -520,7 +520,7 @@ export class ScriptedPlanner implements PlannerShape {
         if (closing && step === undefined) return Effect.die(new Error(`no scripted closing reply for: ${prompt.slice(0, 200)}`));
         const callId = `scripted-${++root.callCount}`;
         const notify = (e: UiEvent) => (root.ui === null ? Effect.void : root.ui.notify(e));
-        return notify({ _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId }).pipe(
+        return notify({ _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId }).pipe(
           Effect.andThen(this.gated(step ?? {}, Effect.suspend(() => this.outcome(step ?? { output: ack() }, schema)))),
           Effect.onExit((exit) => notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit), callId })),
         );
@@ -580,11 +580,11 @@ export class ScriptedPlanner implements PlannerShape {
       return Effect.succeed({ output: this.withPlan(schema, step), costUsd: 0.1 });
     }
   }
-  /** Issue #184: the scripted replies of the first interview, apart from `steps`, and the prompts they answered. */
+  /** Issue #184: the scripted replies of the first clarification, apart from `steps`, and the prompts they answered. */
   replies: PlanningStep[] = [];
   closings: PlanningStep[] = [];
   readonly clarificationPrompts: string[] = [];
-  /** Issue #184: the Ui the interview's and the terms' calls notify their start and end to, with ids of this counter. */
+  /** Issue #184: the Ui the clarification's and the terms' calls notify their start and end to, with ids of this counter. */
   ui: UiShape | null = null;
   callCount = 0;
   /** A step's gate, waited for interruptibly before the call's outcome (issue #184). */
@@ -593,7 +593,7 @@ export class ScriptedPlanner implements PlannerShape {
     if (gate === undefined) return then;
     return Effect.callback<void>((resume) => void gate().then(() => resume(Effect.void))).pipe(Effect.andThen(then));
   }
-  /** The outcome of a scripted step of the interview: its failure, or its output. */
+  /** The outcome of a scripted step of the clarification: its failure, or its output. */
   private outcome(step: PlanningStep, schema: Schema.Top): Effect.Effect<{ output: unknown; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
     step.onCall?.();
     if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null, networkCode: step.faultCode ?? null }));
@@ -899,7 +899,7 @@ export class ScriptedSuite implements SuiteRunnerShape {
 }
 
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
-export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first interview's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** Issue #216: the checks of Bring Up to Date. */ updateChecks?: ReviewStep[]; /** Issue #166: the readings of the agreed questions' last sentences. */ readings?: ReviewStep[]; /** Issue #252: the reviews of a code review's step parts, by part key. */ partReviews?: Record<string, ReviewStep[]>; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** Issue #243, W9-R1-1: a wrapper of the run's OpenQuestions service (testWiring alone). */ openQuestions?: (openQuestions: OpenQuestionsShape) => OpenQuestionsShape; /** Issue #153: a Ui in place of the ScriptedUi (the real web Ui of a seam test); the Decider and the planner's call events use it too. */ ui?: UiShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162); a gated one is held (issue #40). */ suite?: ReadonlyArray<ScriptedSuiteResult>; /** Issue #39: the counts file each suite run writes, or null for none, in order. */ suiteReports?: ReadonlyArray<string | null> };
+export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first clarification's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** Issue #216: the checks of Bring Up to Date. */ updateChecks?: ReviewStep[]; /** Issue #166: the readings of the agreed questions' last sentences. */ readings?: ReviewStep[]; /** Issue #252: the reviews of a code review's step parts, by part key. */ partReviews?: Record<string, ReviewStep[]>; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** Issue #243, W9-R1-1: a wrapper of the run's OpenQuestions service (testWiring alone). */ openQuestions?: (openQuestions: OpenQuestionsShape) => OpenQuestionsShape; /** Issue #153: a Ui in place of the ScriptedUi (the real web Ui of a seam test); the Decider and the planner's call events use it too. */ ui?: UiShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162); a gated one is held (issue #40). */ suite?: ReadonlyArray<ScriptedSuiteResult>; /** Issue #39: the counts file each suite run writes, or null for none, in order. */ suiteReports?: ReadonlyArray<string | null> };
 
 /**
  * The live platform with a file system whose writes and renames can fail: `shouldFail(method, count)` is asked

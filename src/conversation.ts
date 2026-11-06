@@ -1,14 +1,14 @@
-// The interviews in the page. The first, `clarification` (issue #184), presents the agreed questions itself and sends each
-// answer to Claude Code through the interview's worker (src/interviewWorker.ts); the second, `interview`, on the accepted
-// gaps of the requirements review, goes turn by turn. Separate from src/interview.ts (the question phase) so that
+// The clarifications in the page. The first, `firstClarification` (issue #184), presents the agreed questions itself and sends each
+// answer to Claude Code through the clarification's worker (src/clarificationWorker.ts); the second, `followUpClarification`, on the accepted
+// gaps of the requirements review, goes turn by turn. Separate from src/gatherRequirements.ts (the question phase) so that
 // src/subjects.ts can use it without an import cycle (finding 28).
 
 import { Effect, Ref, Result } from "effect";
 import type { RunError } from "./errors.ts";
 import { type AgreedAnswer, skippedQuestions } from "./premises.ts";
-import { parseInterviewMessage } from "./input.ts";
+import { parseClarificationMessage } from "./input.ts";
 import * as prompts from "./prompts.ts";
-import { interviewSays, recordHeading, renderTerms } from "./render.ts";
+import { clarificationSays, recordHeading, renderTerms } from "./render.ts";
 import { requestedTermsValidation, withTermsEntry } from "./termsValidation.ts";
 import { planningCall, questionsValidation, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
@@ -18,40 +18,40 @@ import { Planner, type Services, Store, Ui } from "./services.ts";
 import { agentContext, askOffering, byMessage, numberedOptions, type QuestionDraft, saveOptionFigures } from "./offer.ts";
 import { blocksText, type Piece, piecesText, plainPieces } from "./pieces.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
-import type { InterviewStage } from "./uiEvents.ts";
-import { INITIAL_CLARIFICATION, nextQuestion, progressOf, takeFollowUp, withAnswer, withEnded, withShown } from "./clarificationState.ts";
-import { makeInterviewWorker } from "./interviewWorker.ts";
-import type { ClarificationTrailer } from "./prompts.ts";
+import type { ClarificationStage } from "./uiEvents.ts";
+import { INITIAL_FIRST_CLARIFICATION, nextQuestion, progressOf, takeFollowUp, withAnswer, withEnded, withShown } from "./firstClarificationState.ts";
+import { makeClarificationWorker } from "./clarificationWorker.ts";
+import type { FirstClarificationTrailer } from "./prompts.ts";
 
 /**
- * The validation of a turn of the second interview (S16, Q12): the question it asks now, when its id is not one of
+ * The validation of a turn of the follow-up clarification (S16, Q12): the question it asks now, when its id is not one of
  * questions.json (an accepted requirements issue), under the rules; an agreed question, whose presentation comes from
  * the records (S18), and a turn that asks nothing are not checked.
  */
-export const turnValidation = (recorded: readonly string[]): Validation<S.InterviewTurn> => questionRules(recorded);
+export const turnValidation = (recorded: readonly string[]): Validation<S.ClarificationTurn> => questionRules(recorded);
 
-export { replyValidation } from "./clarificationReply.ts";
-export type { Premises } from "./clarificationReply.ts";
+export { replyValidation } from "./firstClarificationReply.ts";
+export type { Premises } from "./firstClarificationReply.ts";
 
 /** The rules of every question, for a question the turn asks outside questions.json. */
 const questionRules =
-  (recorded: readonly string[]): Validation<S.InterviewTurn> =>
+  (recorded: readonly string[]): Validation<S.ClarificationTurn> =>
   (turn) => {
     const current = turn.current_question;
     // S35 (W1-R1-3): only a turn that asks nothing, or asks an agreed question by its id, is not checked.
     if (asksNothing(current) || (current.id.trim() !== "" && recorded.includes(current.id))) return Result.succeed({ value: turn, notes: [] });
     const where = current.id.trim() === "" ? "the current question" : current.id;
-    return questionsValidation((t: S.InterviewTurn) => [{ where, question: { context: t.current_question.context, history: t.current_question.history, question: t.current_question.text, explanations: t.current_question.explanations, options: t.current_question.options } }])(turn);
+    return questionsValidation((t: S.ClarificationTurn) => [{ where, question: { context: t.current_question.context, history: t.current_question.history, question: t.current_question.text, explanations: t.current_question.explanations, options: t.current_question.options } }])(turn);
   };
 
 /**
  * Whether a turn asks no particular question (S35): every field of its current question blank or empty. turnDraft
  * presents exactly such a turn as a reply to Claude Code's message, and turnValidation checks every other one.
  */
-export const asksNothing = (current: S.InterviewTurn["current_question"]): boolean =>
+export const asksNothing = (current: S.ClarificationTurn["current_question"]): boolean =>
   current.id.trim() === "" && blocksText(current.context).join("").trim() === "" && blocksText(current.history).join("").trim() === "" && piecesText(current.text).trim() === "" && current.explanations.length === 0 && current.options.length === 0;
 
-/** The reviewed records an interview presents its agreed questions from (S18): questions.json and terms.json. */
+/** The reviewed records a clarification presents its agreed questions from (S18): questions.json and terms.json. */
 export type AgreedRecords = Readonly<{ questions: QuestionsFile["questions"]; terms: readonly TermsEntry[] }>;
 
 /** The default's mark on a proposed answer's description (S18): after its last piece, as the program's words. */
@@ -62,7 +62,7 @@ const markedDefault = (description: readonly Piece[]): readonly Piece[] => {
 };
 
 /**
- * The question an interview turn asks (S7, S18). A question of questions.json is presented from the reviewed records
+ * The question a clarification turn asks (S7, S18). A question of questions.json is presented from the reviewed records
  * alone: its entry in terms.json, divided into pieces that refer to its explanations (decision Q1), or where there is
  * none the agreed entry's plain pieces; its reason as its attached material and its proposed answers as options with the default
  * marked; what the turn writes beside the id is ignored, so no word shown can lose its explanation. Any other question (a
@@ -87,7 +87,7 @@ export const agreedDraft = (agreed: QuestionsFile["questions"][number], records:
 };
 
 /** A follow-up question, presented from Claude Code's reply as validated (S16). */
-export const followUpDraft = (current: S.InterviewTurn["current_question"]): QuestionDraft => {
+export const followUpDraft = (current: S.ClarificationTurn["current_question"]): QuestionDraft => {
   const origin: QuestionOrigin = { kind: "followUp", id: current.id };
   return { origin, context: agentContext(current.context, origin), history: current.history, explanations: current.explanations, question: current.text, options: numberedOptions(current.options), decision: null };
 };
@@ -96,7 +96,7 @@ export const followUpDraft = (current: S.InterviewTurn["current_question"]): Que
 const replyDraft = (message: string): QuestionDraft => ({ origin: { kind: "reply" }, context: { blocks: [{ kind: "document", markdown: message }], by: "agent" }, history: [], explanations: [], question: plainPieces(prompts.REPLY_QUESTION), options: [], decision: null });
 
 /**
- * Issue #142: whether an interview offers the explanations of an agreed question that has none, on the user's request
+ * Issue #142: whether a clarification offers the explanations of an agreed question that has none, on the user's request
  * (the run's choice onRequest, with the task the request's prompt carries), or never.
  */
 export type TermsOffer = Readonly<{ kind: "never" }> | Readonly<{ kind: "onRequest"; task: string }>;
@@ -127,27 +127,27 @@ const requestTerms = (task: string, agreed: QuestionsFile["questions"][number], 
   });
 
 /**
- * The second interview (issue #184: the first is `clarification`), on the accepted gaps of the requirements review: a
+ * The follow-up clarification (issue #184: the first is `clarification`), on the accepted gaps of the requirements review: a
  * conversation between the user and Claude Code, turn by turn, since Claude Code writes each of its questions. It ends
  * when Claude Code reports completion with a summary, which the program writes to requirements.md at once (issue #138:
  * an answer is final when the user gives it, so nothing asks him to confirm the summary).
  */
-export const interview = (opening: string, agreed: readonly string[]): Effect.Effect<void, RunError, Services> =>
+export const followUpClarification = (opening: string, agreed: readonly string[]): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
     // The user reads "More for you to decide" (issues #21, #113); conversation.md, a record, keeps its heading.
     const heading = prompts.clarificationHeading("followUp");
-    yield* ui.notify({ _tag: "InterviewOpened", heading, stage: "followUp", total: clarificationCount(agreed, [], [], []).total });
+    yield* ui.notify({ _tag: "ClarificationOpened", heading, stage: "followUp", total: clarificationCount(agreed, [], [], []).total });
     yield* store.converse(`## ${recordHeading("followUp")}\n\n`);
     // S16, S18: a question of questions.json is presented from the records; any other question a turn asks is held to the rules.
     const questions = (yield* store.loadQuestions()).questions;
     const recorded = questions.map((q) => q.id);
     let prompt = opening;
     for (;;) {
-      const turn = normalizeTurn((yield* planningCall(prompt, S.InterviewTurn, "interview", "records", turnValidation(recorded))).output);
-      const [messageLine] = interviewSays(turn);
-      yield* ui.notify({ _tag: "InterviewTurn", heading, message: turn.message, summary: turn.kind === "summary_proposed" ? turn.summary : null, ...clarificationCount(agreed, turn.asked, turn.answered, []) });
+      const turn = normalizeTurn((yield* planningCall(prompt, S.ClarificationTurn, "clarification", "records", turnValidation(recorded))).output);
+      const [messageLine] = clarificationSays(turn);
+      yield* ui.notify({ _tag: "ClarificationTurn", heading, message: turn.message, summary: turn.kind === "summary_proposed" ? turn.summary : null, ...clarificationCount(agreed, turn.asked, turn.answered, []) });
       yield* ui.say(messageLine);
       yield* store.converse(`**Claude Code:** ${turn.message}\n\n`);
 
@@ -155,14 +155,14 @@ export const interview = (opening: string, agreed: readonly string[]): Effect.Ef
 
       // A blank message is asked again inside the offer, so that it is never recorded as the choice (W1-R1-1).
       const draft = turnDraft(turn, { questions, terms: yield* store.loadTerms() });
-      const reply = parseInterviewMessage(yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.interviewMessagePrompt, draft, (m) => m !== ""));
+      const reply = parseClarificationMessage(yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.clarificationMessagePrompt, draft, (m) => m !== ""));
       if (reply.kind === "empty") continue;
       yield* store.converse(`**User:** ${reply.kind === "done" ? "/done" : reply.text}\n\n`);
-      prompt = reply.kind === "done" ? prompts.interviewDonePrompt : prompts.interviewUserMessage(reply.text);
+      prompt = reply.kind === "done" ? prompts.clarificationDonePrompt : prompts.clarificationUserMessage(reply.text);
     }
   });
 
-/** The end of an interview (issue #138): Claude Code's summary written to requirements.md and recorded, with no prompt. */
+/** The end of a clarification (issue #138): Claude Code's summary written to requirements.md and recorded, with no prompt. */
 const writeSummary = (summary: string): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
@@ -171,38 +171,38 @@ const writeSummary = (summary: string): Effect.Effect<void, RunError, Services> 
   });
 
 /** A question presented and asked until the developer's reply is not empty. */
-const askUntilAnswered = (draft: QuestionDraft, request: ((number: number) => Effect.Effect<QuestionDraft, RunError, Services>) | null): Effect.Effect<Exclude<ReturnType<typeof parseInterviewMessage>, { kind: "empty" }>, RunError, Services> =>
+const askUntilAnswered = (draft: QuestionDraft, request: ((number: number) => Effect.Effect<QuestionDraft, RunError, Services>) | null): Effect.Effect<Exclude<ReturnType<typeof parseClarificationMessage>, { kind: "empty" }>, RunError, Services> =>
   Effect.gen(function* () {
     const ui = yield* Ui;
     for (;;) {
-      const reply = parseInterviewMessage(yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.interviewMessagePrompt, draft, (m) => m !== "", request));
+      const reply = parseClarificationMessage(yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.clarificationMessagePrompt, draft, (m) => m !== "", request));
       if (reply.kind !== "empty") return reply;
     }
   });
 
 /**
- * The first interview (issue #184, the developer's instruction of 19 Oct 2026: a question appears as soon as the one
- * before it is answered). Interloq presents each agreed question itself (nextQuestion of src/clarificationState.ts) and
- * sends every answer to Claude Code at once through the interview's worker, which runs beside this fiber; a follow-up
+ * The first clarification (issue #184, the developer's instruction of 19 Oct 2026: a question appears as soon as the one
+ * before it is answered). Interloq presents each agreed question itself (nextQuestion of src/firstClarificationState.ts) and
+ * sends every answer to Claude Code at once through the clarification's worker, which runs beside this fiber; a follow-up
  * a reply asks is presented after the question then on the page. When nothing is left to present, the worker is
  * drained: every reply arrived and applied, every follow-up answered, and only then is the list reported done and the
  * summary asked for. The first of the two fibers to end decides: a summary, which the program writes to
- * requirements.md, ends the interview and interrupts
+ * requirements.md, ends the clarification and interrupts
  * the worker, and a halt of the worker ends the run and interrupts the pending prompt.
  */
-export const clarification = (agreed: readonly string[], termsOffer: TermsOffer): Effect.Effect<void, RunError, Services> =>
+export const firstClarification = (agreed: readonly string[], termsOffer: TermsOffer): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
-    const heading = prompts.clarificationHeading("clarification");
-    yield* ui.notify({ _tag: "InterviewOpened", heading, stage: "clarification", total: clarificationCount(agreed, [], [], []).total });
-    yield* store.converse(`## ${recordHeading("clarification")}\n\n`);
+    const heading = prompts.clarificationHeading("first");
+    yield* ui.notify({ _tag: "ClarificationOpened", heading, stage: "first", total: clarificationCount(agreed, [], [], []).total });
+    yield* store.converse(`## ${recordHeading("first")}\n\n`);
     const questions = (yield* store.loadQuestions()).questions;
-    const state = yield* Ref.make(INITIAL_CLARIFICATION);
+    const state = yield* Ref.make(INITIAL_FIRST_CLARIFICATION);
     // Decision G-R1-1: while agreed questions remain, a request whose retries are used up is tried again in the background
     // and nothing is asked; the question is asked once the developer waits for Claude Code (the worker's drain).
-    const worker = yield* makeInterviewWorker({ questions, state, heading, exhaustion: (waiting, untilWaiting) => ({ kind: "background", waiting, untilWaiting }) });
-    const counted = Ref.get(state).pipe(Effect.flatMap((s) => ui.notify({ _tag: "InterviewCounted", ...progressOf(agreed, questions, s) })));
+    const worker = yield* makeClarificationWorker({ questions, state, heading, exhaustion: (waiting, untilWaiting) => ({ kind: "background", waiting, untilWaiting }) });
+    const counted = Ref.get(state).pipe(Effect.flatMap((s) => ui.notify({ _tag: "ClarificationCounted", ...progressOf(agreed, questions, s) })));
 
     /** Presents the next question and sends its answer; false when nothing is left to present. */
     const presentNext = Effect.gen(function* () {
@@ -249,7 +249,7 @@ export const clarification = (agreed: readonly string[], termsOffer: TermsOffer)
     });
 
     /** The closing: the worker drained, then the summary written, or what is still outstanding presented. */
-    const close = (trailer: ClarificationTrailer): Effect.Effect<"done" | "present", RunError, Services> =>
+    const close = (trailer: FirstClarificationTrailer): Effect.Effect<"done" | "present", RunError, Services> =>
       Effect.gen(function* () {
         const drained = yield* worker.drain(trailer);
         if (drained.kind === "followUps") return "present";

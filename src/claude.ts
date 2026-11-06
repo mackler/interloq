@@ -545,7 +545,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           session,
           prompt,
           purpose,
-          purpose === "interview" ? "tools" : "none",
+          purpose === "clarification" ? "tools" : "none",
           {
             permissionMode: "default",
             outputFormat: { type: "json_schema", schema: agentJsonSchema(schema) },

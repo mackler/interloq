@@ -124,7 +124,7 @@ export const waitingFor = (questions: readonly PremiseEntry[], answers: AgreedAn
 };
 
 /**
- * What a reply of the first interview did wrong, as data (issues #99 and #184): Interloq presents the agreed questions
+ * What a reply of the first clarification did wrong, as data (issues #99 and #184): Interloq presents the agreed questions
  * itself, so a reply cannot ask a skipped question or one before its premise.
  */
 export const TurnProblemSchema = Schema.Union([
@@ -132,7 +132,7 @@ export const TurnProblemSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("summaryOmits"), ids: Schema.Array(Schema.String) }),
   /** Issue #184: a follow-up question of a reply has a blank id. */
   Schema.Struct({ kind: Schema.Literal("followUpIdBlank") }),
-  /** Issue #184: a follow-up question of a reply has an id asked before in the interview, or twice in the reply. */
+  /** Issue #184: a follow-up question of a reply has an id asked before in the clarification, or twice in the reply. */
   Schema.Struct({ kind: Schema.Literal("followUpIdReused"), id: Schema.String }),
 ]);
 export type TurnProblem = typeof TurnProblemSchema.Type;

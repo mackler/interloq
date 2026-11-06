@@ -73,11 +73,11 @@ describe("the dashboard", () => {
   });
 
   test("Claude Code's latest message is rendered Markdown with its heading", () => {
-    const { target } = mountDashboard(runWith({ claude: { heading: "Interview", body: "**bold**", running: [] } }));
+    const { target } = mountDashboard(runWith({ claude: { heading: "Clarification", body: "**bold**", running: [] } }));
     const region = target.querySelector("[data-claude]");
     expect(region?.querySelector("strong")?.textContent).toBe("bold");
     expect(region?.textContent).toMatch(/Claude/);
-    expect(region?.textContent).toMatch(/Interview/);
+    expect(region?.textContent).toMatch(/Clarification/);
     expect(mountDashboard(runWith({})).target.querySelector("[data-claude]")).toBe(null);
   });
 
@@ -118,19 +118,19 @@ describe("the dashboard", () => {
     expect(mountDashboard(runWith({})).target.querySelector("[data-answers-heading] button")).toBe(null);
   });
 
-  test("the interview's help is shown while set", () => {
-    expect(mountDashboard(runWith({ interviewHelp: "Type /done" })).target.querySelector("[data-interview-help]")?.textContent).toBe("Type /done");
-    expect(mountDashboard(runWith({})).target.querySelector("[data-interview-help]")).toBe(null);
+  test("the clarification's help is shown while set", () => {
+    expect(mountDashboard(runWith({ clarificationHelp: "Type /done" })).target.querySelector("[data-clarification-help]")?.textContent).toBe("Type /done");
+    expect(mountDashboard(runWith({})).target.querySelector("[data-clarification-help]")).toBe(null);
   });
 
   test("compact: the status, ellipsized with its whole text as its title, and the heading of every answer, nothing else", () => {
-    const run = runWith({ status: { _tag: "Interloq", text: "A long line" }, models: { claude: "m", codex: null }, claude: { heading: null, body: "c", running: [] }, interviewHelp: "h", answers: [entry(1), entry(2)] });
+    const run = runWith({ status: { _tag: "Interloq", text: "A long line" }, models: { claude: "m", codex: null }, claude: { heading: null, body: "c", running: [] }, clarificationHelp: "h", answers: [entry(1), entry(2)] });
     const { target } = mountDashboard(run, { compact: true });
     const status = target.querySelector("[data-status]");
     expect(status?.textContent).toBe("A long line");
     expect(status?.getAttribute("title")).toBe("A long line");
     expect(status?.classList.contains("compact")).toBe(true);
-    for (const attr of ["data-models", "data-claude", "data-last-answer", "data-interview-help"]) expect(target.querySelector(`[${attr}]`), attr).toBe(null);
+    for (const attr of ["data-models", "data-claude", "data-last-answer", "data-clarification-help"]) expect(target.querySelector(`[${attr}]`), attr).toBe(null);
     expect(target.querySelector("h2")).toBe(null);
     expect(target.querySelector("section")?.getAttribute("aria-label")).toBe(prompts.DASHBOARD_COMPACT_NAME);
     expect(target.querySelector("[data-answers-heading] button")).not.toBe(null);

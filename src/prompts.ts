@@ -10,12 +10,12 @@ import type { ParkedEnding } from "./runEnding.ts";
 import type { CompletedWork, Ending, ItemReturn } from "./ending.ts";
 import { CONCERN_FIELD, REMEDY_FIELD, RESOLUTION_FIELD, CORRECTION_PASSAGES_FIELD, KEPT_PASSAGES_FIELD, FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Resolution, type Block, type CommandLine, type StepChecks, type StepCheckRun, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
-import type { InterviewStage } from "./uiEvents.ts";
+import type { ClarificationStage } from "./uiEvents.ts";
 import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./question.ts";
 export type { PassNoun } from "./question.ts";
 import type { Skipped, SkipProblem, TurnProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
-import type { FindingProblem, InterviewedFinding, WrittenFinding } from "./requirementsFindings.ts";
+import type { FindingProblem, ClarificationFinding, WrittenFinding } from "./requirementsFindings.ts";
 import type { ItemState } from "./tracker.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
 import type { NetworkCode, ProcessEnd } from "./transport.ts";
@@ -694,18 +694,18 @@ const turnProblemText = (problem: TurnProblem): string => {
     case "followUpIdBlank":
       return "a follow-up question has a blank id";
     case "followUpIdReused":
-      return `the follow-up question id ${problem.id} was used before in this interview, or twice in this reply`;
+      return `the follow-up question id ${problem.id} was used before in this clarification, or twice in this reply`;
   }
 };
-/** The halt after the repair turn of an interview reply could not correct it. */
-export const interviewTurnInvalidText = (problems: readonly TurnProblem[]): string => `an interview turn is invalid: ${problems.map(turnProblemText).join("; ")}`;
-/** Issue #184: the validation repair turn of a reply of the first interview. */
-export const clarificationReplyRepairPrompt = (problems: readonly TurnProblem[]): string => validationRepairPrompt(problems.map(turnProblemText), [followUpIdRule(), SUMMARY_SKIPPED_RULE]);
-/** Issue #184: how a follow-up question of the first interview is identified. */
-const followUpIdRule = (): string => `Give each follow-up question a new id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this interview has had, and use each id once.`;
+/** The halt after the repair turn of a clarification reply could not correct it. */
+export const clarificationTurnInvalidText = (problems: readonly TurnProblem[]): string => `a clarification turn is invalid: ${problems.map(turnProblemText).join("; ")}`;
+/** Issue #184: the validation repair turn of a reply of the first clarification. */
+export const firstClarificationReplyRepairPrompt = (problems: readonly TurnProblem[]): string => validationRepairPrompt(problems.map(turnProblemText), [followUpIdRule(), SUMMARY_SKIPPED_RULE]);
+/** Issue #184: how a follow-up question of the first clarification is identified. */
+const followUpIdRule = (): string => `Give each follow-up question a new id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this clarification has had, and use each id once.`;
 /** Issue #184: the summary's account of the questions the program skipped. */
 const SUMMARY_SKIPPED_RULE = `When complete is true, the summary lists every skipped question by its id, with the answer that made it unnecessary, under the heading 'Skipped questions'.`;
-/** What the second interview does with the questions the program skipped (issue #99), in its rules. */
+/** What the follow-up clarification does with the questions the program skipped (issue #99), in its rules. */
 export const SKIPPED_RULE = `A question the program reports skipped is not asked: its premise was denied by the user's answer. Ask no question before the question its skip condition names has been answered. ${SUMMARY_SKIPPED_RULE}`;
 
 /** How a question for the user is filled (decision Q1 of the decision-support task), with the rules of every question (S1). */
@@ -838,7 +838,7 @@ Task: ${task}`;
 export function questionReviewPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
   const log = pathOf({ kind: "log", subject: "questions" });
   return byThread(round, thread, log, root, () => `${laterRound(root, pathOf({ kind: "questions" }), log, "Q", round)}\n${WORDING_DISPUTES}`, () => `Review the question list in ${runDir(root)}/questions.json against the task text in the same file and against the codebase. Do not modify any file.
-The planner will ask the user these questions in an interview and will then write an implementation plan from the answers.
+The planner will ask the user these questions to clarify the requirements and will then write an implementation plan from the answers.
 The list is to come out of an investigation of the task and of what accomplishing it requires, not out of a survey of the choices that would change a plan.
 ${taskConcernsText()}
 Raise an issue when: a question is missing that the user's knowledge or decision is needed for, because the task's intended outcome is not established or a consequential uncertainty or choice cannot be settled from the task, the codebase, this project's documentation, the conventions the codebase follows or an applicable practice (name the concern it bears on, what in the task or the codebase leaves it open, and what would go wrong if the work proceeded without it); a question combines several decisions; a reason is wrong, or does not carry the evidence the rule on whether to ask requires of it; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
@@ -961,11 +961,11 @@ ${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject }))}`;
 /** Issue #166: the line said and written before Codex reads the agreed questions' last sentences. */
 export const questionReadingLine = "Gather Requirements: Codex reads the last sentence of each agreed question on its own.";
 
-// ---- interview ----------------------------------------------------------------------------------
+// ---- clarification ------------------------------------------------------------------------------
 
-const interviewRules = (root: RunRoot): string => `Rules for the interview.
+const clarificationTurnRules = (root: RunRoot): string => `Rules for the clarification.
 Each of your turns produces these output fields. message_to_user: what you say to the user in this turn, in plain text without Markdown tables: the record of his earlier answer, an answer to his question, a remark. The question you ask now is not repeated in it; the program shows that question below your message.
-current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a second interview the id of the accepted issue. For an agreed question of ${runDir(root)}/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its history, its text, its explanations and its options: the context paragraph as blocks, the history as blocks (an empty list when there is none), the question alone as pieces (without the record of an earlier answer, without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
+current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a follow-up clarification the id of the accepted issue. For an agreed question of ${runDir(root)}/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its history, its text, its explanations and its options: the context paragraph as blocks, the history as blocks (an empty list when there is none), the question alone as pieces (without the record of an earlier answer, without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
 ${QUESTION_TEXT_FORMAT}
 asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that you assign to each follow-up question. answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far. complete: true only when every agreed question has been answered or the program has reported it skipped, and you need nothing further from the user. summary: an empty string while complete is false.
 When complete is true, summary contains the complete requirements document in Markdown: the task; every decision with the id of its question; the further information and constraints that the user gave; and open points, each with the default that will be assumed.
@@ -975,62 +975,62 @@ ${questionWritingRules()}
 You may ask any follow-up question that the conversation makes necessary. The user may raise any subject and may ask you questions; answer them, and inspect the codebase without changing it where that is needed.
 Do not use the AskUserQuestion tool; the program relays the conversation. Do not modify any file. Do not write a plan.`;
 
-export const interviewOpenPrompt = (root: RunRoot): string => `Conduct an interview with the user. ${runDir(root)}/questions.json contains the task and the agreed questions. Cover every agreed question except those the program reports skipped, in the order of the list unless the conversation makes another order more useful.
-${interviewRules(root)}
+export const clarificationTurnOpenPrompt = (root: RunRoot): string => `Clarify the requirements with the user. ${runDir(root)}/questions.json contains the task and the agreed questions. Cover every agreed question except those the program reports skipped, in the order of the list unless the conversation makes another order more useful.
+${clarificationTurnRules(root)}
 Begin now with your first message to the user.`;
 
-export function interviewGapsPrompt(root: RunRoot, reviewFile: string, interviewed: readonly InterviewedFinding[]): string {
-  const list = interviewed.map((f) => (f.kind === "reopened" ? `- ${f.id} (reopened: ${f.changed})` : `- ${f.id}`)).join("\n");
-  return `The reviewer has examined ${runDir(root)}/requirements.md, the result of the interview. ${reviewFile} contains the review. You classified these accepted issues as needing the user:
+export function followUpClarificationPrompt(root: RunRoot, reviewFile: string, toClarify: readonly ClarificationFinding[]): string {
+  const list = toClarify.map((f) => (f.kind === "reopened" ? `- ${f.id} (reopened: ${f.changed})` : `- ${f.id}`)).join("\n");
+  return `The reviewer has examined ${runDir(root)}/requirements.md, the result of the clarification. ${reviewFile} contains the review. You classified these accepted issues as needing the user:
 ${list}
 ${runDir(root)}/requirements.md already holds the answers and corrections you wrote for the other accepted issues; do not ask about them.
-Conduct a second interview with the user on the points listed only, each under the rule on whether to ask. For a reopened point, state in the question's history what changed since the user's earlier answer before asking anew; use the issue ids in asked_ids and answered_ids. Do not raise again a question of the first interview whose premise the user denied: it is listed under 'Skipped questions' in ${runDir(root)}/requirements.md.
-${interviewRules(root)}
+Conduct a follow-up clarification with the user on the points listed only, each under the rule on whether to ask. For a reopened point, state in the question's history what changed since the user's earlier answer before asking anew; use the issue ids in asked_ids and answered_ids. Do not raise again a question of the first clarification whose premise the user denied: it is listed under 'Skipped questions' in ${runDir(root)}/requirements.md.
+${clarificationTurnRules(root)}
 When complete is true, summary contains the complete revised requirements document, not only the changes.
 Begin now with your first message to the user.`;
 }
 
-export const interviewDonePrompt = `The user ends the interview now. Return complete = true. In the summary, list every agreed question that was not answered and that the program has not reported skipped under 'Open points', with the default that will be assumed, and every skipped question under 'Skipped questions'.`;
+export const clarificationDonePrompt = `The user ends the clarification now. Return complete = true. In the summary, list every agreed question that was not answered and that the program has not reported skipped under 'Open points', with the default that will be assumed, and every skipped question under 'Skipped questions'.`;
 
-export function interviewUserMessage(text: string): string {
+export function clarificationUserMessage(text: string): string {
   return `User: ${text}`;
 }
 
 /**
- * Issue #184: the rules of the first interview (the clarification), in which Interloq presents the agreed questions itself
+ * Issue #184: the rules of the first clarification, in which Interloq presents the agreed questions itself
  * and sends each answer to Claude Code as it is given; Claude Code's reply chooses no agreed question.
  */
-const clarificationRules = (root: RunRoot): string => `Rules for the interview.
+const firstClarificationRules = (root: RunRoot): string => `Rules for the clarification.
 The program presents the agreed questions of ${runDir(root)}/questions.json to the user itself, in the order of the list, with their context, their terms and their proposed answers, and does not present a question whose skip condition the user's answer met. It sends you each answer as soon as the user gives it, several answers together when the user answered more than one while you were replying, each with the id of its question and, for an agreed question, the label of the option chosen. The program does not wait for your reply before it presents the next agreed question. Never ask an agreed question yourself.
 Each of your replies produces these output fields.
 message_to_user: what you say to the user, in plain text without Markdown tables: a short acknowledgment, a remark, or the answer to a question the user asked in a written answer. It may be an empty string; the program shows nothing for an empty message.
-follow_ups: the follow-up questions for which an answer has shown that you need the user's knowledge or decision, under the rule on whether to ask below, or an empty list; that an answer opens a choice which would change the plan or the work is not itself a reason to ask about it. The program asks each one after the question the user is answering when your reply arrives, or after the last agreed question if none remains. Give each an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this interview has had, its context, its history, its text, its explanations and its options: the context paragraph as blocks, the history as blocks (an empty list when there is none), the question alone as pieces (without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
+follow_ups: the follow-up questions for which an answer has shown that you need the user's knowledge or decision, under the rule on whether to ask below, or an empty list; that an answer opens a choice which would change the plan or the work is not itself a reason to ask about it. The program asks each one after the question the user is answering when your reply arrives, or after the last agreed question if none remains. Give each an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this clarification has had, its context, its history, its text, its explanations and its options: the context paragraph as blocks, the history as blocks (an empty list when there is none), the question alone as pieces (without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
 ${QUESTION_TEXT_FORMAT}
 unnecessary: the questions already presented or answered that you judge, from the answers, were unnecessary, each with its id and the reason; an empty list otherwise. The program tells the user and changes nothing else.
-complete: false until the program reports that every agreed question has been presented or that the user ended the interview, and false in a reply that asks a follow-up question. Then true, when you need nothing further from the user.
+complete: false until the program reports that every agreed question has been presented or that the user ended the clarification, and false in a reply that asks a follow-up question. Then true, when you need nothing further from the user.
 summary: an empty string while complete is false. When complete is true, the complete requirements document in Markdown: the task; every decision with the id of its question; the further information and constraints that the user gave; and open points, each with the default that will be assumed.
 ${SUMMARY_SKIPPED_RULE}
 ${questionWritingRules()}
 You may ask a follow-up question where an answer has shown that you need the user's knowledge or decision, as the rule on whether to ask states; settle anything else yourself from the codebase, this project's documentation, the conventions it follows and the practices that apply, and say in your message what you settled. The user may raise any subject and may ask you questions; answer them, and inspect the codebase without changing it where that is needed.
 Do not use the AskUserQuestion tool; the program relays the conversation. Do not modify any file. Do not write a plan.`;
 
-/** Issue #184: the first request of the first interview, sent when it opens. */
-export const clarificationOpenPrompt = (root: RunRoot): string => `Take part in an interview with the user. ${runDir(root)}/questions.json contains the task and the agreed questions.
-${clarificationRules(root)}
+/** Issue #184: the first request of the first clarification, sent when it opens. */
+export const firstClarificationOpenPrompt = (root: RunRoot): string => `Take part in clarifying the requirements with the user. ${runDir(root)}/questions.json contains the task and the agreed questions.
+${firstClarificationRules(root)}
 The program is presenting the first agreed question now. Reply with an empty message unless you have something to tell the user before the answers arrive.`;
 
-/** One item of a request of the first interview: an answer to an agreed question or a follow-up, or a reply to Claude Code's message. */
-export type ClarificationEntry =
+/** One item of a request of the first clarification: an answer to an agreed question or a follow-up, or a reply to Claude Code's message. */
+export type FirstClarificationEntry =
   | Readonly<{ kind: "agreed"; id: string; text: string; option: string | null }>
   | Readonly<{ kind: "followUp"; id: string; text: string }>
   | Readonly<{ kind: "message"; text: string }>;
-/** What closes a request: the list is done, or the developer ended the interview. */
-export type ClarificationTrailer = Readonly<{ kind: "listDone" }> | Readonly<{ kind: "done" }>;
+/** What closes a request: the list is done, or the developer ended the clarification. */
+export type FirstClarificationTrailer = Readonly<{ kind: "listDone" }> | Readonly<{ kind: "done" }>;
 
-/** Issue #184: the sentence every closing request of the first interview carries; the scripted planner recognizes it. */
+/** Issue #184: the sentence every closing request of the first clarification carries; the scripted planner recognizes it. */
 export const LIST_DONE_SENTENCE = "The program has no further agreed question to present.";
 
-const entryLine = (entry: ClarificationEntry): string => {
+const entryLine = (entry: FirstClarificationEntry): string => {
   switch (entry.kind) {
     case "agreed":
       return entry.option === null ? `The user answers agreed question ${entry.id} in writing:\n${entry.text}` : `The user answers agreed question ${entry.id} with the option ${JSON.stringify(entry.option)}.`;
@@ -1041,20 +1041,20 @@ const entryLine = (entry: ClarificationEntry): string => {
   }
 };
 
-const trailerText = (trailer: ClarificationTrailer): string => {
+const trailerText = (trailer: FirstClarificationTrailer): string => {
   switch (trailer.kind) {
     case "listDone":
       return `${LIST_DONE_SENTENCE} Every agreed question has been presented and answered or skipped, and every follow-up question has been answered. Ask any follow-up question you still need; otherwise return complete = true with the summary.`;
     case "done":
-      return `${LIST_DONE_SENTENCE} ${interviewDonePrompt}`;
+      return `${LIST_DONE_SENTENCE} ${clarificationDonePrompt}`;
   }
 };
 
 /**
- * Issue #184: a request of the first interview: every answer given since the previous request, in the order given, the
+ * Issue #184: a request of the first clarification: every answer given since the previous request, in the order given, the
  * program's notes (the questions it skipped), and, in a closing request, what closes it.
  */
-export const clarificationRequestPrompt = (entries: readonly ClarificationEntry[], notes: readonly string[], trailer: ClarificationTrailer | null): string =>
+export const firstClarificationRequestPrompt = (entries: readonly FirstClarificationEntry[], notes: readonly string[], trailer: FirstClarificationTrailer | null): string =>
   [...entries.map(entryLine), ...notes, ...(trailer === null ? [] : [trailerText(trailer)])].join("\n\n");
 
 /** Issue #184: Claude Code's judgment that a question was unnecessary, said to the user and written to conversation.md. */
@@ -1064,7 +1064,7 @@ export const unnecessaryLine = (id: string, reason: string): string => `Claude C
 
 export function requirementsReviewPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
   const log = pathOf({ kind: "log", subject: "requirements" });
-  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "requirements" }), log, "G", round), () => `Review ${runDir(root)}/requirements.md. It is the planner's summary of an interview between the planner and the user, written from the user's answers, each of which is final when given; the user did not confirm the summary itself. Between interviews the planner also writes into it, from its responses, answers the user gave and corrections that need no answer of his; review them like the rest. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
+  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "requirements" }), log, "G", round), () => `Review ${runDir(root)}/requirements.md. It is the planner's summary of a clarification between the planner and the user, written from the user's answers, each of which is final when given; the user did not confirm the summary itself. Between clarifications the planner also writes into it, from its responses, answers the user gave and corrections that need no answer of his; review them like the rest. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the clarification. Do not modify any file.
 The planner will write an implementation plan from the task and this file.
 Raise an issue when: an agreed question has no clear answer in the file; two statements in the file contradict each other; a statement cannot be followed in this codebase (name the file); a decision that the plan needs is still absent. An agreed question listed under 'Skipped questions' was not put to the user because his answer to another question denied its premise; it is not an issue unless you name what in the task, the codebase or the file establishes that premise.
 Put the question id or the heading in the location field.
@@ -1075,7 +1075,7 @@ export function requirementsRespondPrompt(root: RunRoot, round: number): string 
   return `${runDir(root)}/requirements-review/review-${round}.json contains a review of ${runDir(root)}/requirements.md.
 ${respondRules(root, "classify it in findings as the rules below state")}
 ${FINDINGS_RULES}
-Never put the point of an accepted finding in questions_for_user: classify it, and the program asks an unresolved or reopened one in the second interview.
+Never put the point of an accepted finding in questions_for_user: classify it, and the program asks an unresolved or reopened one in the follow-up clarification.
 Do not modify any file.`;
 }
 
@@ -1217,7 +1217,7 @@ export const planIdRule = (root: RunRoot): string => `Every step has an id (S1, 
 const planStatuses = (root: RunRoot): string => `Each step of ${runDir(root)}/plan.json has a status that the program records: a step with status 'done' is implemented, a step with status 'unfinished' was begun and not completed, and a step with status 'pending' is not yet begun.`;
 
 /** The requirements as the prompts name them, where the question phase ran. */
-export const requirementsSentence = (root: RunRoot): string => `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions from the interview. The plan must follow it.`;
+export const requirementsSentence = (root: RunRoot): string => `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions from the clarification. The plan must follow it.`;
 /** The user's decisions as an execution call is told of them; the file exists from the start of a run. */
 export const userDecisionsSentence = (root: RunRoot): string => `${runDir(root)}/user-decisions.md contains input and decisions by the user, which must be followed.`;
 
@@ -1648,8 +1648,8 @@ export const limitNoProceedPrompt = "A number = that many more cycles; 0 = stop 
 export const optionOrTextPrompt = "Answer with the number of an option, or in your own words (q = end the run) > ";
 /** A permission request of Claude Code. */
 export const permissionPrompt = "y = allow; anything else = do not allow (q = end the run) > ";
-/** A message of the interview. */
-export const interviewMessagePrompt = "You > ";
+/** A message of the clarification. */
+export const clarificationMessagePrompt = "You > ";
 
 // ---- status lines to the user (issue #14: "Gather Requirements", "Implementation", "cycle") -----------------------
 
@@ -2365,7 +2365,7 @@ export function pagePromptText(kind: string, offeredText: string): string {
       return "Choose one of the options, or type your own answer.";
     case "permission":
       return "Allow this action?";
-    case "interviewMessage":
+    case "clarificationMessage":
       return "Your reply";
     default:
       return text.replace(/\s*>\s*$/, "").trim();
@@ -2381,12 +2381,12 @@ export const USER_DECISIONS = "You Decide";
 /**
  * The name of a conversation with the user as the page shows it (issue #21, Q5 follow-up; issue #113: the rail's step and
  * this heading name one activity). "More" is used only where an intervening phase separates those questions from the
- * first ones: the second interview follows the requirements review that accepted a gap. A question asked inside a
+ * first ones: the follow-up clarification follows the requirements review that accepted a gap. A question asked inside a
  * conversation (a question origin of kind followUp) has no such phase between, and keeps its own words.
  */
-export function clarificationHeading(stage: InterviewStage): string {
+export function clarificationHeading(stage: ClarificationStage): string {
   switch (stage) {
-    case "clarification":
+    case "first":
       return USER_DECISIONS;
     case "followUp":
       return "More for you to decide";
@@ -2399,8 +2399,8 @@ export function clarificationHeading(stage: InterviewStage): string {
 export const END_CLARIFICATION = "Finish clarification and start planning";
 export const END_RUN_LABEL = "End the run";
 export const CONTINUE_WITHOUT_DECIDING = "Continue without deciding";
-/** The interview's opening help in the page (finding 8 of docs/gui-review.md). */
-export function interviewHelp(heading: string): string {
+/** The clarification's opening help in the page (finding 8 of docs/gui-review.md). */
+export function clarificationHelp(heading: string): string {
   return `${heading}. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.`;
 }
 
@@ -2420,7 +2420,7 @@ export function planWrittenHeading(label: string): string {
 export function planWrittenBody(revised: boolean, stage: string, label: string): string {
   return `Claude Code ${revised ? "revised" : "wrote"} the plan in ${stage}; open the ${label} heading below to read it.`;
 }
-/** The heading of the summary Claude proposes at the end of an interview, in the page. */
+/** The heading of the summary Claude proposes at the end of a clarification, in the page. */
 export const SUMMARY_PROPOSED_HEADING = "Summary proposed by Claude:";
 
 /**
@@ -2562,7 +2562,7 @@ export function suiteResultText(outcome: SuiteOutcome): string {
 export const FULL_SUITE_PHASE = "Full test suite";
 /** The purpose of an agent call as the activity line names it: the events keep the program's words (issues #14, #21). */
 export function purposeLabel(purpose: string): string {
-  return purpose === "interview" ? "clarification" : purpose === "execution" ? "implementation" : purpose === "context" ? "explaining a question" : purpose;
+  return purpose === "clarification" ? "clarification" : purpose === "execution" ? "implementation" : purpose === "context" ? "explaining a question" : purpose;
 }
 /** A cycle of a review loop in the user's words (issue #14): the records and the events say "round". */
 export function cycleHeading(heading: string, n: number): string {
@@ -3170,7 +3170,7 @@ export const offersOf = (text: string): Readonly<{ decide: boolean; terms: boole
 /** The options of the cycle limit as a decision analyzes them (decision Q6): the count of more cycles is entered after choosing. */
 /**
  * The pause of issue #30: a response accepted issues and the reviewed file is still unchanged (after the corrective
- * turn; for the requirements, after the second interview). Its answers are parsed by parseUnchangedAnswer in
+ * turn; for the requirements, after the follow-up clarification). Its answers are parsed by parseUnchangedAnswer in
  * src/input.ts, and its widget and options derive from these constants.
  */
 export const UNCHANGED_RETRY = "Retry";
@@ -3178,9 +3178,9 @@ export const UNCHANGED_PROCEED = "Proceed";
 export const UNCHANGED_STOP = "Stop the run";
 export const UNCHANGED_ANSWERS = { retry: "r", proceed: "p", stop: "s" } as const;
 export const unchangedPrompt = `${UNCHANGED_ANSWERS.retry} = retry; ${UNCHANGED_ANSWERS.proceed} = proceed with the file unchanged; ${UNCHANGED_ANSWERS.stop} = stop the run > `;
-export function unchangedOptionDescriptions(interview: boolean, pass: PassNoun): Readonly<{ retry: string; proceed: string; stop: string }> {
+export function unchangedOptionDescriptions(clarification: boolean, pass: PassNoun): Readonly<{ retry: string; proceed: string; stop: string }> {
   return {
-    retry: interview ? "another interview is held on the accepted issues, so that the summary can be amended." : "Claude Code gets one more corrective turn to apply the amendments it described or to change its answers to the issues.",
+    retry: clarification ? "another clarification is held on the accepted issues, so that the summary can be amended." : "Claude Code gets one more corrective turn to apply the amendments it described or to change its answers to the issues.",
     proceed: `the answers to the issues stand with the file unchanged, and the next cycle's ${pass} goes ahead.`,
     stop: "the run ends here, and no further cycle runs.",
   };
@@ -3961,8 +3961,8 @@ export function agentUnreachableText(agent: Agent, attempts: number, lastFault: 
 }
 
 /** What a retried planning call is, as the exhaustion pause names it. */
-export function transportWhat(purpose: "planning" | "interview" | "context"): string {
-  return purpose === "interview" ? "an interview turn" : purpose === "context" ? "the explanation of a question" : "a planning call";
+export function transportWhat(purpose: "planning" | "clarification" | "context"): string {
+  return purpose === "clarification" ? "a clarification turn" : purpose === "context" ? "the explanation of a question" : "a planning call";
 }
 /** What a retried Codex turn is, as the exhaustion pause names it: its pass, check or review (work review 4 of issue #216). */
 export function transportReviewWhat(heading: string, pass: PassNoun): string {
@@ -4178,7 +4178,7 @@ export function attachedHeading(kind: AttachedKind): string {
 export function defaultMarked(description: string): string {
   return description.trim() === "" ? "(the default)" : `${description} (the default)`;
 }
-/** Issue #138: the heading in conversation.md above the summary an interview ends with, which the program writes to requirements.md. */
+/** Issue #138: the heading in conversation.md above the summary a clarification ends with, which the program writes to requirements.md. */
 export const SUMMARY_WRITTEN_HEADING = "Requirements written from Claude Code's summary";
 /** The question of a clarification turn that asks no particular question: its context is Claude Code's message. */
 export const REPLY_QUESTION = "What do you want to reply to Claude Code?";
@@ -5296,22 +5296,22 @@ export const findingsInvalidText = (problems: readonly FindingProblem[]): string
  * and the repair prompt, which findingsValidation checks.
  */
 export const FINDINGS_RULES = `For each issue you accepted or partially accepted, return exactly one entry in findings with its id, and none for any other issue:
-- 'answered': the user already answered the point, in user-decisions.md or in the interview recorded in conversation.md; set source to the file and quote his answer, and write his answer into requirements. Nothing is asked.
+- 'answered': the user already answered the point, in user-decisions.md or in the clarification recorded in conversation.md; set source to the file and quote his answer, and write his answer into requirements. Nothing is asked.
 - 'corrected': the document needs a correction that needs no answer of the user's (a contradiction, a wording, a fact of the codebase, a point the rule on whether to ask lets you settle); write the correction into requirements. Nothing is asked.
-- 'unresolved': the rule on whether to ask requires the user's knowledge or decision; the program puts it to him in a second interview.
-- 'reopened': the user answered the point, but what his answer rested on changed; set changed to what changed; the program puts it to him again in the second interview.
+- 'unresolved': the rule on whether to ask requires the user's knowledge or decision; the program puts it to him in a follow-up clarification.
+- 'reopened': the user answered the point, but what his answer rested on changed; set changed to what changed; the program puts it to him again in the follow-up clarification.
 requirements is the complete requirements.md with every 'answered' and 'corrected' finding written in, or null where there is none; the program writes it.`;
 /** The validation repair turn of a refused classification (issue #47). */
 export const findingsRepairPrompt = (problems: readonly FindingProblem[]): string => validationRepairPrompt(problems.map(findingProblemText), [FINDINGS_RULES]);
 /** Issue #47: what became of one accepted finding of the requirements review, said and written. */
-export function requirementsFindingLine(finding: InterviewedFinding | WrittenFinding): string {
+export function requirementsFindingLine(finding: ClarificationFinding | WrittenFinding): string {
   switch (finding.kind) {
     case "answered":
       return `${finding.id}: you answered this already (${finding.source}); your answer is written into requirements.md and not asked again.`;
     case "corrected":
       return `${finding.id}: corrected in requirements.md; nothing for you to decide.`;
     case "unresolved":
-      return `${finding.id}: put to you in the second interview.`;
+      return `${finding.id}: put to you in the follow-up clarification.`;
     case "reopened":
       return `${finding.id}: put to you again, because ${finding.changed}.`;
   }

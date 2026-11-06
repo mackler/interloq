@@ -11,7 +11,7 @@ import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts"
 import { FINDING_PROBLEM_KINDS, type FindingProblem } from "./requirementsFindings.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
 import type { TrackerError } from "./services.ts";
-import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, investigationInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText, findingsInvalidText, KEPT_CORRECTION_PROBLEM_KINDS, type KeptCorrectionProblem, correctionDroppedText } from "./prompts.ts";
+import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, clarificationTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, investigationInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText, findingsInvalidText, KEPT_CORRECTION_PROBLEM_KINDS, type KeptCorrectionProblem, correctionDroppedText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -164,8 +164,8 @@ export class PassageMissing extends Data.TaggedError("PassageMissing")<{ readonl
  * twice (the validation repair turn of behavior 10 first).
  */
 export class FindingsInvalid extends Data.TaggedError("FindingsInvalid")<{ readonly problems: readonly FindingProblem[] }> {}
-/** An interview turn that asks a skipped question or one before its premise, or omits a skipped one from its summary (issue #99). */
-export class InterviewTurnInvalid extends Data.TaggedError("InterviewTurnInvalid")<{ readonly problems: readonly TurnProblem[] }> {}
+/** A clarification turn that asks a skipped question or one before its premise, or omits a skipped one from its summary (issue #99). */
+export class ClarificationTurnInvalid extends Data.TaggedError("ClarificationTurnInvalid")<{ readonly problems: readonly TurnProblem[] }> {}
 /** A report of report_step that names no step of the plan (Q3): an error for Claude Code, not a halt. */
 export class UnknownStep extends Data.TaggedError("UnknownStep")<{ readonly id: string }> {}
 /** docs/decision-making.md of the program could not be read before the run (decision support, D7). */
@@ -290,7 +290,7 @@ export type RunError =
   | PassageMissing
   | CorrectionDropped
   | FindingsInvalid
-  | InterviewTurnInvalid
+  | ClarificationTurnInvalid
   | AgentUnreachable
   | TrackerStepFailed
   | ServerFault
@@ -383,8 +383,8 @@ export const describe = (error: RunErrorFields): string => {
       return correctionDroppedText(error.problems);
     case "FindingsInvalid":
       return findingsInvalidText(error.problems);
-    case "InterviewTurnInvalid":
-      return interviewTurnInvalidText(error.problems);
+    case "ClarificationTurnInvalid":
+      return clarificationTurnInvalidText(error.problems);
     case "TrackerStepFailed":
       return trackerStepFailedText(error.item, error.step, error.cause, error.done, error.check);
     case "ServerFault":
@@ -471,7 +471,7 @@ const RunErrorData = Schema.Union([
     _tag: Schema.Literal("FindingsInvalid"),
     problems: Schema.Array(Schema.Union([Schema.Struct({ kind: Schema.Literals(FINDING_PROBLEM_KINDS.filter((k) => k !== "documentUnchanged") as readonly Exclude<(typeof FINDING_PROBLEM_KINDS)[number], "documentUnchanged">[]), id: Schema.String }), Schema.Struct({ kind: Schema.Literal("documentUnchanged"), ids: Strings })])),
   }),
-  Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnProblemSchema) }),
+  Schema.Struct({ _tag: Schema.Literal("ClarificationTurnInvalid"), problems: Schema.Array(TurnProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String), check: Schema.NullOr(WriteCheckSchema) }),
   Schema.Struct({ _tag: Schema.Literal("ServerFault"), message: Schema.String }),

@@ -24,8 +24,8 @@ test("the response prompt names the field, the four kinds, their fields and the 
   assert.ok("findings" in S.RequirementsResponse.fields && "requirements" in S.RequirementsResponse.fields);
 });
 
-test("the second interview's opening lists the interviewed findings and what changed", () => {
-  const p = prompts.interviewGapsPrompt(TEST_ROOT, "r.json", [
+test("the follow-up clarification's opening lists the findings to clarify and what changed", () => {
+  const p = prompts.followUpClarificationPrompt(TEST_ROOT, "r.json", [
     { id: "G-R1-1", kind: "unresolved" },
     { id: "G-R1-3", kind: "reopened", changed: "the retry setting was removed" },
   ]);
@@ -84,6 +84,6 @@ test("the validation refuses each problem with FindingsInvalid and a repair from
 test("each finding has its line", () => {
   assert.match(prompts.requirementsFindingLine({ id: "A", kind: "answered", source: "user-decisions.md: yes" }), /A: you answered this already \(user-decisions\.md: yes\)/);
   assert.match(prompts.requirementsFindingLine({ id: "B", kind: "corrected" }), /B: corrected in requirements\.md/);
-  assert.match(prompts.requirementsFindingLine({ id: "C", kind: "unresolved" }), /C: put to you in the second interview/);
+  assert.match(prompts.requirementsFindingLine({ id: "C", kind: "unresolved" }), /C: put to you in the follow-up clarification/);
   assert.match(prompts.requirementsFindingLine({ id: "D", kind: "reopened", changed: "x changed" }), /D: put to you again, because x changed/);
 });

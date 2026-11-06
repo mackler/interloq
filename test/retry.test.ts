@@ -534,7 +534,7 @@ test("an interruption during the wait after a process ending ends the call: no f
   assert.deepEqual(calls, [1]);
 });
 
-// Issue #184 (decision G-R1-1): an interview request whose retries are used up while the developer still answers agreed
+// Issue #184 (decision G-R1-1): a clarification request whose retries are used up while the developer still answers agreed
 // questions is tried again every five minutes in the background, nothing asked; once he waits for Claude Code, the
 // exhaustion pause is asked as before.
 const background = (waiting: () => boolean, untilWaiting: Effect.Effect<void> = Effect.never) => ({ kind: "background" as const, waiting: Effect.sync(waiting), untilWaiting });
@@ -544,12 +544,12 @@ test("background: exhausted retries go on every five minutes, each try counted a
   const { layer, ui, conversation } = await setup([]);
   const { clock, sleeps } = steppingClock(START);
   const { calls, attempt } = scripted(["fault", "fault", "fault", "fault", "fault", "fault", "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", "review", "an interview turn", attempt, Effect.void, background(() => false)).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "a clarification turn", attempt, Effect.void, background(() => false)).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 7"));
   assert.deepEqual(calls, [1, 2, 3, 4, 5, 6, 7]);
   assert.deepEqual(sleeps, [10, 20, BACKGROUND_MS, BACKGROUND_MS, BACKGROUND_MS, BACKGROUND_MS]);
   assert.deepEqual(ui.asked, []);
-  for (const n of [1, 2, 3, 4]) assert.ok(conversation().includes(prompts.backgroundRetryLine("claude", "an interview turn", n, USAGE_LIMIT_RETRY_SECONDS)), `try ${n} not recorded`);
+  for (const n of [1, 2, 3, 4]) assert.ok(conversation().includes(prompts.backgroundRetryLine("claude", "a clarification turn", n, USAGE_LIMIT_RETRY_SECONDS)), `try ${n} not recorded`);
   assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => (e._tag === "TransportRetrying" ? e.attempt : 0)), [1, 2]);
 });
 
@@ -560,7 +560,7 @@ const wokenBackground = async (answers: ScriptedAnswer[], script: Script) => {
   // The background sleep never ends by itself: only the developer's reaching the end of the list (untilWaiting) wakes it.
   const { clock } = steppingClock(START, (ms) => (ms === BACKGROUND_MS ? Effect.sync(() => void (waiting = true)).pipe(Effect.andThen(woken.open), Effect.andThen(Effect.never)) : Effect.void));
   const { calls, attempt } = scripted(script);
-  const exit = await exitOf(withTransportRetry("claude", "review", "an interview turn", attempt, Effect.void, background(() => waiting, woken.await)).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "a clarification turn", attempt, Effect.void, background(() => waiting, woken.await)).pipe(withClock(clock)), layer);
   return { exit, ui, calls };
 };
 
@@ -631,7 +631,7 @@ test("network: the background policy with a coded fault uses the network wait, n
   const { layer, ui } = await setup([]);
   const { clock, sleeps } = steppingClock(START);
   const { attempt } = scripted(["net", "net", "net", "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", "review", "an interview turn", attempt, Effect.void, background(() => false)).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "a clarification turn", attempt, Effect.void, background(() => false)).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 4"));
   assert.deepEqual(sleeps, [...configuredMs, networkMs(1)]);
   assert.deepEqual(ui.asked, []);

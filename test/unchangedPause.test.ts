@@ -9,14 +9,14 @@ import { promptOf } from "../src/userPrompts.ts";
 // parser of src/input.ts and decision support's options must agree; each seam is asserted from one source.
 const intended = { [prompts.UNCHANGED_RETRY]: "retry", [prompts.UNCHANGED_PROCEED]: "proceed", [prompts.UNCHANGED_STOP]: "stop" } as const;
 
-for (const interview of [false, true]) {
+for (const clarification of [false, true]) {
   // S8: the pause's options are its cards, each sending the answer it shows; the widget adds only the offer and the quit.
-  test(`every option of the pause sends the answer its label names, and exactly one option matches it (${interview ? "requirements" : "corrective"})`, () => {
+  test(`every option of the pause sends the answer its label names, and exactly one option matches it (${clarification ? "requirements" : "corrective"})`, () => {
     const widget = promptOf(prompts.withOffer(prompts.unchangedPrompt));
     assert.equal(widget.kind, "unchanged");
     assert.deepEqual(widget.choices.filter((c) => c.sends !== "q" && c.sends !== DECIDE), []);
     assert.ok(widget.choices.some((c) => c.label === prompts.HELP_ME_DECIDE && c.sends === DECIDE), "the pause carries no offer");
-    const options = unchangedOptions(interview, "review");
+    const options = unchangedOptions(clarification, "review");
     assert.deepEqual(options.map((o) => o.label), [prompts.UNCHANGED_RETRY, prompts.UNCHANGED_PROCEED, prompts.UNCHANGED_STOP]);
     for (const option of options) {
       const sends = "token" in option.answer ? option.answer.token : "";
@@ -31,8 +31,8 @@ test("a blank or unknown answer at the pause is no answer, so it is asked again"
   assert.equal(parseUnchangedAnswer(" R "), "retry");
 });
 
-test("the requirements' Retry is another interview; the others' is another corrective turn", () => {
+test("the requirements' Retry is another clarification; the others' is another corrective turn", () => {
   assert.notEqual(unchangedOptions(true, "review")[0]!.description, unchangedOptions(false, "review")[0]!.description);
-  assert.match(unchangedOptions(true, "review")[0]!.description, /interview/);
+  assert.match(unchangedOptions(true, "review")[0]!.description, /another clarification/);
   assert.match(unchangedOptions(false, "review")[0]!.description, /corrective turn/);
 });

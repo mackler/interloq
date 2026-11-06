@@ -244,7 +244,7 @@ export const PlanWriteResult = Schema.Struct({ questions_for_user: Schema.Array(
  * Claude Code's classification of one accepted or partially accepted finding of the requirements review (issue #47):
  * `answered`, the developer already answered the point (`source` names where, with his answer), written into
  * requirements.md and not asked; `corrected`, a correction of the document no answer of his is needed for (issue #220's
- * case), written in; `unresolved`, which needs his knowledge or decision and is asked in the second interview; and
+ * case), written in; `unresolved`, which needs his knowledge or decision and is asked in the follow-up clarification; and
  * `reopened`, an answer of his whose ground changed (`changed` states what), asked again. Plain strings, as the facts of
  * acceptance require; a blank one is refused by findingsValidation with its repair turn.
  */
@@ -397,7 +397,7 @@ export const DecisionAnalysis = Schema.Struct({
  */
 export const SkipCondition = Schema.Struct({ question: Schema.String, answer: Schema.String });
 
-/** One entry of the question list that Claude Code and Codex agree on before the interview. */
+/** One entry of the question list that Claude Code and Codex agree on before the clarification. */
 export const QuestionEntry = Schema.Struct({
   id: Schema.String,
   /**
@@ -458,10 +458,10 @@ export type LoopResponse = typeof LoopResponse.Type;
 export const DecisionApplied = Schema.Struct({ analysis: DecisionAnalysis });
 
 /**
- * Claude Code's output for one turn of the interview. `asked_ids`: every question asked so far, the agreed ids and the
+ * Claude Code's output for one turn of the clarification. `asked_ids`: every question asked so far, the agreed ids and the
  * ids Claude assigns to follow-ups (issue #21); `answered_ids`: those of them the user has answered.
  */
-export const InterviewTurn = Schema.Struct({
+export const ClarificationTurn = Schema.Struct({
   message_to_user: Schema.String,
   /**
    * Issue #35 (Q5, Q6): the question the message asks the user to answer now, its id and its text alone; S3: with its
@@ -475,12 +475,12 @@ export const InterviewTurn = Schema.Struct({
 });
 
 /**
- * Issue #184: Claude Code's reply in the first interview (the clarification). Interloq presents the agreed questions
+ * Issue #184: Claude Code's reply in the first clarification. Interloq presents the agreed questions
  * itself and sends each answer as it is given, so a reply chooses no agreed question: it acknowledges the answers, may
- * ask follow-up questions (each with an id F<n> Claude Code assigns, unique across the interview), may name questions
+ * ask follow-up questions (each with an id F<n> Claude Code assigns, unique across the clarification), may name questions
  * already presented or answered that it judges unnecessary, and proposes the summary once Interloq reports the list done.
  */
-export const InterviewReply = Schema.Struct({
+export const ClarificationReply = Schema.Struct({
   message_to_user: Schema.String,
   follow_ups: Schema.Array(Schema.Struct({ id: Schema.String, context: Schema.Array(Block), history: Schema.Array(Block), text: Schema.Array(Piece), explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) })),
   unnecessary: Schema.Array(Schema.Struct({ id: Schema.String, reason: Schema.String })),
@@ -765,7 +765,7 @@ export const Config = Schema.Struct({
   /**
    * Issue #142: the explanations of the agreed questions' terms in a refinement run. `checked`: written by Claude Code
    * and reviewed by Codex in the terms loop before the first question, the behavior before this change; `unchecked`:
-   * written in one Claude Code call before the first question, with no review; `onRequest`: none before the interview,
+   * written in one Claude Code call before the first question, with no review; `onRequest`: none before the clarification,
    * one question's written when the user asks for them while it is on the screen.
    */
   terms: TermsMode,
@@ -900,7 +900,7 @@ export const RateLimitNoticeUsage = Schema.Struct({
   rate_limit_info: Schema.Record(Schema.String, Schema.Unknown),
 });
 /** The purposes of a Claude Code request, as src/services.ts names them (PlanningPurpose and EXECUTION_PURPOSE). */
-export const CLAUDE_PURPOSES = ["planning", "interview", "context", "execution"] as const;
+export const CLAUDE_PURPOSES = ["planning", "clarification", "context", "execution"] as const;
 /**
  * One failed Claude Code request (issue #192, requirements Q1): the facts the adapter kept of the failure
  * (ClaudeFailure of src/transport.ts), each an explicit nullable field, with the session, the purpose and the call's
@@ -972,8 +972,8 @@ export type QuestionEntry = typeof QuestionEntry.Type;
 export type SkipCondition = typeof SkipCondition.Type;
 export type QuestionList = typeof QuestionList.Type;
 export type QuestionListResponse = typeof QuestionListResponse.Type;
-export type InterviewTurn = typeof InterviewTurn.Type;
-export type InterviewReply = typeof InterviewReply.Type;
+export type ClarificationTurn = typeof ClarificationTurn.Type;
+export type ClarificationReply = typeof ClarificationReply.Type;
 export type Element = typeof Element.Type;
 export type Entry = typeof Entry.Type;
 export type Column = typeof Column.Type;

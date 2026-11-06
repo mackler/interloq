@@ -6,7 +6,7 @@ import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
 import { markedTabName } from "../web/src/notify.ts";
-import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, QUEUE_HEADING, queueMoveUpName, EXPLAIN_TERMS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, NO_UNANSWERED_QUESTIONS } from "../src/prompts.ts";
+import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, QUEUE_HEADING, queueMoveUpName, EXPLAIN_TERMS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, clarificationHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, NO_UNANSWERED_QUESTIONS } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -270,15 +270,15 @@ test.describe("the tests of the stop server, in order", () => {
   });
 });
 
-test.describe("the tests of the interview server, in order", () => {
+test.describe("the tests of the clarification server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  test("(5) an interview through to the requirements: the page's help, a numbered answer, /done, the summary written with no confirmation", async ({ page }) => {
-    await startTask(page, "interview");
+  test("(5) a clarification through to the requirements: the page's help, a numbered answer, /done, the summary written with no confirmation", async ({ page }) => {
+    await startTask(page, "clarification");
     await expect(asking(page, DATABASE)).toBeVisible();
     // S27: the conversation is one click away while the question waits.
     await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
-    await expect(dashboard(page).locator("[data-interview-help]")).toHaveText(interviewHelp(clarificationHeading("clarification")));
+    await expect(dashboard(page).locator("[data-clarification-help]")).toHaveText(clarificationHelp(clarificationHeading("first")));
     await page.getByRole("button", { name: SHOW_QUESTION }).click();
     await expect(dashboard(page).getByText('"""')).toHaveCount(0);
     // Issue #21: Gather Requirements shows its steps; the clarification counts the agreed question, answered or not.
@@ -465,12 +465,12 @@ test.describe("the tests of the questionReview server, in order", () => {
 
   // Defect A of docs/page-question-phase-defects.md: the page had never carried a question phase whose review raised an
   // issue; the response with the amended list stopped the page, live and in every replay.
-  test("(12) a question phase through the page: the list's review and response, one interview turn, an answer, the requirements review", async ({ context, page }) => {
+  test("(12) a question phase through the page: the list's review and response, one clarification turn, an answer, the requirements review", async ({ context, page }) => {
     await startTask(page, "questionReview");
     await expect(right(page).getByText("The list does not ask for the port.")).toBeVisible();
     await expect(right(page).getByText(/accepted: rationale Q-R1-1/)).toBeVisible();
     await expect(asking(page, DATABASE)).toBeVisible();
-    // A second tab receives the same run by replay, and the pending interview prompt with it.
+    // A second tab receives the same run by replay, and the pending clarification prompt with it.
     const other = await context.newPage();
     await other.goto(url("questionReview"));
     await expect(right(other).getByText(/accepted: rationale Q-R1-1/)).toBeVisible();

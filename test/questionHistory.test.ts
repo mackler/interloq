@@ -1,6 +1,6 @@
 // Issue #133, decision Q1 (S2): a question's history is blocks of pieces like its context, so every mechanical check of
 // the question covers it, the terms keep its wording, and the three validation adapters (the question list, the terms
-// and the interview turn) hold it to the rules.
+// and the clarification turn) hold it to the rules.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
@@ -101,7 +101,7 @@ test("termsValidation keeps the history's wording: a re-division passes, other w
   assert.ok(defect.failure.error._tag === "QuestionInvalid" && defect.failure.error.questions[0].problems.some((p) => p.kind === "multiLineCode"));
 });
 
-const current = (history: readonly S.Block[], context = para("The service, a web server, listens on a port.")): S.InterviewTurn["current_question"] => ({
+const current = (history: readonly S.Block[], context = para("The service, a web server, listens on a port.")): S.ClarificationTurn["current_question"] => ({
   id: "F1",
   context,
   history,
@@ -109,7 +109,7 @@ const current = (history: readonly S.Block[], context = para("The service, a web
   explanations: [],
   options: [],
 });
-const turnOf = (c: S.InterviewTurn["current_question"]): S.InterviewTurn => ({ message_to_user: "m", current_question: c, asked_ids: ["F1"], answered_ids: [], complete: false, summary: "" });
+const turnOf = (c: S.ClarificationTurn["current_question"]): S.ClarificationTurn => ({ message_to_user: "m", current_question: c, asked_ids: ["F1"], answered_ids: [], complete: false, summary: "" });
 
 test("turnValidation rejects a current question whose only defect is in its history, and counts an explanation the history alone uses", () => {
   assert.ok(Result.isSuccess(turnValidation([])(turnOf(current([])))));
@@ -160,7 +160,7 @@ test("every prompt that asks an agent for a question asks for its history beside
   const asking: Record<string, string> = {
     questionList: prompts.questionListPrompt("task"),
     terms: prompts.termsPrompt(TEST_ROOT, "task"),
-    interview: prompts.interviewOpenPrompt(TEST_ROOT),
+    clarification: prompts.clarificationTurnOpenPrompt(TEST_ROOT),
     plannerQuestions: prompts.QUESTION_OPTIONS_RULE,
     relayed: prompts.RELAYED_SHAPE,
     context: prompts.contextPrompt("task", request),
@@ -169,7 +169,7 @@ test("every prompt that asks an agent for a question asks for its history beside
   assert.match(prompts.questionListPrompt("task"), /history: what happened before that led to the question/);
   assert.match(prompts.QUESTION_OPTIONS_RULE, /has a context, a history, a question, explanations and options/);
   assert.match(prompts.termsPrompt(TEST_ROOT, "task"), /its context, history, question, reason and proposed_answers/);
-  assert.match(prompts.interviewOpenPrompt(TEST_ROOT), /give its context, its history, its text/);
+  assert.match(prompts.clarificationTurnOpenPrompt(TEST_ROOT), /give its context, its history, its text/);
   const context = prompts.contextPrompt("task", request);
   assert.match(context, /Return in history /);
   assert.match(context, /history may be empty/);

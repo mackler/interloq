@@ -113,8 +113,8 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("AgentCallStarted" as const), agent, purpose: text, callId: text }),
   fc.record({ _tag: fc.constant("ToolUsed" as const), agent, tool: text, target: text, callId: text }),
   fc.record({ _tag: fc.constant("AgentCallEnded" as const), agent, ok: fc.boolean(), callId: text }),
-  fc.record({ _tag: fc.constant("InterviewTurn" as const), heading: text, message: text, summary: fc.option(text, { nil: null }), answered: nat, total: nat }),
-  fc.record({ _tag: fc.constant("InterviewOpened" as const), heading: text, stage: fc.constantFrom("clarification" as const, "followUp" as const), total: nat }),
+  fc.record({ _tag: fc.constant("ClarificationTurn" as const), heading: text, message: text, summary: fc.option(text, { nil: null }), answered: nat, total: nat }),
+  fc.record({ _tag: fc.constant("ClarificationOpened" as const), heading: text, stage: fc.constantFrom("first" as const, "followUp" as const), total: nat }),
   fc.record({ _tag: fc.constant("ClaudeSaid" as const), text, running: fc.array(text, { maxLength: 3 }) }),
   // Issue #205: the agreed question list known, with its count.
   fc.record({ _tag: fc.constant("QuestionsAgreed" as const), count: nat }),
@@ -177,7 +177,7 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
 );
 // Issue #120: the mode of a run, from the one source of the modes.
 const mode = fc.constantFrom(...RUN_MODES);
-const promptTexts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, "unknown > "];
+const promptTexts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.permissionPrompt, prompts.clarificationMessagePrompt, "unknown > "];
 const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("Started" as const), project: text, location: text, task: text, mode, item: fc.record({ id: text, title: text }) }),
   fc.record({ _tag: fc.constant("Said" as const), text }),

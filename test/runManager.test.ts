@@ -317,8 +317,8 @@ test("the replay during a run holds the last run and the current one", async () 
   await ended(h, second);
 });
 
-// Issue #120: the interview belongs to a refinement run, started from an unrefined item.
-test("an interview's numbered answer sent through the manager reaches Claude Code as the scripted Ui's text", async () => {
+// Issue #120: the clarification belongs to a refinement run, started from an unrefined item.
+test("a clarification's numbered answer sent through the manager reaches Claude Code as the scripted Ui's text", async () => {
   const repo = tempRepo();
   const database = currentOf({ id: "F1", context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with the service.", text: "Which database should the service use?", terms: [], options: [{ label: "PostgreSQL", description: "already in the container" }, { label: "SQLite", description: "no server needed" }] });
   const h = await harness(repo, [
@@ -331,10 +331,10 @@ test("an interview's numbered answer sent through the manager reaches Claude Cod
   ]);
   const id = await started(h, "refinement");
   const agreed = await pendingAsk(h, id);
-  assert.equal(agreed.kind, "interviewMessage");
+  assert.equal(agreed.kind, "clarificationMessage");
   await run(h.manager.answer(h.manager.incarnation, id, agreed.prompt, "1"));
   const you = await pendingAsk(h, id);
-  assert.equal(you.kind, "interviewMessage");
+  assert.equal(you.kind, "clarificationMessage");
   // S5: the follow-up is presented before the prompt, its options with the answers that choose them.
   const presented = eventsOf(h, id).flatMap((e) => (e._tag === "Notified" && e.event._tag === "QuestionPresented" ? [e.event.question] : [])).at(-1);
   assert.deepEqual(presented?.origin, { kind: "followUp", id: "F1" });

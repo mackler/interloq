@@ -14,7 +14,7 @@ import { type PlannerResponse, type Review, WORK_EFFECT_FIELD } from "./schema.t
 import { isEffectDisposition, isEffectIssue } from "./workEffect.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { TurnText } from "./schemaNormalize.ts";
-import type { InterviewStage } from "./uiEvents.ts";
+import type { ClarificationStage } from "./uiEvents.ts";
 
 /** A question list as the agents exchange it or as the program records it (a recorded default may be null). */
 export type RenderableQuestions = Readonly<{
@@ -119,8 +119,8 @@ export const renderTerms = (entries: readonly TermsEntry[], figures: FigureRende
 const answerFigures = (entry: TermsEntry, figures: FigureRendering): string =>
   entry.proposed_answers.flatMap((a) => (a.figure === null ? [] : [`\n  - ${piecesMarkdown(a.label)}: ${figureLine(a.figure, figures)}`])).join("");
 
-/** The lines said for an interview turn, in order; the page shows the turn once and absorbs these lines (plan 4.2). */
-export const interviewSays = (turn: TurnText): readonly string[] =>
+/** The lines said for a clarification turn, in order; the page shows the turn once and absorbs these lines (plan 4.2). */
+export const clarificationSays = (turn: TurnText): readonly string[] =>
   turn.kind === "summary_proposed" ? [`\n${turn.message}\n`, `Summary proposed by Claude Code:\n\n${turn.summary}\n`] : [`\n${turn.message}\n`];
 
 
@@ -145,13 +145,13 @@ export const renderResponse = (response: PlannerResponse): string => {
   return `### Claude Code\n\n${[...answers, ...self, ...feedback].join("\n")}\n\n`;
 };
 
-/** The heading of an interview in conversation.md, a record: unchanged when the user-facing name changes (issue #21). */
-export const recordHeading = (stage: InterviewStage): string => {
+/** The heading of a round of clarification in conversation.md, a record, apart from the user-facing names (issues #21 and #24). */
+export const recordHeading = (stage: ClarificationStage): string => {
   switch (stage) {
-    case "clarification":
-      return "Interview";
+    case "first":
+      return "First clarification";
     case "followUp":
-      return "Second interview";
+      return "Follow-up clarification";
   }
 };
 

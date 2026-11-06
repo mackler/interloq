@@ -50,7 +50,7 @@ const explained = (sense: string): S.TermsEntry => {
 const initialTerms: readonly S.TermsEntry[] = [termsOf(q("Q1")), explained("first sense")];
 const amendedTerms: readonly S.TermsEntry[] = [termsOf(q("Q1")), explained("amended sense")];
 
-test("a refinement shows the question list before its review, the amended list after it, the terms and their amendment, and the requirements before and after the second interview", async () => {
+test("a refinement shows the question list before its review, the amended list after it, the terms and their amendment, and the requirements before and after the follow-up clarification", async () => {
   const marks: Marks = new Map();
   let ui: ScriptedUi | undefined;
   const scripted = (): ScriptedUi => ui ?? assert.fail("the probe is not yet assigned");

@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { answerOf, isDecide, parseInterviewMessage } from "../src/input.ts";
+import { answerOf, isDecide, parseClarificationMessage } from "../src/input.ts";
 
-// Plan step 3.4 (finding 25): the interview's commands as pure functions.
+// Plan step 3.4 (finding 25): the clarification's commands as pure functions.
 
-test("parseInterviewMessage: empty, /done, or text (trimmed)", () => {
-  assert.deepEqual(parseInterviewMessage(""), { kind: "empty" });
-  assert.deepEqual(parseInterviewMessage("   "), { kind: "empty" });
-  assert.deepEqual(parseInterviewMessage("/done"), { kind: "done" });
-  assert.deepEqual(parseInterviewMessage(" /done "), { kind: "done" });
-  assert.deepEqual(parseInterviewMessage("  use the logger  "), { kind: "text", text: "use the logger" });
-  assert.deepEqual(parseInterviewMessage("/quit"), { kind: "text", text: "/quit" }); // quitting is the Ui's command
+test("parseClarificationMessage: empty, /done, or text (trimmed)", () => {
+  assert.deepEqual(parseClarificationMessage(""), { kind: "empty" });
+  assert.deepEqual(parseClarificationMessage("   "), { kind: "empty" });
+  assert.deepEqual(parseClarificationMessage("/done"), { kind: "done" });
+  assert.deepEqual(parseClarificationMessage(" /done "), { kind: "done" });
+  assert.deepEqual(parseClarificationMessage("  use the logger  "), { kind: "text", text: "use the logger" });
+  assert.deepEqual(parseClarificationMessage("/quit"), { kind: "text", text: "/quit" }); // quitting is the Ui's command
 });
 
 // Decision support, plan step 3.1: the command of the offer.
@@ -37,8 +37,8 @@ test("endingOf: q at an ask and /quit at a message end the run; at the cycle lim
   assert.equal(endingOf("decision", "ask", "q"), "endRun");
   assert.equal(endingOf("decision", "ask", " q "), "endRun");
   assert.equal(endingOf("decision", "ask", "/quit"), null);
-  assert.equal(endingOf("interviewMessage", "message", "/quit"), "endRun");
-  assert.equal(endingOf("interviewMessage", "message", "q"), null);
+  assert.equal(endingOf("clarificationMessage", "message", "/quit"), "endRun");
+  assert.equal(endingOf("clarificationMessage", "message", "q"), null);
   assert.equal(endingOf("decision", "ask", "0"), null);
   assert.equal(endingOf("decision", "ask", ""), null);
   for (const text of ["0", "", "stop", "-1", "x", "1.5"]) {

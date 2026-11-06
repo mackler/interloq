@@ -32,7 +32,7 @@ export { USAGE_LIMIT_MARGIN_SECONDS };
  * for a call whose failure the caller handles (the context call of a question, S10: it must not ask a question of its
  * own before the question it explains); "background" (issue #184, decision G-R1-1) try again every
  * USAGE_LIMIT_RETRY_SECONDS with no limit and nothing asked while `waiting` is false, the developer still answering the
- * interview's agreed questions, and ask as "ask" does once it is true; `untilWaiting` ends a try's sleep at once when the
+ * clarification's agreed questions, and ask as "ask" does once it is true; `untilWaiting` ends a try's sleep at once when the
  * developer reaches the point where he waits for Claude Code.
  */
 export type Exhaustion =

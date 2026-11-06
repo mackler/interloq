@@ -1,5 +1,5 @@
 // The browser tab's title (issue #29; pure): the project's own name, then Interloq, so that two windows of two servers
-// are told apart in a narrow tab strip (decision Q1 of the interview of 8 Oct 2026: no full path in the title).
+// are told apart in a narrow tab strip (decision Q1 of the refinement of 8 Oct 2026: no full path in the title).
 import { ownName } from "../../src/hostDir.ts";
 import { type Mark, markGlyph } from "./notify.ts";
 

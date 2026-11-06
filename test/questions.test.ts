@@ -8,12 +8,12 @@ import { ack, finished, followUpOf, issue, opt, para, plain, questionEntry, resp
 import { blocksText, piecesText, plainBlocks } from "../src/pieces.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
-type InterviewTurn = typeof S.InterviewTurn.Type;
+type ClarificationTurn = typeof S.ClarificationTurn.Type;
 
 const noQuestions = { questions_for_user: [] };
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
 const none = { id: "", context: [], history: [], text: [], explanations: [], options: [] };
-const turn = (message: string, answered: string[], summary = ""): InterviewTurn => ({
+const turn = (message: string, answered: string[], summary = ""): ClarificationTurn => ({
   message_to_user: message,
   current_question: none,
   asked_ids: answered,
@@ -22,14 +22,14 @@ const turn = (message: string, answered: string[], summary = ""): InterviewTurn 
   summary,
 });
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
-/** Issue #184: the first interview's closing reply that proposes this summary. */
+/** Issue #184: the first clarification's closing reply that proposes this summary. */
 const closing = (summary: string, message = "Complete.") => [{ output: summaryReply(summary, message) }];
-/** Resolves once the interview has presented agreed question `id`, read from a Ui bound after the layer is built. */
+/** Resolves once the clarification has presented agreed question `id`, read from a Ui bound after the layer is built. */
 const presentedAgreed = (ui: () => ScriptedUi, id: string) => async (): Promise<void> => {
   while (!presentedQuestions(ui()).some((p) => p.origin.kind === "clarification" && p.origin.id === id)) await new Promise((r) => setTimeout(r, 5));
 };
 
-test("question list is amended in review, the interview runs, the summary is written, and the refinement ends (issue #120)", async () => {
+test("question list is amended in review, the clarification runs, the summary is written, and the refinement ends (issue #120)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "B, because of X"],
     steps: [
@@ -73,19 +73,19 @@ test("an empty agreed list asks nothing: requirements.md is written, the phase e
   const tags = probe.ui.notified.map((e) => e._tag);
   const ended = probe.ui.notified.findIndex((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions");
   assert.deepEqual(probe.ui.notified[ended], { _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
-  assert.ok(tags.indexOf("InterviewOpened") === -1, "an interview was opened");
+  assert.ok(tags.indexOf("ClarificationOpened") === -1, "a clarification was opened");
   assert.ok(!probe.ui.notified.slice(ended).some((e) => e._tag === "PhaseBegan"), "a phase began after the question phase");
   assert.equal(probe.reviewer.phases, 2); // Bring Up to Date's check (issue #216) and the question review: no requirements review without a conversation
 });
 
-test("a gap that Claude Code accepts produces a second interview whose summary is written to the requirements file with no prompt", async () => {
+test("a gap that Claude Code accepts produces a follow-up clarification whose summary is written to the requirements file with no prompt", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "retries: 3"],
     closings: closing("Q1: A"),
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["G-R1-1", "accepted"]]), findings: [{ id: "G-R1-1", kind: "unresolved" }], requirements: null } },                      // requirements review response
-      { output: turn("How many retries?", []) },                          // second interview
+      { output: turn("How many retries?", []) },                          // follow-up clarification
       { output: turn("Complete.", ["G-R1-1"], "Q1: A\nRetries: 3") },
       { output: noQuestions, plan: "v1" },
     ],
@@ -94,26 +94,26 @@ test("a gap that Claude Code accepts produces a second interview whose summary i
   });
   await runRefinement(layer);
   assert.equal(read(probe.dir, "requirements.md"), "Q1: A\nRetries: 3\n");
-  // Issue #138: the only prompts are Q1 and the second interview's question; neither summary is put to the user.
+  // Issue #138: the only prompts are Q1 and the follow-up clarification's question; neither summary is put to the user.
   assert.equal(probe.ui.asked.length, 2, probe.ui.asked.join("\n---\n"));
-  // The question review, the requirements review's first round, and its second round after the second interview.
+  // The question review, the requirements review's first round, and its second round after the follow-up clarification.
   assert.ok(probe.reviewer.prompts.length >= 3, "the requirements review did not run a second round");
-  assert.match(read(probe.dir, "conversation.md"), /## Interview\n[\s\S]*## Second interview\n/);
+  assert.match(read(probe.dir, "conversation.md"), /## First clarification\n[\s\S]*## Follow-up clarification\n/);
   assert.equal((await probe.loadLog("requirements"))[0].id, "G-R1-1");
-  // Issue #31 (G-R1-1): the requirements' change is measured from the response through the second interview.
+  // Issue #31 (G-R1-1): the requirements' change is measured from the response through the follow-up clarification.
   const [gap] = await probe.loadLog("requirements");
   assert.deepEqual(gap !== undefined && "file_change" in gap ? gap.file_change : undefined, { changed: true, added: 1, removed: 0 });
   // The user reads "User Decisions" and "More user decisions" (issue #113); conversation.md keeps its record headings.
-  const headings = probe.ui.notified.flatMap((e) => (e._tag === "InterviewOpened" || e._tag === "InterviewTurn" ? [e.heading] : []));
-  assert.deepEqual([...new Set(headings)], [prompts.clarificationHeading("clarification"), prompts.clarificationHeading("followUp")]);
+  const headings = probe.ui.notified.flatMap((e) => (e._tag === "ClarificationOpened" || e._tag === "ClarificationTurn" ? [e.heading] : []));
+  assert.deepEqual([...new Set(headings)], [prompts.clarificationHeading("first"), prompts.clarificationHeading("followUp")]);
   // Issue #21 (Q6, Q7): each clarification opens with its total, the agreed questions or the accepted gaps, and each
-  // turn carries the count of answered questions against the total so far. Issue #184: the first interview notifies
-  // a turn only for a reply with a message, here the summary's, and counts each answer (InterviewCounted).
-  const counted = probe.ui.notified.flatMap((e) => (e._tag === "InterviewOpened" ? [`opened ${e.stage} ${e.total}`] : e._tag === "InterviewTurn" || e._tag === "InterviewCounted" ? [`${e.answered} of ${e.total}`] : []));
-  assert.deepEqual(counted, ["opened clarification 1", "1 of 1", "1 of 1", "opened followUp 1", "0 of 1", "1 of 1"]);
+  // turn carries the count of answered questions against the total so far. Issue #184: the first clarification notifies
+  // a turn only for a reply with a message, here the summary's, and counts each answer (ClarificationCounted).
+  const counted = probe.ui.notified.flatMap((e) => (e._tag === "ClarificationOpened" ? [`opened ${e.stage} ${e.total}`] : e._tag === "ClarificationTurn" || e._tag === "ClarificationCounted" ? [`${e.answered} of ${e.total}`] : []));
+  assert.deepEqual(counted, ["opened first 1", "1 of 1", "1 of 1", "opened followUp 1", "0 of 1", "1 of 1"]);
 });
 
-// Issue #30 (G-R1-1): the requirements go straight to the pause, without a corrective turn; its Retry is another interview.
+// Issue #30 (G-R1-1): the requirements go straight to the pause, without a corrective turn; its Retry is another clarification.
 test("a gap accepted but the summary unchanged: the question is opened beside the review, which goes on (issue #243)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "no change"],
@@ -132,7 +132,7 @@ test("a gap accepted but the summary unchanged: the question is opened beside th
   assert.equal(probe.planner.prompts.some((p) => /did not change during your response/.test(p)), false, "a corrective turn was taken");
 });
 
-test("/done ends the interview early", async () => {
+test("/done ends the clarification early", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["/done"],
     steps: [{ output: { questions: [q("Q1")] } }],
@@ -140,7 +140,7 @@ test("/done ends the interview early", async () => {
     reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
-  assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes(prompts.interviewDonePrompt)));
+  assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes(prompts.clarificationDonePrompt)));
   assert.match(read(probe.dir, "requirements.md"), /default A/);
 });
 
@@ -154,7 +154,7 @@ test("a follow-up asked during the clarification raises its total", async () => 
     reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
-  const counts = probe.ui.notified.flatMap((e) => (e._tag === "InterviewCounted" ? [`${e.answered} of ${e.total}`] : []));
+  const counts = probe.ui.notified.flatMap((e) => (e._tag === "ClarificationCounted" ? [`${e.answered} of ${e.total}`] : []));
   assert.deepEqual(counts, ["1 of 2", "2 of 2", "2 of 3", "3 of 3"]);
 });
 
@@ -193,7 +193,7 @@ test("a response to the question review whose list breaks a rule gets the valida
   assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => piecesText(x.question)), ["question Q1?", "question Q2?"]);
 });
 
-// S16 (Q12): a question of the plan writer and an interview question outside questions.json are held to the rules, with
+// S16 (Q12): a question of the plan writer and a clarification question outside questions.json are held to the rules, with
 // behaviour 10's validation repair turn and no Codex review; an agreed question and a turn that asks nothing are not.
 // Issue #186: the first plan asks none, so the plan writer's question is the one of its response to the plan review.
 test("a plan writer's question that breaks a rule gets the validation repair turn; a second failure halts", async () => {
@@ -214,7 +214,7 @@ test("a plan writer's question that breaks a rule gets the validation repair tur
 
 // Issue #184: the follow-up arrives in the reply to the opening request, once Q1 is shown, and its repair turn is the
 // next reply; an agreed question is presented from the records and never validated.
-test("an interview question outside questions.json is validated, an agreed one is not", async () => {
+test("a clarification question outside questions.json is validated, an agreed one is not", async () => {
   const followUp = (context: string) => ack("A follow-up.", { follow_ups: [{ id: "F1", context: para(context), history: [], text: plain("Which port?"), explanations: [], options: [] }] });
   let ui: () => ScriptedUi = () => assert.fail("the Ui is not bound yet");
   const { layer, probe } = testLayer(tempRepo(), {
@@ -249,7 +249,7 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
   }
 });
 
-// Issue #184: in the first interview such a question is a follow-up of a reply with a blank id.
+// Issue #184: in the first clarification such a question is a follow-up of a reply with a blank id.
 test("a follow-up with a blank id asking an invalid question gets the repair turn; a second one halts with QuestionInvalid", async () => {
   const bad = ack("m", { follow_ups: [{ id: "", context: [], history: [], text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", senses: [""] }], options: [] }] });
   const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1")] } }], replies: [{ output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: [{ wait: true }] });

@@ -40,10 +40,10 @@ test("the log rules explain file_change with the keys the log entries carry", ()
   }
 });
 
-// S16 and S18: the interview asks for a question's parts in current_question under the rules of every question; an
+// S16 and S18: the clarification asks for a question's parts in current_question under the rules of every question; an
 // agreed question of questions.json is named by its id alone, since the program shows it as it was reviewed.
-test("the interview prompts ask for the current question's parts under the rules, and for an agreed question its id alone", () => {
-  const texts = [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", [{ id: "G-R1-1", kind: "unresolved" }])];
+test("the clarification prompts ask for the current question's parts under the rules, and for an agreed question its id alone", () => {
+  const texts = [prompts.clarificationTurnOpenPrompt(TEST_ROOT), prompts.followUpClarificationPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", [{ id: "G-R1-1", kind: "unresolved" }])];
   for (const text of texts) {
     assert.ok(text.includes(prompts.questionWritingRules()));
     assert.match(text, /For an agreed question of plan-review\/runs\/[^/\s]+\/questions\.json, give only its id/);
@@ -168,11 +168,11 @@ test("the status lines of the phases name Gather Requirements and Implementation
   assert.equal(prompts.IMPLEMENTATION_STOPPED_LINE, "\nClaude Code has stopped implementation with a question.");
 });
 
-// The Q5 follow-up of issue #21: the user reads "clarification" where the records say "interview".
+// The Q5 follow-up of issue #21: the user reads "You Decide" where the records say "clarification".
 test("the clarification's headings and help", () => {
-  assert.equal(prompts.clarificationHeading("clarification"), prompts.USER_DECISIONS);
+  assert.equal(prompts.clarificationHeading("first"), prompts.USER_DECISIONS);
   assert.equal(prompts.clarificationHeading("followUp"), "More for you to decide");
-  assert.equal(prompts.interviewHelp(prompts.USER_DECISIONS), `${prompts.USER_DECISIONS}. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.`);
+  assert.equal(prompts.clarificationHelp(prompts.USER_DECISIONS), `${prompts.USER_DECISIONS}. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.`);
   assert.equal(prompts.END_CLARIFICATION, "Finish clarification and start planning");
 });
 
@@ -227,12 +227,12 @@ test("a further question's origin line does not borrow \"more\"", () => {
 });
 
 // Issue #21 (Q6 follow-up): Claude reports every question asked, follow-ups with ids of their own, and the answered ones.
-test("the interview rules define asked_ids with follow-up ids, and answered_ids over both", () => {
-  for (const text of [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", [{ id: "G-R1-1", kind: "unresolved" }])]) {
+test("the clarification rules define asked_ids with follow-up ids, and answered_ids over both", () => {
+  for (const text of [prompts.clarificationTurnOpenPrompt(TEST_ROOT), prompts.followUpClarificationPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", [{ id: "G-R1-1", kind: "unresolved" }])]) {
     assert.match(text, /asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id F1, F2, … that you assign to each follow-up question/);
     assert.match(text, /answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far/);
   }
-  assert.match(prompts.interviewGapsPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]), /use the issue ids in asked_ids and answered_ids/);
+  assert.match(prompts.followUpClarificationPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]), /use the issue ids in asked_ids and answered_ids/);
 });
 
 // W1-R1-1: the error texts the user reads at a halt are in src/prompts.ts too.
@@ -306,13 +306,13 @@ test("the offer's label reads Help me decide, and the offer line carries that la
   assert.ok(prompts.OFFER_LINE.includes(`/decide = ${prompts.HELP_ME_DECIDE}:`), prompts.OFFER_LINE);
 });
 
-// Issue #35 (Q5, Q6): the ids the question list and interview prompts assign. S6: the user reads the run's number, not the id.
+// Issue #35 (Q5, Q6): the ids the question list and clarification prompts assign. S6: the user reads the run's number, not the id.
 test("the ids the prompts assign to agreed and follow-up questions", () => {
   const agreed = `${prompts.AGREED_QUESTION_PREFIX}1, ${prompts.AGREED_QUESTION_PREFIX}2, and so on`;
   assert.ok(prompts.questionListPrompt("t").includes(`id: ${agreed}`), "the question list prompt assigns other ids");
-  const rules = [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "f", [{ id: "G-R1-1", kind: "unresolved" }])];
+  const rules = [prompts.clarificationTurnOpenPrompt(TEST_ROOT), prompts.followUpClarificationPrompt(TEST_ROOT, "f", [{ id: "G-R1-1", kind: "unresolved" }])];
   for (const text of rules) {
-    assert.ok(text.includes(`${prompts.FOLLOW_UP_PREFIX}1, ${prompts.FOLLOW_UP_PREFIX}2, …`), "the interview rules assign other follow-up ids");
+    assert.ok(text.includes(`${prompts.FOLLOW_UP_PREFIX}1, ${prompts.FOLLOW_UP_PREFIX}2, …`), "the clarification rules assign other follow-up ids");
     assert.match(text, /current_question: the question this message asks the user to answer now/);
   }
 });
@@ -816,8 +816,8 @@ test("no prompt that asks for a question states an inclusion test of its own", (
     revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stop: { _tag: "Answered" }, workReview: "converged" }, NO_STEP_CHECKS),
     earlierPlanPrompt: prompts.earlierPlanPrompt(TEST_ROOT, "t", true, EARLIER_ROOT, NO_STEP_CHECKS),
     planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
-    interviewOpenPrompt: prompts.interviewOpenPrompt(TEST_ROOT),
-    interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]),
+    clarificationTurnOpenPrompt: prompts.clarificationTurnOpenPrompt(TEST_ROOT),
+    followUpClarificationPrompt: prompts.followUpClarificationPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]),
     termsPrompt: prompts.termsPrompt(TEST_ROOT, "t"),
     executePrompt: prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
   };
@@ -1161,4 +1161,24 @@ test("the state texts of a run", () => {
   assert.equal(prompts.runEndedText(HALTED), "a run halted");
   assert.equal(prompts.runEndedText(SENT_BACK_PARKED), "a run sent back");
   assert.ok(prompts.runLimitPausedText("until 23:11 UTC").endsWith("until 23:11 UTC"));
+});
+
+// Issue #24: the prompts call the asking before planning clarification; none names a clarification.
+test("issue #24: no prompt of Gather Requirements or of planning names the old word for it", () => {
+  const texts: Readonly<Record<string, string>> = {
+    questionListPrompt: prompts.questionListPrompt("t"),
+    clarificationTurnOpenPrompt: prompts.clarificationTurnOpenPrompt(TEST_ROOT),
+    followUpClarificationPrompt: prompts.followUpClarificationPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]),
+    clarificationDonePrompt: prompts.clarificationDonePrompt,
+    firstClarificationOpenPrompt: prompts.firstClarificationOpenPrompt(TEST_ROOT),
+    requirementsReviewPrompt: prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"),
+    requirementsRespondPrompt: prompts.requirementsRespondPrompt(TEST_ROOT, 1),
+    requirementsSentence: prompts.requirementsSentence(TEST_ROOT),
+    transportWhat: prompts.transportWhat("clarification"),
+    unchangedRetry: prompts.unchangedOptionDescriptions(true, "review").retry,
+    findingLine: prompts.requirementsFindingLine({ id: "C", kind: "unresolved" }),
+  };
+  for (const [name, text] of Object.entries(texts)) assert.doesNotMatch(text, /interview/i, name);
+  assert.match(texts.followUpClarificationPrompt!, /Conduct a follow-up clarification with the user/);
+  assert.match(texts.firstClarificationOpenPrompt!, /^Take part in clarifying the requirements with the user\./);
 });

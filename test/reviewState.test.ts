@@ -635,11 +635,11 @@ test("the question: Retry takes another corrective turn, Proceed continues with 
   assert.equal(halt(answering(t, { key: q!.key, text: "stop" }))._tag, "AcceptedWithoutChange");
 });
 
-test("the requirements (pause) open the question at once, whose Retry is another interview; the work review (null) never gets there", () => {
+test("the requirements (pause) open the question at once, whose Retry is another clarification; the work review (null) never gets there", () => {
   const requirements = advance(initialState({ ...measured, onUnchanged: "pause", hasAmend: true }, { maxRounds: 5, maxIdleRounds: 2, countMinor: true }), { kind: "Begin", hash: "h0", text: "a\n", log: [] });
   const t = run(requirements, { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "accepted"]]), { kind: "Amended" }, unchanged);
   const [q] = besides(t, "unchanged");
-  assert.deepEqual(q?.question, { kind: "unchanged", round: 1, accepted: ["A"], retry: "interview" });
+  assert.deepEqual(q?.question, { kind: "unchanged", round: 1, accepted: ["A"], retry: "clarification" });
   const retry = answering(t, { key: q!.key, text: "retry" });
   assert.deepEqual(last(retry), { kind: "Amend", round: 1 });
   const again = run(retry, { kind: "Amended" }, amended);

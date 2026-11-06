@@ -1,9 +1,9 @@
-// The question phase: question list, its review, the interview (src/conversation.ts), and the review of its result.
+// Gather Requirements: the question list, its review, the terms, the clarification (src/conversation.ts), and the review of its result.
 
 import { saveOptionFigures } from "./offer.ts";
 import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
-import { clarification, type TermsOffer } from "./conversation.ts";
+import { firstClarification, type TermsOffer } from "./conversation.ts";
 import * as prompts from "./prompts.ts";
 import { type LoopEnd, planningCall, reviewLoop, showDocument } from "./review.ts";
 import { renderQuestions, renderTerms } from "./render.ts";
@@ -35,7 +35,7 @@ const explainTerms = (task: string, agreed: QuestionsFile["questions"], reviewed
   });
 
 /** Issue #142: the terms before the first question, as the run's choice has them. */
-const termsBeforeInterview = (task: string, agreed: QuestionsFile["questions"], terms: TermsMode): Effect.Effect<void, RunError, Services> => {
+const termsBeforeClarification = (task: string, agreed: QuestionsFile["questions"], terms: TermsMode): Effect.Effect<void, RunError, Services> => {
   switch (terms) {
     case "checked":
       return explainTerms(task, agreed, true);
@@ -76,7 +76,7 @@ export const prepareQuestionList = (task: string, terms: TermsMode): Effect.Effe
     // Issue #205: the agreed list is known, before any terms, so the rail shows "You Decide" only where it is not empty.
     yield* ui.notify({ _tag: "QuestionsAgreed", count: agreed.length });
     // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
-    if (agreed.length > 0) yield* termsBeforeInterview(task, agreed, terms);
+    if (agreed.length > 0) yield* termsBeforeClarification(task, agreed, terms);
     return agreed;
   });
 
@@ -99,7 +99,7 @@ export const askAgreed = (task: string, agreed: QuestionsFile["questions"], term
       return null;
     }
     yield* ui.say(`\nThe agreed list contains ${agreed.length} question(s).`);
-    yield* clarification(agreed.map((q) => q.id), termsOffer);
+    yield* firstClarification(agreed.map((q) => q.id), termsOffer);
 
     const reviewed = yield* reviewLoop(requirementsSubject());
     yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: reviewed.result });

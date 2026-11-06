@@ -91,8 +91,8 @@ test("an ambiguous recommendation is described with the options it matches", () 
 
 // Issue #37, change 3 (decisions Q4 and G-R1-1): labels compared tolerantly, rewritten to the exact label with a note.
 const RUN_OPTIONS = [
-  { label: "At the existing check, in place of the halt: after the cycle's pauses, decisions, follow-up interview and log update.", description: "" },
-  { label: "Immediately after Claude Code's response, before the other pauses and the follow-up interview.", description: "" },
+  { label: "At the existing check, in place of the halt: after the cycle's pauses, decisions, follow-up clarification and log update.", description: "" },
+  { label: "Immediately after Claude Code's response, before the other pauses and the follow-up clarification.", description: "" },
 ];
 const withLabels = (labels: readonly string[], recommended: string): DecisionAnalysis => ({
   decision: "d",

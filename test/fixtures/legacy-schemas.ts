@@ -114,7 +114,7 @@ export const questionListResponseSchema = {
   required: [...plannerResponseSchema.required, "questions"],
 };
 
-export const interviewTurnSchema = {
+export const clarificationTurnSchema = {
   type: "object",
   properties: {
     message_to_user: { type: "string" },

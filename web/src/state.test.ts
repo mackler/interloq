@@ -73,7 +73,7 @@ describe("the dashboard (issue #22)", () => {
   test("a fresh run and a run after Started hold the empty dashboard", () => {
     expect(emptyRun(3).dashboard).toEqual(emptyDashboard);
     expect(runOf(fold(live([started])), "implementation")?.dashboard).toEqual(emptyDashboard);
-    expect(emptyDashboard).toEqual({ models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [], document: null, preparing: null, draft: null });
+    expect(emptyDashboard).toEqual({ models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, clarificationHelp: null, answers: [], document: null, preparing: null, draft: null });
     expect(statusText(emptyDashboard.status)).toBe("");
     expect(lastAnswer(emptyDashboard)).toBe(null);
   });
@@ -92,7 +92,7 @@ describe("the status line (issue #22)", () => {
 
   test("a blank Said and an absorbed one change nothing", () => {
     for (const s of both([started, said("first"), said("  \n")])) expect(statusOf(s)).toBe("first");
-    const turn = notified({ _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 });
+    const turn = notified({ _tag: "ClarificationTurn", heading: "Clarification", message: "Hi", summary: null, answered: 0, total: 1 });
     for (const s of both([started, said("first"), turn, said("\nHi\n")])) expect(statusOf(s)).toBe("first");
   });
 
@@ -166,19 +166,19 @@ describe("ordering and the panels", () => {
     const decision = fold(live([started, asked(1, prompts.decisionPrompt)]));
     expect(runOf(decision, "implementation")?.pending?.choices.map((c) => c.label)).toEqual([prompts.CONTINUE_WITHOUT_DECIDING, prompts.END_RUN_LABEL]);
     expect(runOf(decision, "implementation")?.pending?.options).toEqual([]);
-    const turn: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Which database?", summary: null, answered: 0, total: 1 };
-    const interview = fold(live([started, notified(turn), said("\nWhich database?\n"), notified(presentedEvent("Which database?", [{ label: "PostgreSQL", description: "" }, { label: "SQLite", description: "" }], { kind: "clarification", id: "Q1" })), asked(1, prompts.interviewMessagePrompt)]));
-    expect(runOf(interview, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
-    expect(runOf(interview, "implementation")?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
+    const turn: UiEvent = { _tag: "ClarificationTurn", heading: "Clarification", message: "Which database?", summary: null, answered: 0, total: 1 };
+    const clarification = fold(live([started, notified(turn), said("\nWhich database?\n"), notified(presentedEvent("Which database?", [{ label: "PostgreSQL", description: "" }, { label: "SQLite", description: "" }], { kind: "clarification", id: "Q1" })), asked(1, prompts.clarificationMessagePrompt)]));
+    expect(runOf(clarification, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
+    expect(runOf(clarification, "implementation")?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
     const relayed = fold(live([started, notified(presentedEvent("A or B?", [{ label: "A", description: "a" }, { label: "B", description: "b" }])), asked(1, prompts.optionOrTextPrompt)]));
     expect(runOf(relayed, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["A — a=1", "B — b=2"]);
     expect(runOf(relayed, "implementation")?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_RUN_LABEL}=q`]);
   });
 
-  test("an answer to an interview shows the chosen option, or the fixed choice's label (issue #12, Q2)", () => {
-    const turn: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Which database?", summary: null, answered: 0, total: 1 };
+  test("an answer to a clarification shows the chosen option, or the fixed choice's label (issue #12, Q2)", () => {
+    const turn: UiEvent = { _tag: "ClarificationTurn", heading: "Clarification", message: "Which database?", summary: null, answered: 0, total: 1 };
     const presented = presentedEvent("Which database?", [{ label: "PostgreSQL", description: "" }, { label: "SQLite", description: "" }], { kind: "clarification", id: "Q1" });
-    const answered = (text: string) => fold(live([started, notified(turn), notified(presented), asked(1, prompts.interviewMessagePrompt), { _tag: "Answered", prompt: 1, text }]));
+    const answered = (text: string) => fold(live([started, notified(turn), notified(presented), asked(1, prompts.clarificationMessagePrompt), { _tag: "Answered", prompt: 1, text }]));
     expect(lastAnswerOf(answered("2"))?.answer).toBe("SQLite");
     expect(lastAnswerOf(answered("/done"))?.answer).toBe(prompts.END_CLARIFICATION);
   });
@@ -189,14 +189,14 @@ describe("ordering and the panels", () => {
     expect(lastAnswerOf(s)?.answer).toBe("Allow");
   });
 
-  test("an interview turn and a proposed summary are Claude's latest message in turn, and the lines said for them are absorbed", () => {
-    const turn: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Hello", summary: null, answered: 0, total: 1 };
-    const summary: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Done.", summary: "# R", answered: 0, total: 1 };
+  test("a clarification turn and a proposed summary are Claude's latest message in turn, and the lines said for them are absorbed", () => {
+    const turn: UiEvent = { _tag: "ClarificationTurn", heading: "Clarification", message: "Hello", summary: null, answered: 0, total: 1 };
+    const summary: UiEvent = { _tag: "ClarificationTurn", heading: "Clarification", message: "Done.", summary: "# R", answered: 0, total: 1 };
     const first: RunEvent[] = [started, notified(turn), said("\nHello\n")];
-    for (const s of [fold(live(first)), replayed(first)]) expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Hello", running: [] });
+    for (const s of [fold(live(first)), replayed(first)]) expect(claudeOf(s)).toEqual({ heading: "Clarification", body: "Hello", running: [] });
     const events: RunEvent[] = [...first, notified(summary), said("\nDone.\n"), said("Summary proposed by Claude Code:\n\n# R\n"), said("\nHello\n")];
     for (const s of [fold(live(events)), replayed(events)]) {
-      expect(claudeOf(s)).toEqual({ heading: "Interview", body: `Done.\n\n**${prompts.SUMMARY_PROPOSED_HEADING}**\n\n# R`, running: [] });
+      expect(claudeOf(s)).toEqual({ heading: "Clarification", body: `Done.\n\n**${prompts.SUMMARY_PROPOSED_HEADING}**\n\n# R`, running: [] });
       // The line said after the absorbed ones is Interloq's, the status.
       expect(statusOf(s)).toBe("Hello");
     }
@@ -300,17 +300,17 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
     for (const s of both(notShown)) expect(lastAnswerOf(s)?.asked).toEqual({ _tag: "NotShown" });
   });
 
-  test("the interview's help is shown from its opening until the review after it, a decision's rounds leaving it", () => {
-    const opened = notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 });
-    const help = prompts.interviewHelp("Interview");
-    for (const s of both([started, opened])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(help);
+  test("the clarification's help is shown from its opening until the review after it, a decision's rounds leaving it", () => {
+    const opened = notified({ _tag: "ClarificationOpened", heading: "Clarification", stage: "first", total: 1 });
+    const help = prompts.clarificationHelp("Clarification");
+    for (const s of both([started, opened])) expect(runOf(s, "implementation")?.dashboard.clarificationHelp).toBe(help);
     const decisionRound = notified({ _tag: "RoundBegan", subject: { decision: 1 }, round: 1, limit: 5 });
-    for (const s of both([started, opened, decisionRound])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(help);
+    for (const s of both([started, opened, decisionRound])) expect(runOf(s, "implementation")?.dashboard.clarificationHelp).toBe(help);
     const reviewRound = notified({ _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 });
-    for (const s of both([started, opened, reviewRound])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
+    for (const s of both([started, opened, reviewRound])) expect(runOf(s, "implementation")?.dashboard.clarificationHelp).toBe(null);
     const phaseEnded = notified({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "done" });
-    for (const s of both([started, opened, phaseEnded])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
-    for (const s of both([started, opened, endedEvent(INTERRUPTED)])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
+    for (const s of both([started, opened, phaseEnded])) expect(runOf(s, "implementation")?.dashboard.clarificationHelp).toBe(null);
+    for (const s of both([started, opened, endedEvent(INTERRUPTED)])) expect(runOf(s, "implementation")?.dashboard.clarificationHelp).toBe(null);
   });
 
   test("ModelNamed sets the agent's model line, and a later model of that agent replaces it", () => {
@@ -338,10 +338,10 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
       for (const st of steps) {
         switch (st._tag) {
           case "answer": events.push({ _tag: "Answered", prompt, text: st.text }); break;
-          case "ask": prompt += 1; events.push(asked(prompt, prompts.interviewMessagePrompt)); break;
+          case "ask": prompt += 1; events.push(asked(prompt, prompts.clarificationMessagePrompt)); break;
           case "claude": events.push(claudeSaid(st.text)); break;
-          case "turn": events.push(notified({ _tag: "InterviewTurn", heading: "I", message: st.text, summary: null, answered: 0, total: 1 })); break;
-          case "open": events.push(notified({ _tag: "InterviewOpened", heading: "I", stage: "clarification", total: 1 })); break;
+          case "turn": events.push(notified({ _tag: "ClarificationTurn", heading: "I", message: st.text, summary: null, answered: 0, total: 1 })); break;
+          case "open": events.push(notified({ _tag: "ClarificationOpened", heading: "I", stage: "first", total: 1 })); break;
           case "review": events.push(notified({ _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 })); break;
           case "model": events.push(notified({ _tag: "ModelNamed", model: { agent: "claude", name: st.name } })); break;
         }
@@ -359,7 +359,7 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
 // Plan step 4.7 (the review against the heuristics): the page states a prompt without the hint's key
 // conventions, which the buttons replace [match between the system and the real world].
 test("every prompt is shown in the page's words, without the hint's key conventions", () => {
-  const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt];
+  const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.clarificationMessagePrompt];
   for (const text of texts) {
     const body = runOf(fold(live([started, asked(1, text)])), "implementation")?.pending?.hint ?? "";
     expect(body, text).not.toMatch(/>\s*$|\bq = quit|Enter =|= stop|p = /);
@@ -379,7 +379,7 @@ describe("activity and timeline", () => {
 
   test("the activity line names a call's purpose in the user's words: clarification and implementation (issues #14, #21)", () => {
     const of = (purpose: string) => statusOf(fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId: "claude-1" })])));
-    expect(of("interview")).toBe("Claude — clarification");
+    expect(of("clarification")).toBe("Claude — clarification");
     expect(of("execution")).toBe("Claude — implementation");
     expect(of("planning")).toBe("Claude — planning");
     expect(of("review")).toBe("Claude — review");
@@ -392,7 +392,7 @@ describe("activity and timeline", () => {
       notified({ _tag: "PhaseBegan", phase: q }),
       notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
       notified({ _tag: "LoopFinished", subject: "questions", result: "converged" }),
-      notified({ _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 }),
+      notified({ _tag: "ClarificationTurn", heading: "Clarification", message: "Hi", summary: null, answered: 0, total: 1 }),
       notified({ _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 }),
     ];
     const during = fold(live(events));
@@ -485,12 +485,12 @@ describe("the cycles of a review loop in the timeline", () => {
 // Follow-up clarification, each done, active or stopped, with its cycles and the clarification's count.
 describe("the steps of Gather Requirements", () => {
   const q = { kind: "questions" as const };
-  const turn = (answered: number, total: number, summary: string | null = null) => notified({ _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Hi", summary, answered, total });
-  const opened = (stage: "clarification" | "followUp", total: number) => notified({ _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage, total });
+  const turn = (answered: number, total: number, summary: string | null = null) => notified({ _tag: "ClarificationTurn", heading: prompts.clarificationHeading("first"), message: "Hi", summary, answered, total });
+  const opened = (stage: "first" | "followUp", total: number) => notified({ _tag: "ClarificationOpened", heading: prompts.clarificationHeading("first"), stage, total });
   const round = (subject: "questions" | "requirements", n: number) => notified({ _tag: "RoundBegan", subject, round: n, limit: 5 });
   const finished = (subject: "questions" | "requirements") => notified({ _tag: "LoopFinished", subject, result: "converged" });
   const steps = (s: ViewState) => runOf(s, "implementation")?.timeline[0].steps.map((st) => [st.label, st.state, st.count === null ? null : `${st.count.answered}/${st.count.total}`, st.groups.map((g) => `${g.heading}:${g.rounds.map((c) => c.round).join(",")}`).join(";")]);
-  const through = [started, notified({ _tag: "PhaseBegan", phase: q }), round("questions", 1), finished("questions"), opened("clarification", 7), turn(0, 7), turn(3, 7)];
+  const through = [started, notified({ _tag: "PhaseBegan", phase: q }), round("questions", 1), finished("questions"), opened("first", 7), turn(0, 7), turn(3, 7)];
 
   test("the question phase begins with its first step, which holds the question review's cycles", () => {
     const s = fold(live(through.slice(0, 3)));
@@ -506,7 +506,7 @@ describe("the steps of Gather Requirements", () => {
       [prompts.stepLabel("formulate"), "done", null, "Question review:1"],
       [prompts.stepLabel("terms"), "active", null, "Terms review:1"],
     ]);
-    const clarified = fold(live([...terms, notified({ _tag: "LoopFinished", subject: "terms", result: "converged" }), opened("clarification", 2), turn(1, 2)]));
+    const clarified = fold(live([...terms, notified({ _tag: "LoopFinished", subject: "terms", result: "converged" }), opened("first", 2), turn(1, 2)]));
     expect(steps(clarified)?.map((st) => [st[0], st[1], st[2]])).toEqual([
       [prompts.stepLabel("formulate"), "done", null],
       [prompts.stepLabel("terms"), "done", null],
@@ -530,22 +530,22 @@ describe("the steps of Gather Requirements", () => {
 
   // Issue #113, the seam: the heading above the conversation and the rail's step name one activity, from one source.
   test("the conversation's heading and the rail's step name one activity, User Decisions", () => {
-    const heading = prompts.clarificationHeading("clarification");
-    const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: q }), notified({ _tag: "InterviewOpened", heading, stage: "clarification", total: 1 })]));
+    const heading = prompts.clarificationHeading("first");
+    const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: q }), notified({ _tag: "ClarificationOpened", heading, stage: "first", total: 1 })]));
     const step = runOf(s, "implementation")?.timeline[0].steps.find((st) => st.kind === "clarification");
     expect([heading, step?.label]).toEqual([prompts.USER_DECISIONS, prompts.USER_DECISIONS]);
   });
 
-  test("InterviewOpened ends the first step and opens Clarification with its total; each turn updates the count", () => {
+  test("ClarificationOpened ends the first step and opens Clarification with its total; each turn updates the count", () => {
     const s = fold(live(through));
     expect(steps(s)).toEqual([[prompts.stepLabel("formulate"), "done", null, "Question review:1"], [prompts.stepLabel("clarification"), "active", "3/7", ""]]);
     expect(runOf(replayed(through), "implementation")?.timeline).toEqual(runOf(s, "implementation")?.timeline);
   });
 
   // Issue #184: Interloq counts the answers as they are given, between Claude Code's replies.
-  test("InterviewCounted sets the clarification's count, adds no message and leaves the pending prompt", () => {
-    const counted = (answered: number, total: number) => notified({ _tag: "InterviewCounted", answered, total });
-    const base = [...through, asked(1, prompts.interviewMessagePrompt)];
+  test("ClarificationCounted sets the clarification's count, adds no message and leaves the pending prompt", () => {
+    const counted = (answered: number, total: number) => notified({ _tag: "ClarificationCounted", answered, total });
+    const base = [...through, asked(1, prompts.clarificationMessagePrompt)];
     const before = fold(live(base));
     const s = fold(live([...base, counted(4, 7)]));
     expect(steps(s)?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "4/7", ""]);
@@ -555,8 +555,8 @@ describe("the steps of Gather Requirements", () => {
     expect(steps(fold(live(followUp)))?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "8/9", "Requirements review:1"]);
   });
 
-  test("a pending prompt survives a call that starts and ends after it (the interview's request beside a question)", () => {
-    const s = fold(live([...through, asked(1, prompts.interviewMessagePrompt), notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId: "claude-1" }), notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" })]));
+  test("a pending prompt survives a call that starts and ends after it (the clarification's request beside a question)", () => {
+    const s = fold(live([...through, asked(1, prompts.clarificationMessagePrompt), notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId: "claude-1" }), notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" })]));
     expect(runOf(s, "implementation")?.pending?.asked.prompt).toBe(1);
   });
 
@@ -615,14 +615,14 @@ describe("the steps of Gather Requirements", () => {
     }
   });
 
-  test("QuestionsAgreed then TermsBegan: the terms stand between the search and You Decide, which the interview opens", () => {
+  test("QuestionsAgreed then TermsBegan: the terms stand between the search and You Decide, which the clarification opens", () => {
     const events = [started, notified({ _tag: "PhaseBegan", phase: q }), agreed(1), notified({ _tag: "TermsBegan" })];
     expect(kindsAndStates(fold(live(events)))).toEqual([
       ["formulate", prompts.stepLabel("formulate"), "done"],
       ["terms", prompts.stepLabel("terms"), "active"],
       ["clarification", prompts.stepLabel("clarification"), "ahead"],
     ]);
-    const s = fold(live([...events, opened("clarification", 1)]));
+    const s = fold(live([...events, opened("first", 1)]));
     expect(steps(s)?.map((st) => [st[0], st[1], st[2]])).toEqual([
       [prompts.stepLabel("formulate"), "done", null],
       [prompts.stepLabel("terms"), "done", null],
@@ -630,8 +630,8 @@ describe("the steps of Gather Requirements", () => {
     ]);
   });
 
-  test("a prepared run: the search done and You Decide active once the interview opens", () => {
-    const events = [started, notified({ _tag: "PhaseBegan", phase: q }), agreed(1), opened("clarification", 1)];
+  test("a prepared run: the search done and You Decide active once the clarification opens", () => {
+    const events = [started, notified({ _tag: "PhaseBegan", phase: q }), agreed(1), opened("first", 1)];
     expect(kindsAndStates(fold(live(events)))).toEqual([
       ["formulate", prompts.stepLabel("formulate"), "done"],
       ["clarification", prompts.stepLabel("clarification"), "active"],
@@ -651,7 +651,7 @@ describe("the steps of Gather Requirements", () => {
           notified({ _tag: "PhasesForeseen", phases: [q] }),
           notified({ _tag: "PhaseBegan", phase: q }),
           agreed(count),
-          ...(count > 0 ? [...(withTerms ? [notified({ _tag: "TermsBegan" })] : []), opened("clarification", count)] : [notified({ _tag: "PhaseEnded", phase: q, result: "no conversation" })]),
+          ...(count > 0 ? [...(withTerms ? [notified({ _tag: "TermsBegan" })] : []), opened("first", count)] : [notified({ _tag: "PhaseEnded", phase: q, result: "no conversation" })]),
         ];
         const all = [fold(live(events)), replayed(events)].map((s) => runOf(s, "implementation")?.timeline[0].steps ?? []);
         expect(all[0]).toEqual(all[1]);
@@ -835,18 +835,18 @@ describe("runs, replay and gaps", () => {
   const eventArb: fc.Arbitrary<RunEvent> = fc.oneof(
     fc.string({ maxLength: 8 }).map(said),
     fc.constant(notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [] }, counted: 0 })),
-    tagged("Asked").chain(() => fc.constantFrom(prompts.permissionPrompt, prompts.interviewMessagePrompt, prompts.decisionPrompt).map((t) => asked(1, t))),
+    tagged("Asked").chain(() => fc.constantFrom(prompts.permissionPrompt, prompts.clarificationMessagePrompt, prompts.decisionPrompt).map((t) => asked(1, t))),
     fc.constantFrom("", "y", "2").map((text): RunEvent => ({ _tag: "Answered", prompt: 1, text })),
     fc.constantFrom<UiEvent>(
       { _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } },
       { _tag: "PhaseBegan", phase: { kind: "questions" } },
-      { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 2 },
+      { _tag: "ClarificationOpened", heading: prompts.clarificationHeading("first"), stage: "first", total: 2 },
       { _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 },
       { _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }, counted: 1 },
       { _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [{ id: "A", action: "accepted", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] } },
       { _tag: "LoopFinished", subject: { plan: 1 }, result: "converged" },
       { _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" },
-      { _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 },
+      { _tag: "ClarificationTurn", heading: "Clarification", message: "Hi", summary: null, answered: 0, total: 1 },
       { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" },
       { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "a", callId: "claude-1" },
       // Issue #6: the phases ahead, the plan, and nested calls.
@@ -1009,12 +1009,12 @@ describe("answered prompts", () => {
   });
 });
 
-// Finding 8 of docs/gui-review.md: the page renders the interview's help without a """ convention.
-describe("the interview's opening help", () => {
+// Finding 8 of docs/gui-review.md: the page renders the clarification's help without a """ convention.
+describe("the clarification's opening help", () => {
   test("the dashboard's help names /done, /quit and Shift+Enter, and has no triple quotes", () => {
-    const s = fold(live([started, notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 })]));
-    const body = runOf(s, "implementation")?.dashboard.interviewHelp ?? "";
-    expect(body).toBe(prompts.interviewHelp("Interview"));
+    const s = fold(live([started, notified({ _tag: "ClarificationOpened", heading: "Clarification", stage: "first", total: 1 })]));
+    const body = runOf(s, "implementation")?.dashboard.clarificationHelp ?? "";
+    expect(body).toBe(prompts.clarificationHelp("Clarification"));
     expect(body).toMatch(/Shift\+Enter/);
     expect(body).toMatch(/\/done/);
     expect(body).not.toMatch(/"""/);
@@ -1046,9 +1046,9 @@ describe("a frame the page could not read", () => {
 });
 
 // The scenario whose absence let defect A of docs/page-question-phase-defects.md through: a replay, as the server sends
-// it, of a question phase with a review, Claude Code's response with the amended list, and the interview's first turn.
+// it, of a question phase with a review, Claude Code's response with the amended list, and the clarification's first turn.
 describe("a replay of a question phase", () => {
-  test("decoded as the socket decodes it, it yields the right panel, the dashboard and the pending interview prompt", () => {
+  test("decoded as the socket decodes it, it yields the right panel, the dashboard and the pending clarification prompt", () => {
     const events: RunEvent[] = [
       started,
       // Issue #22: the model named as the run names it, encoded with the protocol's schema below.
@@ -1070,11 +1070,11 @@ describe("a replay of a question phase", () => {
         },
       }),
       notified({ _tag: "LoopFinished", subject: "questions", result: "converged" }),
-      notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 }),
-      notified({ _tag: "InterviewTurn", heading: "Interview", message: "Which database should the service use?\n1. PostgreSQL\n2. SQLite", summary: null, answered: 0, total: 1 }),
+      notified({ _tag: "ClarificationOpened", heading: "Clarification", stage: "first", total: 1 }),
+      notified({ _tag: "ClarificationTurn", heading: "Clarification", message: "Which database should the service use?\n1. PostgreSQL\n2. SQLite", summary: null, answered: 0, total: 1 }),
       said("\nWhich database should the service use?\n1. PostgreSQL\n2. SQLite\n"),
       notified(presentedEvent("Which database should the service use?", [{ label: "PostgreSQL", description: "" }, { label: "SQLite", description: "" }], { kind: "clarification", id: "Q1" })),
-      asked(1, prompts.interviewMessagePrompt),
+      asked(1, prompts.clarificationMessagePrompt),
     ];
     const frames = [JSON.stringify(hello()), JSON.stringify({ type: "replay", ui: [], runs: [{ id: 1, events: stamp(events) }] })];
     const messages = frames.map((f) => {
@@ -1087,10 +1087,10 @@ describe("a replay of a question phase", () => {
     expect(right.length).toBe(2);
     expect(right[0]).toMatch(/^codex:.*The list does not ask for the database\./s);
     expect(right[1]).toMatch(/^claude:.*\[Q-R1-1\]\*\* accepted: Added the database question\./s);
-    expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(prompts.interviewHelp("Interview"));
-    expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Which database should the service use?\n1. PostgreSQL\n2. SQLite", running: [] });
+    expect(runOf(s, "implementation")?.dashboard.clarificationHelp).toBe(prompts.clarificationHelp("Clarification"));
+    expect(claudeOf(s)).toEqual({ heading: "Clarification", body: "Which database should the service use?\n1. PostgreSQL\n2. SQLite", running: [] });
     expect(runOf(s, "implementation")?.dashboard.models).toEqual({ claude: null, codex: prompts.modelLine({ agent: "codex", name: null }) });
-    expect(runOf(s, "implementation")?.pending?.asked.kind).toBe("interviewMessage");
+    expect(runOf(s, "implementation")?.pending?.asked.kind).toBe("clarificationMessage");
     expect(runOf(s, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
     expect(runOf(s, "implementation")?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
   });
@@ -1530,9 +1530,9 @@ describe("the whole run in the timeline", () => {
     expect(runOf(formulate, "implementation")?.timeline[0].steps[0].groups[0].rounds.length).toBe(1);
     expect(runOf(formulate, "implementation")?.timeline.slice(1).every((e) => e.groups.length === 0)).toBe(true);
     expect(progressOf(runOf(formulate, "implementation")!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("formulate")), "cycle 1"));
-    const interview = fold(live([...events, notified({ _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 3 }), notified({ _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Q?", summary: null, answered: 1, total: 3 })]));
-    expect(runOf(interview, "implementation")?.timeline[0].steps.map((st) => [st.kind, st.state, st.count])).toEqual([["formulate", "done", null], ["clarification", "active", { answered: 1, total: 3 }]]);
-    expect(progressOf(runOf(interview, "implementation")!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), prompts.clarificationProgress(1, 3)));
+    const clarification = fold(live([...events, notified({ _tag: "ClarificationOpened", heading: prompts.clarificationHeading("first"), stage: "first", total: 3 }), notified({ _tag: "ClarificationTurn", heading: prompts.clarificationHeading("first"), message: "Q?", summary: null, answered: 1, total: 3 })]));
+    expect(runOf(clarification, "implementation")?.timeline[0].steps.map((st) => [st.kind, st.state, st.count])).toEqual([["formulate", "done", null], ["clarification", "active", { answered: 1, total: 3 }]]);
+    expect(progressOf(runOf(clarification, "implementation")!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), prompts.clarificationProgress(1, 3)));
     const planning = fold(live([...events, notified({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "done" }), began({ kind: "planning", n: 1 }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 })]));
     expect(runOf(planning, "implementation")?.timeline[1].groups[0].rounds.length).toBe(1);
     expect(runOf(planning, "implementation")?.timeline[3].groups).toEqual([]);
@@ -1576,29 +1576,29 @@ describe("transport retries on the activity line", () => {
 
   // W3-R2-1 of issue #184: calls overlap, so a tool event or a reconnection is labeled by the call whose id it carries,
   // not by the call started last.
-  const interview: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId: "claude-1" };
+  const clarification: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId: "claude-1" };
   const review: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
   const labelOf = (events: readonly RunEvent[]) => statusOf(fold(live(events)));
 
   test("a tool event of an earlier call that still runs is labeled by that call", () => {
-    const interviewLabel = labelOf([started, notified(interview)]);
+    const clarificationLabel = labelOf([started, notified(clarification)]);
     const read: UiEvent = { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "src/example.ts", callId: "claude-1" };
-    for (const s of both([started, notified(interview), notified(review), notified(read)])) {
-      expect(statusOf(s)).toBe(`${interviewLabel} — Read: src/example.ts`);
+    for (const s of both([started, notified(clarification), notified(review), notified(read)])) {
+      expect(statusOf(s)).toBe(`${clarificationLabel} — Read: src/example.ts`);
     }
   });
 
   test("a tool event of the latest call is labeled by it, and one of no running call by its agent alone", () => {
     const command: UiEvent = { _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" };
-    expect(labelOf([started, notified(interview), notified(review), notified(command)])).toBe("Codex — review — command: git diff");
+    expect(labelOf([started, notified(clarification), notified(review), notified(command)])).toBe("Codex — review — command: git diff");
     const stray: UiEvent = { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x", callId: "claude-9" };
-    expect(labelOf([started, notified(interview), notified(review), notified(stray)])).toBe("Claude — Read: x");
+    expect(labelOf([started, notified(clarification), notified(review), notified(stray)])).toBe("Claude — Read: x");
   });
 
   test("a reconnection of an earlier call that still runs is labeled by that call", () => {
     const codexFirst: UiEvent = { _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: "stream lost", callId: "codex-1" };
     const reviewLabel = labelOf([started, notified(review)]);
-    for (const s of both([started, notified(review), notified(interview), notified(codexFirst)])) {
+    for (const s of both([started, notified(review), notified(clarification), notified(codexFirst)])) {
       expect(statusOf(s)).toBe(`${reviewLabel} — reconnecting (stream lost)`);
     }
   });
@@ -2300,7 +2300,7 @@ describe("two modes", () => {
   const startedIn = (mode: "refinement" | "implementation", id: string): RunEvent => ({ ...started, mode, item: { id, title: `item ${id}` } } as RunEvent);
   const events = (run: number, list: readonly RunEvent[]): ServerMessage[] => stamp(list).map(({ time, event }, seq): ServerMessage => ({ type: "event", run, seq, time, event }));
   const helloBoth: ServerMessage = { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: 2 }, incarnation: "a" };
-  const refinement = [startedIn("refinement", "11"), said("refining"), asked(1, prompts.interviewMessagePrompt)];
+  const refinement = [startedIn("refinement", "11"), said("refining"), asked(1, prompts.clarificationMessagePrompt)];
   const implementation = [startedIn("implementation", "1"), said("implementing"), notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), asked(1, prompts.decisionPrompt)];
 
   test("property: interleaved events of two runs fold to the two modes' views of each run folded alone", () => {
@@ -2524,19 +2524,19 @@ describe("the counts of a Full test suite (issue #39)", () => {
   });
 });
 
-// Issue #184 (S13): the interview's request runs beside a terms request, a decision or a context call, and either may end
+// Issue #184 (S13): the clarification's request runs beside a terms request, a decision or a context call, and either may end
 // first; the page removes the call that ended, by its id.
 describe("calls that overlap", () => {
   const start = (callId: string, purpose: string) => notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId });
   const end = (callId: string) => notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId });
   const runAfter = (events: readonly RunEvent[]) => runOf(fold(live([started, ...events])), "implementation");
   test("two overlapping calls ending in either order each leave the other running and named", () => {
-    const first = runAfter([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-1")]);
+    const first = runAfter([start("claude-1", "clarification"), start("claude-2", "planning"), end("claude-1")]);
     expect(first?.calls.map((c) => c.purpose)).toEqual(["planning"]);
     expect(statusOf(first)).toBe(`Claude — ${prompts.purposeLabel("planning")}`);
-    const second = runAfter([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-2")]);
-    expect(second?.calls.map((c) => c.purpose)).toEqual(["interview"]);
-    expect(statusOf(second)).toBe(`Claude — ${prompts.purposeLabel("interview")}`);
+    const second = runAfter([start("claude-1", "clarification"), start("claude-2", "planning"), end("claude-2")]);
+    expect(second?.calls.map((c) => c.purpose)).toEqual(["clarification"]);
+    expect(statusOf(second)).toBe(`Claude — ${prompts.purposeLabel("clarification")}`);
   });
   test("a nested call's end restores the outer one, and an end of no running call changes nothing", () => {
     expect(runAfter([start("claude-1", "execution"), start("claude-2", "decision"), end("claude-2")])?.calls.map((c) => c.purpose)).toEqual(["execution"]);
@@ -2544,31 +2544,31 @@ describe("calls that overlap", () => {
   });
   test("only the execution call's end clears the current step", () => {
     const plan = notified({ _tag: "PlanChanged", plan: { stages: [{ number: 1, title: "S", steps: [{ id: "S1", number: 1, label: "one", text: "t", status: "started" }] }] }, phase: 1, step: { id: "S1", status: "started" } });
-    const base = [notified({ _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } }), start("claude-1", "execution"), plan, start("claude-2", "interview")];
+    const base = [notified({ _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } }), start("claude-1", "execution"), plan, start("claude-2", "clarification")];
     const step = (events: readonly RunEvent[]) => runAfter(events)?.timeline.find((e) => e.phase.kind === "execution")?.currentStep ?? null;
     expect(step([...base, end("claude-2")])).not.toBe(null);
     expect(step([...base, end("claude-1")])).toBe(null);
   });
 });
 
-// W4-R2-1 of issue #184: the interview's request may wait (a usage limit, a backoff) while other calls start and end
+// W4-R2-1 of issue #184: the clarification's request may wait (a usage limit, a backoff) while other calls start and end
 // (Help me decide, a terms request); only the waited call, named by its agent and purpose, ends the wait.
 describe("a wait outlives calls other than the one it waits for", () => {
   const FROM = Date.UTC(2026, 9, 20, 9, 0);
   const UNTIL = FROM + 600_000;
-  const interviewCall: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId: "claude-1" };
-  const interviewFailed: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" };
-  const interviewAgain: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId: "claude-3" };
-  const interviewAgainEnded: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-3" };
+  const clarificationCall: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId: "claude-1" };
+  const clarificationFailed: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" };
+  const clarificationAgain: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId: "claude-3" };
+  const clarificationAgainEnded: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-3" };
   const reviewCall: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
   const reviewEnded: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" };
   const termsCall: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-2" };
   const termsEnded: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-2" };
-  const limited: UiEvent = { _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "interview", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
-  const retrying: UiEvent = { _tag: "TransportRetrying", wait: 1, agent: "claude", purpose: "interview", attempt: 1, of: 3, delaySeconds: 5, fault: "socket hang up", fromMs: FROM, untilMs: FROM + 5000 };
+  const limited: UiEvent = { _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "clarification", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
+  const retrying: UiEvent = { _tag: "TransportRetrying", wait: 1, agent: "claude", purpose: "clarification", attempt: 1, of: 3, delaySeconds: 5, fault: "socket hang up", fromMs: FROM, untilMs: FROM + 5000 };
   const limitText = `Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, UNTIL)}`;
   const retryText = "Claude — connection lost, retry 1 of 3 (socket hang up)";
-  const before = [started, notified(interviewCall), notified(interviewFailed)];
+  const before = [started, notified(clarificationCall), notified(clarificationFailed)];
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("a Codex review's start and end leave a usage-limit wait, and the activity line shows the wait again", () => {
@@ -2599,12 +2599,12 @@ describe("a wait outlives calls other than the one it waits for", () => {
   });
 
   test("the waited call's next attempt clears the wait at its start, and its end clears the retry", () => {
-    for (const s of both([...before, notified(limited), notified(reviewCall), notified(reviewEnded), notified(interviewAgain)])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
-    for (const s of both([...before, notified(retrying), notified(reviewCall), notified(reviewEnded), notified(interviewAgain)])) {
+    for (const s of both([...before, notified(limited), notified(reviewCall), notified(reviewEnded), notified(clarificationAgain)])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
+    for (const s of both([...before, notified(retrying), notified(reviewCall), notified(reviewEnded), notified(clarificationAgain)])) {
       expect(runOf(s, "implementation")?.retry?.wait).toBe(null);
       expect(statusOf(s)).toBe("Claude — clarification — connection lost, retry 1 of 3 (socket hang up)");
     }
-    for (const s of both([...before, notified(retrying), notified(interviewAgain), notified(interviewAgainEnded)])) expect(runOf(s, "implementation")?.retry).toBe(null);
+    for (const s of both([...before, notified(retrying), notified(clarificationAgain), notified(clarificationAgainEnded)])) expect(runOf(s, "implementation")?.retry).toBe(null);
   });
 
   test("the lift and the recovery still clear the waits", () => {
@@ -2614,19 +2614,19 @@ describe("a wait outlives calls other than the one it waits for", () => {
 
   // Issue #201: a try for an unreachable network shows what is waited for and counts down to the next try; it is no
   // pending prompt, so the tab carries no waiting mark.
-  const networkWait: UiEvent = { _tag: "NetworkRetrying", wait: 1, agent: "claude", purpose: "interview", what: "an interview turn", attempt: 2, code: "EAI_AGAIN", delaySeconds: 60, fault: "API Error (EAI_AGAIN)", fromMs: FROM, untilMs: FROM + 60_000 };
+  const networkWait: UiEvent = { _tag: "NetworkRetrying", wait: 1, agent: "claude", purpose: "clarification", what: "a clarification turn", attempt: 2, code: "EAI_AGAIN", delaySeconds: 60, fault: "API Error (EAI_AGAIN)", fromMs: FROM, untilMs: FROM + 60_000 };
   const networkText = `Claude — ${prompts.networkRetryActivity("EAI_AGAIN", 2)}`;
 
   test("a network try sets the retry with its wait and the status, and is no pending prompt", () => {
     for (const s of both([...before, notified(networkWait)])) {
-      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "claude", purpose: "interview", text: prompts.networkRetryActivity("EAI_AGAIN", 2), wait: { fromMs: FROM, untilMs: FROM + 60_000, waitId: 1 } });
+      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "claude", purpose: "clarification", text: prompts.networkRetryActivity("EAI_AGAIN", 2), wait: { fromMs: FROM, untilMs: FROM + 60_000, waitId: 1 } });
       expect(statusOf(s)).toBe(networkText);
       expect(modeWaiting(s, "implementation")).toBe(false);
     }
   });
 
   test("a network try is cleared like a retry: by the waited call's next start, by the recovery, and shown again after an unrelated call", () => {
-    for (const s of both([...before, notified(networkWait), notified(interviewAgain)])) expect(runOf(s, "implementation")?.retry?.wait).toBe(null);
+    for (const s of both([...before, notified(networkWait), notified(clarificationAgain)])) expect(runOf(s, "implementation")?.retry?.wait).toBe(null);
     for (const s of both([...before, notified(networkWait), notified({ _tag: "TransportRecovered", agent: "claude" })])) expect(runOf(s, "implementation")?.retry).toBe(null);
     for (const s of both([...before, notified(networkWait), notified(reviewCall), notified(reviewEnded)])) expect(statusOf(s)).toBe(networkText);
   });
@@ -2809,8 +2809,8 @@ describe("several refinement runs", () => {
   const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
   const helloOf = (refinement: readonly number[]): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement, implementation: null }, incarnation: "a" });
   const empty = fold([helloOf([]), { type: "replay", ui: [], runs: [] }]);
-  const a = [refining("11"), said("refining 11"), asked(1, prompts.interviewMessagePrompt)];
-  const b = [refining("12"), said("refining 12"), asked(1, prompts.interviewMessagePrompt)];
+  const a = [refining("11"), said("refining 11"), asked(1, prompts.clarificationMessagePrompt)];
+  const b = [refining("12"), said("refining 12"), asked(1, prompts.clarificationMessagePrompt)];
 
   test("two runs are both held, each folded by its own events, and current lists both", () => {
     const s = fold([...eventsOf(1, a), ...eventsOf(2, b)], empty);
@@ -2829,7 +2829,7 @@ describe("several refinement runs", () => {
   test("the first run's Started focuses it; a second run's Started or prompt leaves the focus on the first", () => {
     const one = fold(eventsOf(1, a), empty);
     expect(one.modes.refinement.focus).toEqual({ _tag: "Run", run: 1 });
-    const two = fold([...eventsOf(2, b), ...eventsOf(2, [asked(2, prompts.interviewMessagePrompt)], 3)], one);
+    const two = fold([...eventsOf(2, b), ...eventsOf(2, [asked(2, prompts.clarificationMessagePrompt)], 3)], one);
     expect(two.modes.refinement.focus).toEqual({ _tag: "Run", run: 1 });
     expect(runOf(two, "refinement")?.id).toBe(1);
   });
@@ -2927,7 +2927,7 @@ describe("the presented runs", () => {
   const refining = (item: string): RunEvent => ({ ...started, mode: "refinement", item: { id: item, title: `item ${item}` } } as RunEvent);
   const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
   const empty = fold([{ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }]);
-  const two = fold([...eventsOf(1, [refining("11"), said("x")]), ...eventsOf(2, [refining("12"), asked(1, prompts.interviewMessagePrompt)])], empty);
+  const two = fold([...eventsOf(1, [refining("11"), said("x")]), ...eventsOf(2, [refining("12"), asked(1, prompts.clarificationMessagePrompt)])], empty);
 
   test("presented: the implementation tab's run under one key, and each refinement run under its own, in start order", () => {
     const withImpl = fold(eventsOf(3, [started]), two);
@@ -3223,7 +3223,7 @@ describe("issue #144: the Implementation tab's list during a run", () => {
   const helloOf = (implementation: number | null, incarnation = "a"): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation }, incarnation });
   const replayOf = (runs: readonly Readonly<{ id: number; events: readonly RunEvent[] }>[]): ServerMessage => ({ type: "replay", ui: [], runs: runs.map((r) => ({ id: r.id, events: stamp(r.events) })) });
   const empty = fold([helloOf(null), replayOf([])]);
-  const question = asked(1, prompts.interviewMessagePrompt);
+  const question = asked(1, prompts.clarificationMessagePrompt);
   const ended: RunEvent = endedEvent(COMPLETED);
   const a = [implementing("11"), said("working")];
   const b = [implementing("12"), said("working")];
@@ -3315,7 +3315,7 @@ describe("issue #144: the Implementation tab's list during a run", () => {
           const last = next - 1;
           const open = last > 0 && !(events.get(last) ?? []).some((e) => e._tag === "Ended");
           if (op === "start" && !open) push(next++, implementing(`${next}`));
-          if (op === "ask" && open) push(last, asked((events.get(last) ?? []).length, prompts.interviewMessagePrompt));
+          if (op === "ask" && open) push(last, asked((events.get(last) ?? []).length, prompts.clarificationMessagePrompt));
           if (op === "end" && open) push(last, ended);
           if (op === "reconnect") {
             const ids = [...events.keys()].sort((x, y) => x - y).slice(-2);

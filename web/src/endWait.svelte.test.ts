@@ -56,7 +56,7 @@ const question = {
 };
 const waiting = (wait: number) => ({
   _tag: "Notified",
-  event: { _tag: "UsageLimitWaiting", wait, agent: "claude", purpose: "interview", limitType: "five_hour", basis: { kind: "reset" }, fromMs: Date.now(), untilMs: Date.now() + 3_600_000 },
+  event: { _tag: "UsageLimitWaiting", wait, agent: "claude", purpose: "clarification", limitType: "five_hour", basis: { kind: "reset" }, fromMs: Date.now(), untilMs: Date.now() + 3_600_000 },
 });
 const endWaits = (ws: FakeWebSocket) => ws.sent.map((s) => JSON.parse(s)).filter((m) => m.type === "endWait");
 const buttons = (root: ParentNode) => [...root.querySelectorAll<HTMLButtonElement>('button[name="end-wait"]')];

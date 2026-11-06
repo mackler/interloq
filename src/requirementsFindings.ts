@@ -1,7 +1,7 @@
 /**
  * The classification of the requirements review's accepted findings (pure; issue #47): which problems a response's
  * `findings` and `requirements` have against its dispositions and the requirements.md they amend, and which findings
- * the second interview asks and which the response writes into the document.
+ * the follow-up clarification asks and which the response writes into the document.
  */
 import type { Disposition, RequirementFinding } from "./schema.ts";
 
@@ -16,15 +16,15 @@ export type IdProblemKind = Exclude<(typeof FINDING_PROBLEM_KINDS)[number], "doc
  */
 export type FindingProblem = { readonly kind: IdProblemKind; readonly id: string } | { readonly kind: "documentUnchanged"; readonly ids: readonly string[] };
 
-/** A finding the second interview asks. */
-export type InterviewedFinding = Extract<RequirementFinding, { kind: "unresolved" | "reopened" }>;
+/** A finding the follow-up clarification asks. */
+export type ClarificationFinding = Extract<RequirementFinding, { kind: "unresolved" | "reopened" }>;
 /** A finding the response writes into requirements.md. */
 export type WrittenFinding = Extract<RequirementFinding, { kind: "answered" | "corrected" }>;
 
 const isAccepted = (d: Disposition): boolean => d.action === "accepted" || d.action === "partially_accepted";
 const blank = (text: string): boolean => text.trim() === "";
 const unique = (ids: readonly string[]): string[] => [...new Set(ids)].sort();
-const isInterviewed = (f: RequirementFinding): f is InterviewedFinding => f.kind === "unresolved" || f.kind === "reopened";
+const needsClarification = (f: RequirementFinding): f is ClarificationFinding => f.kind === "unresolved" || f.kind === "reopened";
 const isWritten = (f: RequirementFinding): f is WrittenFinding => f.kind === "answered" || f.kind === "corrected";
 
 /**
@@ -48,8 +48,8 @@ export function findingsProblems(dispositions: readonly Disposition[], findings:
   ];
 }
 
-/** The findings the second interview asks, in the response's order. */
-export const interviewedOf = (findings: readonly RequirementFinding[]): readonly InterviewedFinding[] => findings.filter(isInterviewed);
+/** The findings the follow-up clarification asks, in the response's order. */
+export const clarificationFindingsOf = (findings: readonly RequirementFinding[]): readonly ClarificationFinding[] => findings.filter(needsClarification);
 
 /** The findings the response writes into requirements.md, in the response's order. */
 export const writtenOf = (findings: readonly RequirementFinding[]): readonly WrittenFinding[] => findings.filter(isWritten);

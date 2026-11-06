@@ -28,7 +28,7 @@ const asking = (id: string, answered: string[]) => ({
   summary: "",
 });
 const SUMMARY = "# Requirements\n\nA and B.";
-/** The second interview's closing turn (it is still turn by turn, issue #184). */
+/** The follow-up clarification's closing turn (it is still turn by turn, issue #184). */
 const done = { message_to_user: "Done.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1", "Q2"], answered_ids: ["Q1", "Q2"], complete: true, summary: SUMMARY };
 const plannerQuestion = questionOf({ context: "Claude Code, the planning agent, writes the plan.", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }] });
 
@@ -206,9 +206,9 @@ test("S18: an agreed question is presented as reviewed: its context, text, propo
   }
 });
 
-// S18 (P1-R2-1 of the plan's review): an accepted requirements issue asked in the second interview is not in
+// S18 (P1-R2-1 of the plan's review): an accepted requirements issue asked in the follow-up clarification is not in
 // questions.json, so it is presented from the turn, validated, and keeps its issue id in the progress.
-test("S18: an accepted requirements issue in the second interview is validated, presented from the turn, and keeps its id", async () => {
+test("S18: an accepted requirements issue in the follow-up clarification is validated, presented from the turn, and keeps its id", async () => {
   const gap = (context: string) => ({ ...asking("G-R1-1", []), current_question: currentOf({ id: "G-R1-1", context, text: "Which port should the service listen on?", terms: [], options: [{ label: "8080", description: "the usual" }, { label: "80", description: "needs root" }] }), asked_ids: ["G-R1-1"] });
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "1"],
@@ -230,7 +230,7 @@ test("S18: an accepted requirements issue in the second interview is validated, 
   assert.deepEqual(gapQuestion?.origin, { kind: "followUp", id: "G-R1-1" });
   assert.equal(gapQuestion && contextText(gapQuestion), "The service, a web server, listens on a port for requests while it runs.");
   assert.deepEqual(gapQuestion?.options.map((o) => piecesText(o.label)), ["8080", "80"]);
-  const turns = probe.ui.notified.flatMap((e) => (e._tag === "InterviewTurn" && e.heading === prompts.clarificationHeading("followUp") ? [e] : []));
+  const turns = probe.ui.notified.flatMap((e) => (e._tag === "ClarificationTurn" && e.heading === prompts.clarificationHeading("followUp") ? [e] : []));
   assert.deepEqual(turns.at(-1) && [turns.at(-1)?.answered, turns.at(-1)?.total], [1, 1]);
 });
 

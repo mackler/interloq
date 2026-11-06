@@ -105,7 +105,7 @@ const answerContinue = async (page: Page) => {
   await continueWithoutDeciding(page).click();
 };
 
-// Issue #12: an interview's numbered answers that run to a paragraph each are cards that hold their full text, in a
+// Issue #12: a clarification's numbered answers that run to a paragraph each are cards that hold their full text, in a
 // narrow and in a wide window; a card is a native button, chosen by keyboard, and the transcript keeps the full line.
 const LONG_CHOICES_URL = layoutUrl("longChoices");
 // Decision support (decision Q5): one column per option at every allowed width, side by side when they fit, scrolling

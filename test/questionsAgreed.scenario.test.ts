@@ -38,7 +38,7 @@ const afterQuestionsBegan = (events: readonly UiEvent[]) => {
   assert.ok(began >= 0 && began < tags(events).indexOf("QuestionsAgreed"), tags(events).join(", "));
 };
 
-test("(a) one agreed question with checked terms: QuestionsAgreed 1 after the phase begins and before the terms and the interview", async () => {
+test("(a) one agreed question with checked terms: QuestionsAgreed 1 after the phase begins and before the terms and the clarification", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1"],
     steps: [{ output: { questions: [entry] } }],
@@ -51,19 +51,19 @@ test("(a) one agreed question with checked terms: QuestionsAgreed 1 after the ph
   assert.deepEqual(agreedCounts(events), [1]);
   afterQuestionsBegan(events);
   before(events, "QuestionsAgreed", "TermsBegan");
-  before(events, "QuestionsAgreed", "InterviewOpened");
+  before(events, "QuestionsAgreed", "ClarificationOpened");
 });
 
-test("(b) one agreed question with terms on request: QuestionsAgreed 1 before the interview", async () => {
+test("(b) one agreed question with terms on request: QuestionsAgreed 1 before the clarification", async () => {
   const { layer, probe } = testLayer(tempRepo(), { answers: ["1"], steps: [{ output: { questions: [entry] } }], closings, reviews: [{ issues: [] }, { issues: [] }] });
   await runRefinement(layer, "task", "onRequest");
   const events = probe.ui.notified;
   assert.deepEqual(agreedCounts(events), [1]);
   afterQuestionsBegan(events);
-  before(events, "QuestionsAgreed", "InterviewOpened");
+  before(events, "QuestionsAgreed", "ClarificationOpened");
 });
 
-test("(c) an empty agreed list: QuestionsAgreed 0, then the phase ends with no conversation, and no terms or interview", async () => {
+test("(c) an empty agreed list: QuestionsAgreed 0, then the phase ends with no conversation, and no terms or clarification", async () => {
   const { layer, probe } = testLayer(tempRepo(), { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }] });
   await runRefinement(layer, "task", "checked");
   const events = probe.ui.notified;
@@ -72,7 +72,7 @@ test("(c) an empty agreed list: QuestionsAgreed 0, then the phase ends with no c
   const agreed = tags(events).indexOf("QuestionsAgreed");
   const ended = events.findIndex((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions" && e.result === "no conversation");
   assert.ok(ended > agreed, tags(events).join(", "));
-  assert.ok(!tags(events).includes("TermsBegan") && !tags(events).includes("InterviewOpened"), tags(events).join(", "));
+  assert.ok(!tags(events).includes("TermsBegan") && !tags(events).includes("ClarificationOpened"), tags(events).join(", "));
 });
 
 // A prepared item (issue #131), built as test/preparedRefinement.scenario.test.ts builds it.
@@ -92,7 +92,7 @@ const refine = async (item: FakeItem, options: TestOptions): Promise<readonly Ui
   return probe.ui.notified;
 };
 
-test("(d) a current preparation of two questions: QuestionsAgreed 2 after the phase begins and before the interview", async () => {
+test("(d) a current preparation of two questions: QuestionsAgreed 2 after the phase begins and before the clarification", async () => {
   const events = await refine(prepared([stored("Q1"), stored("Q2")]), {
     answers: ["A", "A"],
     closings: [{ output: summaryReply("# Requirements\n\nQ1: A, Q2: A", "Done.") }],
@@ -100,7 +100,7 @@ test("(d) a current preparation of two questions: QuestionsAgreed 2 after the ph
   });
   assert.deepEqual(agreedCounts(events), [2]);
   afterQuestionsBegan(events);
-  before(events, "QuestionsAgreed", "InterviewOpened");
+  before(events, "QuestionsAgreed", "ClarificationOpened");
 });
 
 test("(e) a preparation with no question: QuestionsAgreed 0", async () => {

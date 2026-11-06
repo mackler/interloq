@@ -469,7 +469,7 @@ test("two questions with identical text are answered separately; the later answe
   assert.deepEqual(toSdkAnswers([{ question: "X?" }, { question: "Y?" }], new Map([[0, "a"], [1, "b"]])), { answers: { "X?": "a", "Y?": "b" }, duplicates: [] });
 });
 
-// Plan step 1.7 (decision Q5): the adapter reports its activity; the run says its lines for the interview only.
+// Plan step 1.7 (decision Q5): the adapter reports its activity; the run says its lines for the clarification only.
 const activity = (ui: ScriptedUi) => ui.notified.filter((e) => e._tag === "AgentCallStarted" || e._tag === "ToolUsed" || e._tag === "AgentCallEnded" || e._tag === "QuestionPresented");
 
 test("a planning call notifies its start, every tool use other than StructuredOutput, and its end", async () => {
@@ -495,11 +495,11 @@ test("each call's start and end carry one id, and two calls, one of them on a fr
   assert.deepEqual(ids, ["AgentCallStarted:claude-1", "AgentCallEnded:claude-1", "AgentCallStarted:claude-2", "AgentCallEnded:claude-2"]);
 });
 
-test("an interview call says its lines for the tool use", async () => {
+test("a clarification call says its lines for the tool use", async () => {
   const fake = await planner([messages(init(), assistantTool("Read", { file_path: "/x" }), success({}))]);
-  await run(fake.planner.planning("interview", schema, "interview"));
+  await run(fake.planner.planning("clarification", schema, "clarification"));
   assert.ok(fake.ui.said.includes("  [claude: Read /x]"));
-  assert.deepEqual(activity(fake.ui)[0], { _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId: "claude-1" });
+  assert.deepEqual(activity(fake.ui)[0], { _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId: "claude-1" });
 });
 
 test("a call that fails ends with AgentCallEnded ok false", async () => {
@@ -896,9 +896,9 @@ test("a planning call's retry through planningCall names the call by the agent a
     throw econnreset();
   })();
   const fake = await planner([first, messages(init("session-plan"), success({ questions_for_user: [] }))], [], quickRetry);
-  await run(planningCall("write the plan", schema, "interview").pipe(Effect.provideService(Planner, fake.planner), Effect.provide(fake.deps)));
+  await run(planningCall("write the plan", schema, "clarification").pipe(Effect.provideService(Planner, fake.planner), Effect.provide(fake.deps)));
   const [start, wait] = waitedCall(fake.ui.notified);
-  assert.deepEqual(wait, ["claude", "interview"]);
+  assert.deepEqual(wait, ["claude", "clarification"]);
   assert.deepEqual(wait, start);
 });
 

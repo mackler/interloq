@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Disposition, RequirementFinding } from "../src/schema.ts";
-import { findingsProblems, interviewedOf, writtenOf } from "../src/requirementsFindings.ts";
+import { findingsProblems, clarificationFindingsOf, writtenOf } from "../src/requirementsFindings.ts";
 
 // Issue #47: Claude Code classifies each accepted finding of the requirements review; the program checks it on data.
 const d = (id: string, action: Disposition["action"]): Disposition => ({ id, action, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null });
@@ -69,13 +69,13 @@ test("problems are listed by kind, then by id", () => {
   );
 });
 
-test("the interviewed and the written findings, in the response's order", () => {
+test("the findings to clarify and the written findings, in the response's order", () => {
   const fs: RequirementFinding[] = [
     { id: "A", kind: "reopened", changed: "c" },
     { id: "B", kind: "corrected" },
     { id: "C", kind: "unresolved" },
     { id: "D", kind: "answered", source: "s" },
   ];
-  assert.deepEqual(interviewedOf(fs).map((f) => f.id), ["A", "C"]);
+  assert.deepEqual(clarificationFindingsOf(fs).map((f) => f.id), ["A", "C"]);
   assert.deepEqual(writtenOf(fs).map((f) => f.id), ["B", "D"]);
 });

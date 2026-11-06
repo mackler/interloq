@@ -12,7 +12,7 @@ const outcome = { status: "finished" as const, summary: "done", question: "", re
 
 // One example of every variant; the `satisfies` makes a missing tag a type error when the union grows.
 /** The heading the page shows above the conversation (issue #113), and the same text as a pattern. */
-const heading = prompts.clarificationHeading("clarification");
+const heading = prompts.clarificationHeading("first");
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const headed = (rest: string) => new RegExp(escapeRegExp(heading) + rest);
 
@@ -43,12 +43,12 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   // Issue #215: a wait the developer ended early.
   WaitEndedEarly: [{ _tag: "WaitEndedEarly", wait: 3 }, /^you ended wait 3 early$/],
   UsageLimitLifted: [{ _tag: "UsageLimitLifted", agent: "claude", limitType: "five_hour", waitedMs: 9_000_000 }, /^Claude Code: the usage limit has lifted after 2:30:00; continuing$/],
-  InterviewTurn: [{ _tag: "InterviewTurn", heading, message: "Hello", summary: null, answered: 1, total: 3 }, headed(" \\(1 of 3 answered\\): Hello")],
-  InterviewCounted: [{ _tag: "InterviewCounted", answered: 2, total: 3 }, /^2 of 3 answered$/],
+  ClarificationTurn: [{ _tag: "ClarificationTurn", heading, message: "Hello", summary: null, answered: 1, total: 3 }, headed(" \\(1 of 3 answered\\): Hello")],
+  ClarificationCounted: [{ _tag: "ClarificationCounted", answered: 2, total: 3 }, /^2 of 3 answered$/],
   TermsBegan: [{ _tag: "TermsBegan" }, /^explanations of terms begun$/],
   // Issue #205: the agreed question list is known.
   QuestionsAgreed: [{ _tag: "QuestionsAgreed", count: 2 }, /^agreed question list: 2 questions$/],
-  InterviewOpened: [{ _tag: "InterviewOpened", heading, stage: "clarification", total: 3 }, headed(" opened, 3 questions")],
+  ClarificationOpened: [{ _tag: "ClarificationOpened", heading, stage: "first", total: 3 }, headed(" opened, 3 questions")],
   ClaudeSaid: [{ _tag: "ClaudeSaid", text: "done", running: [] }, /Claude Code said: done/],
   QuestionPresented: [
     { _tag: "QuestionPresented", question: { number: 3, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: [{ label: plain("A"), description: [], figure: null, answer: { token: "1" } }, { label: plain("B"), description: [], figure: null, answer: { token: "2" } }], attached: null, decision: null } },

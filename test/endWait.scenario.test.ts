@@ -124,8 +124,8 @@ test("a wait for the network ended early: the call is made again at once", timeo
   assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(prompts.waitEndedLine({ kind: "network", agent: "codex" })));
 });
 
-// G-R1-1: a question can be pending while the interview's worker waits; ending the wait leaves the question as it is.
-test("G-R1-1: during the first interview, a worker request's backoff ended early leaves the pending question pending and answerable", timeout, async () => {
+// G-R1-1: a question can be pending while the clarification's worker waits; ending the wait leaves the question as it is.
+test("G-R1-1: during the first clarification, a worker request's backoff ended early leaves the pending question pending and answerable", timeout, async () => {
   const q = (id: string): S.QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { default_answer: "A", skip_if: null });
   let pressedThen: () => void = () => undefined;
   const afterPress = new Promise<void>((r) => (pressedThen = r));

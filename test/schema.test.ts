@@ -53,9 +53,9 @@ const plannerResponse: Response38<WithQuestions<legacy.PlannerResponse>> = { dis
 // Issue #99: an entry carries its skip condition, null or the question and the answer that make it unnecessary.
 type QuestionEntry = { id: string; context: Block[]; history: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[]; default_answer: string; skip_if: { question: string; answer: string } | null };
 const questionEntry: QuestionEntry = { id: "Q1", context: para("c"), history: para("h"), question: plain("q?"), reason: para("r"), proposed_answers: [option("A", "a")], default_answer: "A", skip_if: null };
-// Issue #21 (Q6 follow-up) and issue #35 (Q5, Q6): the fields the interview turn has beyond the frozen legacy shape.
+// Issue #21 (Q6 follow-up) and issue #35 (Q5, Q6): the fields the clarification turn has beyond the frozen legacy shape.
 type CurrentQuestion = { current_question: { id: string; context: Block[]; history: Block[]; text: Piece[]; explanations: Explanation[]; options: PieceOption[] } };
-const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQuestion = { message_to_user: "m", current_question: { id: "F1", context: para("c"), history: [], text: plain("q?"), explanations: [], options: [option("A", "a")] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete: false, summary: "" };
+const clarificationTurn: legacy.ClarificationTurn & { asked_ids: string[] } & CurrentQuestion = { message_to_user: "m", current_question: { id: "F1", context: para("c"), history: [], text: plain("q?"), explanations: [], options: [option("A", "a")] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete: false, summary: "" };
 const execReport = { status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks: [{ step: "S1", command: "npm run test:unit", seconds: 12.5, selection: false, counts: null }], test_first: [] };
 const execOutcome = { status: "needs_input", summary: "s", question: "q", remainingWork: "w", userInput: null, checks: [], testFirst: [] };
 // Version 2 (Q5): three shapes tagged by source.
@@ -82,7 +82,7 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   // Issue #156: the question list's dispositions carry Claude Code's mark.
   const markedResponse = { ...plannerResponse, dispositions: [{ ...disposition, task_dispute: true }], correction_passages: [{ id: "A", passages: ["the fix"] }], questions: [questionEntry] };
   assert.deepEqual(decode(S.QuestionListResponse, markedResponse), markedResponse);
-  assert.deepEqual(decode(S.InterviewTurn, interviewTurn), interviewTurn);
+  assert.deepEqual(decode(S.ClarificationTurn, clarificationTurn), clarificationTurn);
   assert.deepEqual(decode(S.ExecReport, execReport), execReport);
   assert.deepEqual(decode(S.ExecOutcome, execOutcome), execOutcome);
   assert.deepEqual(decode(S.LogEntry, reviewEntry), reviewEntry);
@@ -112,7 +112,7 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<Equals<DeepMutable<typeof S.QuestionContext.Type>, { context: Block[]; history: Block[]; question: Piece[]; options: PieceOption[]; details: Block[]; explanations: Explanation[] }>>();
   // Decision Q1: the explaining conversation returns each agreed entry divided into pieces, with its explanations.
   sameType<Equals<DeepMutable<typeof S.TermsEntry.Type>, { id: string; explanations: Explanation[]; context: Block[]; history: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[] }>>();
-  sameType<Equals<DeepMutable<typeof S.InterviewTurn.Type>, DeepMutable<legacy.InterviewTurn & { asked_ids: readonly string[] } & CurrentQuestion>>>();
+  sameType<Equals<DeepMutable<typeof S.ClarificationTurn.Type>, DeepMutable<legacy.ClarificationTurn & { asked_ids: readonly string[] } & CurrentQuestion>>>();
   // Issue #154 (Q2): the report's fourth status, continuing.
   // Issue #162: the report and the outcome carry the check commands run.
   // Issue #39: and whether each ran a selection, and its counts or null.
@@ -137,16 +137,16 @@ test("each schema rejects a wrong enum value, a missing field and a wrong type",
   rejects(S.QuestionEntry, { ...questionEntry, proposed_answers: [{ label: "A" }] }, "a proposed answer without a description");
   rejects(S.QuestionEntry, (({ skip_if: _, ...rest }) => rest)(questionEntry), "an entry without its skip condition");
   rejects(S.QuestionEntry, { ...questionEntry, skip_if: { question: "Q0" } }, "a skip condition without its answer");
-  rejects(S.InterviewTurn, { ...interviewTurn, complete: "yes" }, "complete as a string");
-  rejects(S.InterviewTurn, { message_to_user: "m", current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, answered_ids: [], complete: false, summary: "" }, "a turn without asked_ids");
-  rejects(S.InterviewTurn, { message_to_user: "m", asked_ids: [], answered_ids: [], complete: false, summary: "" }, "a turn without current_question");
-  rejects(S.InterviewTurn, { ...interviewTurn, current_question: { id: "Q1" } }, "a current question without its text");
-  rejects(S.InterviewTurn, { ...interviewTurn, current_question: { id: "F1", text: "q?" } }, "a current question without its context, explanations and options");
+  rejects(S.ClarificationTurn, { ...clarificationTurn, complete: "yes" }, "complete as a string");
+  rejects(S.ClarificationTurn, { message_to_user: "m", current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, answered_ids: [], complete: false, summary: "" }, "a turn without asked_ids");
+  rejects(S.ClarificationTurn, { message_to_user: "m", asked_ids: [], answered_ids: [], complete: false, summary: "" }, "a turn without current_question");
+  rejects(S.ClarificationTurn, { ...clarificationTurn, current_question: { id: "Q1" } }, "a current question without its text");
+  rejects(S.ClarificationTurn, { ...clarificationTurn, current_question: { id: "F1", text: "q?" } }, "a current question without its context, explanations and options");
   rejects(S.QuestionEntry, { id: "Q1", question: plain("q?"), reason: para("r"), proposed_answers: [], default_answer: "" }, "a question entry without its context");
   // Issue #36 (30 Sep 2026): a question's text is never a bare string.
   rejects(S.QuestionEntry, { ...questionEntry, question: "q?" }, "a question entry whose question is a string");
   rejects(S.QuestionEntry, { ...questionEntry, context: "c" }, "a question entry whose context is a string");
-  rejects(S.InterviewTurn, { ...interviewTurn, current_question: { ...interviewTurn.current_question, text: "q?" } }, "a current question whose text is a string");
+  rejects(S.ClarificationTurn, { ...clarificationTurn, current_question: { ...clarificationTurn.current_question, text: "q?" } }, "a current question whose text is a string");
   rejects(S.ExecReport, { ...execReport, status: "done" }, "status done");
   rejects(S.ExecOutcome, { ...execOutcome, userInput: 5 }, "numeric userInput");
   rejects(S.LogEntry, { ...reviewEntry, source: "robot" }, "source robot");

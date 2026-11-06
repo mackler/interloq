@@ -38,7 +38,7 @@ export type LimitWait = LimitWaitBegan & Readonly<{ endedMs: number; outcome: (t
 export type RateLimitNotice = Readonly<{ session: string | null; info: Readonly<Record<string, unknown>> }>;
 
 /** The purpose of a Claude Code request: a planning purpose of src/services.ts, or an execution call. */
-export type ClaudePurpose = "planning" | "interview" | "context" | "execution";
+export type ClaudePurpose = "planning" | "clarification" | "context" | "execution";
 
 /**
  * One failed Claude Code request (issue #192, requirements Q1), as the program writes it and reads it back: the session

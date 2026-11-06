@@ -11,7 +11,7 @@ import { runRootOf } from "./artifacts.ts";
 import { loadConfig } from "./config.ts";
 import { deciderLayer } from "./decision.ts";
 import { describe, isTrackerError, type NoAnswer, trackerFailureText } from "./errors.ts";
-import { prepareQuestionList } from "./interview.ts";
+import { prepareQuestionList } from "./gatherRequirements.ts";
 import { commentDateOf, keyOf, parseComment, runCommentKey } from "./itemComments.ts";
 import { rootName } from "./park.ts";
 import { type PausedPhase, type PreparationCause, type PreparationRecord, digestOf, preparationOf, type PreparedQuestion, preparedComments } from "./preparedComments.ts";

@@ -147,7 +147,7 @@ export type DisputeAsk = Readonly<{ asks: Readonly<{ kind: "pause"; facts: Pause
 export type BesideQuestion =
   | Readonly<{ kind: "limit"; limit: number }>
   | Readonly<{ kind: "idle"; facts: PauseFacts }>
-  | Readonly<{ kind: "unchanged"; round: number; accepted: readonly string[]; retry: "corrective" | "interview" }>
+  | Readonly<{ kind: "unchanged"; round: number; accepted: readonly string[]; retry: "corrective" | "clarification" }>
   | Readonly<{ kind: "dispute"; dispute: DisputeAsk; round: number }>;
 export type Beside = Readonly<{ key: BesideKey; question: BesideQuestion }>;
 /** Issue #243: an end of the loop held until the boundary is drained; `final`, the commands said only when it ends. */
@@ -1037,7 +1037,7 @@ const checkResponse = (s: ReviewState, hash: string, before: readonly ReviewComm
     if (s.setup.onUnchanged === "corrective" && s.current.corrections === 0) return correct(s, before);
     // Issue #243: the question is opened beside the review, which goes on as Proceed would; one per round and attempt.
     const ids = s.current.round!.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
-    const retry = s.setup.onUnchanged === "pause" ? "interview" : "corrective";
+    const retry = s.setup.onUnchanged === "pause" ? "clarification" : "corrective";
     const [state, open] = opening(s, { kind: "unchanged", round: s.round, accepted: ids, retry }, `R${s.round}/unchanged ${s.current.corrections}`);
     return identicalCheck(state, hash, "response", [
       ...before,

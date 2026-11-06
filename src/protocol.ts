@@ -314,12 +314,12 @@ export const UiEventSchema = Schema.Union([
   tagged("WaitEndedEarly", { wait: Int }),
   tagged("UsageLimitLifted", { agent: AgentSchema, limitType: Schema.NullOr(Str).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))), waitedMs: Schema.Finite }),
   tagged("AgentReconnecting", { agent: AgentSchema, by: Schema.Literal("sdk"), attempt: Schema.NullOr(Int), of: Schema.NullOr(Int), delayMs: Schema.NullOr(Int), detail: Str, callId: Str }),
-  tagged("InterviewTurn", { heading: Str, message: Str, summary: Schema.NullOr(Str), answered: Int, total: Int }),
-  tagged("InterviewCounted", { answered: Int, total: Int }),
+  tagged("ClarificationTurn", { heading: Str, message: Str, summary: Schema.NullOr(Str), answered: Int, total: Int }),
+  tagged("ClarificationCounted", { answered: Int, total: Int }),
   tagged("TermsBegan", {}),
   // Issue #205: the agreed question list known, with its count.
   tagged("QuestionsAgreed", { count: Int }),
-  tagged("InterviewOpened", { heading: Str, stage: Schema.Literals(["clarification", "followUp"]), total: Int }),
+  tagged("ClarificationOpened", { heading: Str, stage: Schema.Literals(["first", "followUp"]), total: Int }),
   // Issue #40: the processes of the call open when the message arrived; a record written before it has none.
   tagged("ClaudeSaid", { text: Str, running: Schema.Array(Str).pipe(Schema.withDecodingDefaultKey(Effect.succeed([] as readonly string[]))) }),
   tagged("QuestionPresented", { question: PresentedQuestionSchema }),
@@ -342,7 +342,7 @@ export const RunEventSchema = Schema.Union([
   tagged("Asked", {
     prompt: Int,
     text: Str,
-    kind: Schema.Literals(["decision", "limit", "limitNoProceed", "unchanged", "transport", "optionOrText", "permission", "interviewMessage", "unknown"]),
+    kind: Schema.Literals(["decision", "limit", "limitNoProceed", "unchanged", "transport", "optionOrText", "permission", "clarificationMessage", "unknown"]),
     mode: Schema.Literals(["ask", "message"]),
     choices: Schema.Array(ChoiceSchema),
     free: Schema.Literals(["none", "line", "message"]),

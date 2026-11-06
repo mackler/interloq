@@ -250,7 +250,7 @@ test("W9-R1-1: a dispute withdrawn unanswered at the run's end is recorded even 
 
 const q1 = questionEntry("Q1", "question Q1?", [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
 const marked = { ...respond([["Q-R1-1", "rejected", true]]), questions: [q1] };
-/** A question review whose marked rejection of Q-R1-1, raised again, opens a dispute; the interview's closing call gives `onClosing`. */
+/** A question review whose marked rejection of Q-R1-1, raised again, opens a dispute; the clarification's closing call gives `onClosing`. */
 const refinement = (answers: readonly ScriptedAnswer[], onClosing: () => void, extraSteps: readonly PlanningStep[] = [], extraReviews: readonly ReviewStep[] = []): TestOptions => ({
   answers: [...answers, "A"],
   // The marked dispute has its investigation (issue #38) at its first re-raise and is opened at its second.
@@ -262,7 +262,7 @@ const refinement = (answers: readonly ScriptedAnswer[], onClosing: () => void, e
 });
 const sectionOf = async (tracker: NonNullable<ReturnType<typeof testLayer>["probe"]["tracker"]>) => (await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)!;
 
-test("a marked question-list dispute answered for Codex's position during the interview is applied to requirements.md and reviewed before the write-back", async () => {
+test("a marked question-list dispute answered for Codex's position during the clarification is applied to requirements.md and reviewed before the write-back", async () => {
   const closing = signal();
   const { layer, probe } = testLayer(tempRepo(), refinement([{ beside: "1", when: () => closing.promise }], () => closing.resolve(), [{ output: { requirements: "# Requirements\n\nQ1: A\n\nAmended by the answer." } }], [{ issues: [] }]));
   await runRefinement(layer, "task", "onRequest");

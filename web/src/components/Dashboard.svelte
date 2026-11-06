@@ -2,7 +2,7 @@
   // The "You and Interloq" panel as a dashboard (issue #22, the developer's decision of 11 Oct 2026): every piece of
   // information has a fixed place and is replaced in place, rather than arriving as another message at the bottom
   // [visibility of system status; aesthetic and minimalist design]. Top to bottom: the header, the run's item; the
-  // agents' models in small type; the status line, prominent; the interview's help while it lasts, since it says how to
+  // agents' models in small type; the status line, prominent; the clarification's help while it lasts, since it says how to
   // answer; Claude Code's latest message and the last answered question, each on a surface of its own and labeled, so
   // that Claude Code's information and the developer's are separated rather than interleaved [match between the system
   // and the real world]; and the heading of every answer, closed until opened, its open state the run's shared state, so
@@ -77,7 +77,7 @@
   <StatusLine status={d.status} retry={run.retry?.wait ?? null} wait={run.limitWait} {compact} {onEndWait} {endWaitSent} />
   <div class="regions">
     {#if !compact}
-      {#if d.interviewHelp !== null}<p class="help m3-font-body-small" data-interview-help>{d.interviewHelp}</p>{/if}
+      {#if d.clarificationHelp !== null}<p class="help m3-font-body-small" data-clarification-help>{d.clarificationHelp}</p>{/if}
       {#if d.claude !== null}
         <article class="surface claude" data-claude>
           <header class="m3-font-label-medium">{DASHBOARD_CLAUDE_LABEL}{#if d.claude.heading !== null} · {d.claude.heading}{/if}</header>

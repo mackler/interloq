@@ -2,7 +2,7 @@
 
 import { Effect, Option, Result } from "effect";
 import { phaseOf, recordPath, type RunRoot, type SubjectId } from "./artifacts.ts";
-import { interview } from "./conversation.ts";
+import { followUpClarification } from "./conversation.ts";
 import { termsValidation } from "./termsValidation.ts";
 // Issue #142: the validations of the terms live in src/termsValidation.ts, which src/conversation.ts imports too.
 export { requestedTermsValidation, termsValidation, withTermsEntry } from "./termsValidation.ts";
@@ -15,7 +15,7 @@ import { bothValidations, questionsValidation, type Subject, userQuestionsValida
 import * as S from "./schema.ts";
 import type { DecisionAnalysis, DecisionApplied, DecisionResponse, Plan, PlannerResponse, PlanResponse, PlanWrite, PlanWriteResult, QuestionList, QuestionListResponse, QuestionsFile, RecordedPlan, TermsEntry, TermsResponse, TermsWrite } from "./schema.ts";
 import { FindingsInvalid, QuestionInvalid, SkipConditionInvalid } from "./errors.ts";
-import { findingsProblems, interviewedOf } from "./requirementsFindings.ts";
+import { findingsProblems, clarificationFindingsOf } from "./requirementsFindings.ts";
 import { skipConditionProblems } from "./premises.ts";
 import type { QuestionProblem, QuestionProblems } from "./prompts.ts";
 import { sameBlocks, samePieces } from "./pieces.ts";
@@ -202,17 +202,17 @@ export const findingsValidation =
     return problems.length > 0 ? Result.fail({ error: new FindingsInvalid({ problems }), repair: prompts.findingsRepairPrompt(problems) }) : Result.succeed({ value: output, notes: [] });
   };
 
-/** Issue #47: requirements.md amended outside an interview, the one mechanism a response and the application of decisions share. */
+/** Issue #47: requirements.md amended outside a clarification, the one mechanism a response and the application of decisions share. */
 const writeRequirements = (requirements: string | null): Effect.Effect<void, RunError, Store> =>
   requirements === null ? Effect.void : Effect.flatMap(Store, (store) => store.writeRequirements(requirements.trimEnd() + "\n"));
 /** requirements.md as it stands, "" where it does not exist. */
 const currentRequirements: Effect.Effect<string, RunError, Store> = Effect.map(Effect.flatMap(Store, (store) => store.readContext()), ({ requirements }) => requirements ?? "");
 
 /**
- * The interview's result, written from Claude Code's summary. Issue #47: Claude Code classifies each accepted finding of
+ * The clarification's result, written from Claude Code's summary. Issue #47: Claude Code classifies each accepted finding of
  * its review (`findings`); the answers the user already gave and the corrections that need none are written into
- * requirements.md from the response, and only the unresolved and the reopened findings are put to the user in a second
- * interview, so where every finding is answered or corrected the requirements are reviewed again with no interview.
+ * requirements.md from the response, and only the unresolved and the reopened findings are put to the user in a follow-up
+ * clarification, so where every finding is answered or corrected the requirements are reviewed again with no clarification.
  */
 export function requirementsSubject(): Subject<S.RequirementsResponse, S.RequirementsWrite> {
   const id = "requirements" as const;
@@ -242,19 +242,19 @@ export function requirementsSubject(): Subject<S.RequirementsResponse, S.Require
     applyDecisions: { prompt: prompts.requirementsApplyDecisionsPrompt, schema: S.RequirementsWrite, after: (output) => writeRequirements(output.requirements), validate: null },
     amend: (_review, response, round) =>
       Effect.gen(function* () {
-        const interviewed = interviewedOf(response.findings);
-        if (interviewed.length === 0) return;
+        const toClarify = clarificationFindingsOf(response.findings);
+        if (toClarify.length === 0) return;
         const { root } = yield* Store;
-        yield* interview(
-          prompts.interviewGapsPrompt(root, recordPath(root, { kind: "review", subject: id, round }), interviewed),
-          interviewed.map((f) => f.id),
+        yield* followUpClarification(
+          prompts.followUpClarificationPrompt(root, recordPath(root, { kind: "review", subject: id, round }), toClarify),
+          toClarify.map((f) => f.id),
         );
       }),
     proceed: prompts.PROCEED_TO_PLANNING,
     onAcceptance: "continue",
     leaveOnDecision: false,
     // Issue #47: findingsValidation requires a changed document wherever a finding is answered or corrected, so the
-    // unchanged pause arises only where the interviewed findings left the file as it was; its Retry is another interview.
+    // unchanged pause arises only where the findings to clarify left the file as it was; its Retry is another clarification.
     onUnchanged: "pause",
     disputesSettledBy: "user",
     reviewSchema: S.Review,

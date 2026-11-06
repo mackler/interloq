@@ -7,10 +7,10 @@ import * as prompts from "../src/prompts.ts";
 import { ack, questionEntry, questionText, summaryReply, tempRepo, testLayer, presentedQuestions, TEST_ROOT, runRefinement, refinementFails, type ScriptedAnswer, type TestOptions } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 
-// Step 4.6 (finding 8; Q4): the interview matches on turn variants, and the question list is normalised.
+// Step 4.6 (finding 8; Q4): the clarification matches on turn variants, and the question list is normalised.
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string, defaultAnswer = "A"): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: defaultAnswer });
-/** Issue #184: the first interview's request carrying Claude Code's answer to agreed question `id`. */
+/** Issue #184: the first clarification's request carrying Claude Code's answer to agreed question `id`. */
 const answered = (id: string, option: string) => `The user answers agreed question ${id} with the option ${JSON.stringify(option)}.`;
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
 
@@ -51,9 +51,9 @@ test("a default answer that names no proposed answer is recorded as null, with a
   assert.match(read(probe.dir, "conversation.md"), /default answer.*Q1.*C/i);
 });
 
-// Plan step 1.5: the question phase is a phase of the progress display, and each interview turn is an event
+// Plan step 1.5: the question phase is a phase of the progress display, and each clarification turn is an event
 // emitted before the lines said for that turn, which stay unchanged.
-test("the question phase notifies its beginning and end and every interview turn before its lines", async () => {
+test("the question phase notifies its beginning and end and every clarification turn before its lines", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "more"],
     steps: [{ output: { questions: [q("Q1")] } }],
@@ -69,24 +69,24 @@ test("the question phase notifies its beginning and end and every interview turn
   assert.deepEqual(probe.ui.notified[2], { _tag: "PhaseBegan", phase: { kind: "update" } });
   const questionsBegan = probe.ui.notified.findIndex((e) => e._tag === "PhaseBegan" && e.phase.kind === "questions");
   assert.ok(questionsBegan > 2);
-  const turns = probe.ui.notified.filter((e) => e._tag === "InterviewTurn");
+  const turns = probe.ui.notified.filter((e) => e._tag === "ClarificationTurn");
   assert.deepEqual(turns, [
-    { _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Anything to add?", summary: null, answered: 1, total: 1 },
-    { _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Done.", summary: "# Requirements\n\nNone.", answered: 1, total: 1 },
+    { _tag: "ClarificationTurn", heading: prompts.clarificationHeading("first"), message: "Anything to add?", summary: null, answered: 1, total: 1 },
+    { _tag: "ClarificationTurn", heading: prompts.clarificationHeading("first"), message: "Done.", summary: "# Requirements\n\nNone.", answered: 1, total: 1 },
   ]);
   // Issue #21: the clarification counts the agreed questions.
-  assert.deepEqual(probe.ui.notified.find((e) => e._tag === "InterviewOpened"), { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 1 });
+  assert.deepEqual(probe.ui.notified.find((e) => e._tag === "ClarificationOpened"), { _tag: "ClarificationOpened", heading: prompts.clarificationHeading("first"), stage: "first", total: 1 });
   assert.ok(probe.ui.notified.some((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions"));
   // Issue #120: a refinement run is the question phase alone; nothing begins after it ends.
   assert.equal(tags.lastIndexOf("PhaseBegan"), questionsBegan, "a phase began after the question phase");
   // The line said for a turn is unchanged; issue #138: no question is presented after the turn that carries the summary.
   assert.ok(probe.ui.said.includes("\nAnything to add?\n"));
-  const summaryTurn = probe.ui.notified.findIndex((e) => e._tag === "InterviewTurn" && e.summary !== null);
+  const summaryTurn = probe.ui.notified.findIndex((e) => e._tag === "ClarificationTurn" && e.summary !== null);
   assert.ok(!probe.ui.notified.slice(summaryTurn).some((e) => e._tag === "QuestionPresented"), "a question was presented after the summary");
 });
 
-// Finding 8 of docs/gui-review.md: the interview's opening help is a structured event, rendered per interface.
-test("the interview's opening is an InterviewOpened event, not a say", async () => {
+// Finding 8 of docs/gui-review.md: the clarification's opening help is a structured event, rendered per interface.
+test("the first clarification's opening is a ClarificationOpened event, not a say", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A"],
     steps: [{ output: { questions: [q("Q1")] } }],
@@ -94,7 +94,7 @@ test("the interview's opening is an InterviewOpened event, not a say", async () 
     reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
-  assert.ok(probe.ui.notified.some((e) => e._tag === "InterviewOpened"), "no InterviewOpened event");
+  assert.ok(probe.ui.notified.some((e) => e._tag === "ClarificationOpened"), "no ClarificationOpened event");
   assert.ok(!probe.ui.said.some((line) => line.includes('"""')), "a multiline convention was said");
 });
 
@@ -161,12 +161,12 @@ test("Help me decide on an agreed question names the question as reviewed, not C
   assert.equal(analyzed?._tag === "DecisionAnalyzed" ? analyzed.question : null, dbQuestion);
   const analysisPrompt = probe.planner.prompts.find((p) => p.includes("The decision: "));
   assert.match(analysisPrompt ?? "", new RegExp(`The decision: ${dbQuestion.replace(/[?]/g, "\\?")}\n`));
-  // The user still reads Claude's message in the interview.
+  // The user still reads Claude's message in the clarification.
   assert.ok(probe.ui.said.some((line) => line.includes("Q3 recorded")), probe.ui.said.join("\n"));
 });
 
 // Issue #184: a closing reply that neither proposes the summary nor asks a follow-up is the only reply question of the
-// first interview.
+// first clarification.
 test("a closing reply without a summary or a follow-up asks for the user's reply, its message the context, with no option and no offer", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "more text"],
@@ -208,7 +208,7 @@ const premisedScenario = (answer: string, closing: unknown, repairs: readonly un
   return built;
 };
 
-test("a question whose premise the user denied is skipped, recorded and not counted, and the interview completes without /done", async () => {
+test("a question whose premise the user denied is skipped, recorded and not counted, and the clarification completes without /done", async () => {
   const { layer, probe } = premisedScenario("1", summaryReply(SUMMARY, "Complete."), []);
   await runRefinement(layer);
   assert.deepEqual(presentedIds(probe), ["Q1"]);
@@ -217,7 +217,7 @@ test("a question whose premise the user denied is skipped, recorded and not coun
   assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes(answered("Q1", "A")) && p.includes(note)), probe.planner.clarificationPrompts.join("\n---\n"));
   assert.ok(read(probe.dir, "conversation.md").includes(`**Note:** ${note}`));
   assert.ok(probe.ui.said.some((line) => line.includes(note)));
-  const counts = probe.ui.notified.flatMap((e) => (e._tag === "InterviewCounted" ? [`${e.answered} of ${e.total}`] : []));
+  const counts = probe.ui.notified.flatMap((e) => (e._tag === "ClarificationCounted" ? [`${e.answered} of ${e.total}`] : []));
   assert.deepEqual(counts, ["1 of 1"]);
   assert.match(read(probe.dir, "requirements.md"), /Skipped questions/);
 });
@@ -225,19 +225,19 @@ test("a question whose premise the user denied is skipped, recorded and not coun
 // Issue #184: Interloq presents the agreed questions itself, so a question whose premise was denied, or one before its
 // premise, can no longer be asked; the summary that omits a skipped question still gets the repair turn, and a second
 // such summary halts.
-test("a skipped question is never presented, and a summary that omits it twice halts with InterviewTurnInvalid", async () => {
+test("a skipped question is never presented, and a summary that omits it twice halts with ClarificationTurnInvalid", async () => {
   const omitting = summaryReply("# Requirements\n\nQ1: A", "Complete.");
   const { layer, probe } = premisedScenario("1", omitting, [omitting]);
-  await refinementFails(layer, "InterviewTurnInvalid", /Q2/);
+  await refinementFails(layer, "ClarificationTurnInvalid", /Q2/);
   assert.deepEqual(presentedIds(probe), ["Q1"]);
-  assert.ok(probe.planner.clarificationPrompts.includes(prompts.clarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
-  assert.ok(prompts.clarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }]).includes("Q2"));
+  assert.ok(probe.planner.clarificationPrompts.includes(prompts.firstClarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
+  assert.ok(prompts.firstClarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }]).includes("Q2"));
 });
 
 test("a summary that omits a skipped question gets the repair turn, and the repaired summary is written", async () => {
   const { layer, probe } = premisedScenario("1", summaryReply("# Requirements\n\nQ1: A", "Complete."), [summaryReply(SUMMARY, "Complete.")]);
   await runRefinement(layer);
-  assert.ok(probe.planner.clarificationPrompts.includes(prompts.clarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
+  assert.ok(probe.planner.clarificationPrompts.includes(prompts.firstClarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
   assert.match(read(probe.dir, "requirements.md"), /Skipped questions/);
 });
 
@@ -253,18 +253,18 @@ test("a free-text answer to the premise question skips nothing: the dependent qu
   assert.ok(!read(probe.dir, "conversation.md").includes("not asked"));
 });
 
-test("the interview's prompts exclude the skipped questions from completion and coverage", () => {
-  assert.match(prompts.interviewOpenPrompt(TEST_ROOT), /Cover every agreed question except those the program reports skipped/);
-  assert.match(prompts.interviewOpenPrompt(TEST_ROOT), /complete: true only when every agreed question has been answered or the program has reported it skipped/);
-  assert.match(prompts.interviewDonePrompt, /skipped/);
+test("the clarification's prompts exclude the skipped questions from completion and coverage", () => {
+  assert.match(prompts.clarificationTurnOpenPrompt(TEST_ROOT), /Cover every agreed question except those the program reports skipped/);
+  assert.match(prompts.clarificationTurnOpenPrompt(TEST_ROOT), /complete: true only when every agreed question has been answered or the program has reported it skipped/);
+  assert.match(prompts.clarificationDonePrompt, /skipped/);
   assert.match(prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"), /Skipped questions/);
-  assert.match(prompts.interviewGapsPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]), /premise the user denied/);
+  assert.match(prompts.followUpClarificationPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]), /premise the user denied/);
 });
 
 // W1-R1-1: a summary that names Q20 does not name the skipped Q2; it gets the repair turn.
 test("a summary naming a longer id that contains a skipped question's id gets the repair turn", async () => {
   const { layer, probe } = premisedScenario("1", summaryReply("# Requirements\n\nQ1: A\nQ20: answered.", "Complete."), [summaryReply(SUMMARY, "Complete.")]);
   await runRefinement(layer);
-  assert.ok(probe.planner.clarificationPrompts.includes(prompts.clarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
+  assert.ok(probe.planner.clarificationPrompts.includes(prompts.firstClarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
   assert.match(read(probe.dir, "requirements.md"), /Skipped questions/);
 });

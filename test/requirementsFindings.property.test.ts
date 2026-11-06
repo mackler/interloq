@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
 import type { Disposition, RequirementFinding } from "../src/schema.ts";
-import { findingsProblems, interviewedOf, writtenOf } from "../src/requirementsFindings.ts";
+import { findingsProblems, clarificationFindingsOf, writtenOf } from "../src/requirementsFindings.ts";
 
 // Issue #47: the classification of the requirements review's accepted findings.
 const RUNS = { numRuns: 200, seed: 20261103 };
@@ -29,14 +29,14 @@ test("one valid finding per accepted id and a changed document have no problem",
   );
 });
 
-test("interviewedOf and writtenOf partition the findings, each in order", () => {
+test("clarificationFindingsOf and writtenOf partition the findings, each in order", () => {
   fc.assert(
     fc.property(validCase, ([, fs]) => {
-      const interviewed = interviewedOf(fs).map((f) => f.id);
+      const toClarify = clarificationFindingsOf(fs).map((f) => f.id);
       const written = writtenOf(fs).map((f) => f.id);
-      assert.deepEqual(interviewed, fs.filter((f) => f.kind === "unresolved" || f.kind === "reopened").map((f) => f.id));
+      assert.deepEqual(toClarify, fs.filter((f) => f.kind === "unresolved" || f.kind === "reopened").map((f) => f.id));
       assert.deepEqual(written, fs.filter((f) => f.kind === "answered" || f.kind === "corrected").map((f) => f.id));
-      assert.equal(interviewed.length + written.length, fs.length);
+      assert.equal(toClarify.length + written.length, fs.length);
     }),
     RUNS,
   );

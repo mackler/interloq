@@ -127,7 +127,7 @@ test("(d) a rejected answer, /decide and /terms during the wait: the question is
   assert.equal(json(probe.dir, "decision-1/chosen.json").option, "PostgreSQL");
 });
 
-test("(d) a blank message during the wait at an interview message prompt is rejected", async () => {
+test("(d) a blank message during the wait at a clarification message prompt is rejected", async () => {
   const answered = signal();
   const { layer, probe } = await setUp({
     answers: ["/decide", { during: "" }, "2"],
@@ -136,7 +136,7 @@ test("(d) a blank message during the wait at an interview message prompt is reje
   });
   const done = Effect.runPromiseExit(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.interviewMessagePrompt, draft, (m) => m !== "");
+    return yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.clarificationMessagePrompt, draft, (m) => m !== "");
   }).pipe(Effect.provide(layer)));
   await until(() => probe.ui.order.includes("during"));
   answered.resolve();

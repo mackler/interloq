@@ -19,7 +19,7 @@ export const NUMBERED_PHASE_KINDS = ["planning", "execution", "work", "suite"] a
 export type NumberedPhaseKind = (typeof NUMBERED_PHASE_KINDS)[number];
 export type Phase = Readonly<{ kind: "update" }> | Readonly<{ kind: "questions" }> | Readonly<{ kind: NumberedPhaseKind; n: number }>;
 /** Which conversation with the user runs (issue #21): the first clarification, or a follow-up on accepted requirements gaps. An empty agreed list opens none (issue #83). */
-export type InterviewStage = "clarification" | "followUp";
+export type ClarificationStage = "first" | "followUp";
 export type { Agent } from "./agents.ts";
 export type LoopResult = "converged" | "proceed" | "revise";
 
@@ -66,9 +66,9 @@ export type UiEvent =
   | Readonly<{ _tag: "WaitEndedEarly"; wait: number }>
   | Readonly<{ _tag: "UsageLimitLifted"; agent: Agent; limitType: string | null; waitedMs: number }>
   /** `answered` of `total` questions so far (issue #21): the agreed ones and the follow-ups Claude reports asking. */
-  | Readonly<{ _tag: "InterviewTurn"; heading: string; message: string; summary: string | null; answered: number; total: number }>
+  | Readonly<{ _tag: "ClarificationTurn"; heading: string; message: string; summary: string | null; answered: number; total: number }>
   /** Issue #184: the clarification's count, which Interloq updates as each answer is given, between Claude Code's replies. */
-  | Readonly<{ _tag: "InterviewCounted"; answered: number; total: number }>
+  | Readonly<{ _tag: "ClarificationCounted"; answered: number; total: number }>
   /**
    * Claude Code begins writing the explanations of the agreed questions' terms before the first question (issue #142),
    * reviewed or not; never notified for one question's terms written on request.
@@ -76,8 +76,8 @@ export type UiEvent =
   | Readonly<{ _tag: "TermsBegan" }>
   /** Issue #205: the agreed question list is known, with `count` questions; notified once per question phase, before any terms or question. */
   | Readonly<{ _tag: "QuestionsAgreed"; count: number }>
-  /** The interview begins; each interface renders its own help (finding 8 of docs/gui-review.md). */
-  | Readonly<{ _tag: "InterviewOpened"; heading: string; stage: InterviewStage; total: number }>
+  /** The clarification begins; each interface renders its own help (finding 8 of docs/gui-review.md). */
+  | Readonly<{ _tag: "ClarificationOpened"; heading: string; stage: ClarificationStage; total: number }>
   /**
    * Claude Code's prose during an execution call, attributed as data (issue #5); the page shows it as Claude's message.
    * Issue #40: `running` is the names of Claude Code's own processes of the same call (foreground Bash commands,
@@ -196,15 +196,15 @@ export const describeEvent = (event: UiEvent): string => {
       return usageLimitLiftedLine(event.agent, event.limitType, event.waitedMs);
     case "WaitEndedEarly":
       return `you ended wait ${event.wait} early`;
-    case "InterviewTurn":
+    case "ClarificationTurn":
       return `${event.heading} (${event.answered} of ${event.total} answered): ${event.message}`;
-    case "InterviewCounted":
+    case "ClarificationCounted":
       return `${event.answered} of ${event.total} answered`;
     case "TermsBegan":
       return "explanations of terms begun";
     case "QuestionsAgreed":
       return `agreed question list: ${plural(event.count, "question")}`;
-    case "InterviewOpened":
+    case "ClarificationOpened":
       return `${event.heading} opened, ${plural(event.total, "question")}`;
     case "ClaudeSaid": {
       const note = runningNote(event.running);

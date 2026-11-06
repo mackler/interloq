@@ -54,7 +54,7 @@ export type StepReporter = (id: string, status: "started" | "done") => Effect.Ef
 export type ReviewerError = CodexCallFailed | StoreError;
 
 /**
- * Issue #153: how the answer to a question is read: a one-line prompt (`parseAskLine`, "q" ends the run) or an interview
+ * Issue #153: how the answer to a question is read: a one-line prompt (`parseAskLine`, "q" ends the run) or a clarification
  * message (`parseMessage`, "/quit" ends the run).
  */
 export type AskKind = "line" | "message";
@@ -100,7 +100,7 @@ export interface UiShape {
    * what the question's expiry does: end the run, or (a review's limit) extend the review.
    */
   readonly ask: (prompt: string) => Effect.Effect<string, UserStopped | NoAnswer>;
-  /** Reads one message of the interview (the page's reply field). The message "/quit" fails with UserStopped; NoAnswer as for ask. */
+  /** Reads one message of the clarification (the page's reply field). The message "/quit" fails with UserStopped; NoAnswer as for ask. */
   readonly askMessage: (prompt: string) => Effect.Effect<string, UserStopped | NoAnswer>;
   /** A structured event of the run (decision Q5). The page shows it; the records do not depend on it. */
   readonly notify: (event: UiEvent) => Effect.Effect<void>;
@@ -126,9 +126,9 @@ export interface UiShape {
 }
 export class Ui extends Context.Service<Ui, UiShape>()("plan-review/Ui") {}
 
-/** What a planning call is for, as the activity line names it; the interview also says its tool use. */
+/** What a planning call is for, as the activity line names it; the clarification also says its tool use. */
 /** "context": the call that writes a question's context paragraph and terms (S9), in a fresh session, with the capability "readProject". */
-export type PlanningPurpose = "planning" | "interview" | "context";
+export type PlanningPurpose = "planning" | "clarification" | "context";
 /**
  * The purpose a Codex review turn and an execution call announce in AgentCallStarted and put on their wait events, so that
  * the page clears a wait only at the waited call's own start or end (W4-R2-1 of issue #184).

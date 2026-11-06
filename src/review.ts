@@ -307,7 +307,7 @@ export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string
             return yield* Effect.fromResult(result);
           });
         // S10: the context call of a question does not ask a question of its own when its retries are exhausted (FAIL, the
-        // default for it); issue #184: the first interview's requests try again in the background while the developer answers.
+        // default for it); issue #184: the first clarification's requests try again in the background while the developer answers.
         return yield* withTransportRetry("claude", purpose, transportWhat(purpose), attempt, check, exhaustion);
       });
     const first = yield* call(prompt);
@@ -552,7 +552,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
             return yield* loopScoped(prompts.decisionPrompt, decisionDraft(heading, { kind: "pause", facts: q.facts }, [], within, pass), () => true);
           case "unchanged": {
             const origin: QuestionOrigin = { kind: "unchanged", heading, pass, fileLabel, accepted: q.accepted };
-            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.unchangedQuestion(heading, fileLabel)), options: unchangedOptions(q.retry === "interview", pass), explain: prompts.unchangedFacts(heading, fileLabel, q.accepted, pass), decision: within };
+            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.unchangedQuestion(heading, fileLabel)), options: unchangedOptions(q.retry === "clarification", pass), explain: prompts.unchangedFacts(heading, fileLabel, q.accepted, pass), decision: within };
             return yield* loopScoped(prompts.unchangedPrompt, draft, (a) => parseUnchangedAnswer(a) !== null);
           }
           case "dispute": {

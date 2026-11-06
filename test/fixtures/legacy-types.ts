@@ -44,7 +44,7 @@ export type PlannerResponse = {
 
 export type PlanWriteResult = { questions_for_user: string[] };
 
-/** One entry of the question list that Claude Code and Codex agree on before the interview. */
+/** One entry of the question list that Claude Code and Codex agree on before the clarification. */
 export type QuestionEntry = {
   id: string;
   question: string;
@@ -58,8 +58,8 @@ export type QuestionList = { questions: QuestionEntry[] };
 /** A response to a review of the question list: the dispositions and the complete amended list. */
 export type QuestionListResponse = PlannerResponse & QuestionList;
 
-/** Claude Code's output for one turn of the interview. */
-export type InterviewTurn = {
+/** Claude Code's output for one turn of the clarification. */
+export type ClarificationTurn = {
   message_to_user: string;
   answered_ids: string[];
   complete: boolean;

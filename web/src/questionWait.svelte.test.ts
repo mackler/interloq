@@ -134,7 +134,7 @@ describe("the question while its analysis is prepared", () => {
   test("Enter in the message field while starting sends nothing and keeps the text", async () => {
     seq = 3;
     const { root, ws } = await openPage();
-    begin(ws, prompts.interviewMessagePrompt);
+    begin(ws, prompts.clarificationMessagePrompt);
     helpMeDecide(root)!.click();
     flushSync();
     event(ws, { _tag: "Answered", prompt: 1, text: "/decide" });

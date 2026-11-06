@@ -14,7 +14,7 @@ import { storeLayer } from "../src/store.ts";
 import { FakeSdk, init, messages, success, turn, type Script } from "./fakeSdk.ts";
 import { finished, pathsOf, type PlanningStep, runFails, runTask, ScriptedPlanner, ScriptedReviewer, ScriptedUi, scriptedPlan, tempRepo, testLayer, withDecider, questionEntry , ack, summaryReply, TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
 
-// Decision Q5: an invalid structured reply in a planning, interview or review call gets one repair
+// Decision Q5: an invalid structured reply in a planning, clarification or review call gets one repair
 // turn in the same session or thread; a second invalid reply stops the run, and both replies are kept.
 const REPAIR = /^Your structured output did not match the required schema/;
 const noQuestions = { questions_for_user: [] };
@@ -62,7 +62,7 @@ test("a second invalid Codex reply stops the run with AgentReplyInvalid naming b
   await runFails(layer, "AgentReplyInvalid", /Codex/, /codex-1\.json/, /codex-2\.json/);
 });
 
-test("an interview reply is validated the same way", async () => {
+test("a clarification reply is validated the same way", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1"],
     steps: [{ output: { questions: [questionEntry("Q1", "Which database should the service use?", [["PostgreSQL", "p"], ["SQLite", "s"]], { context: "c" })] } }],

@@ -36,7 +36,7 @@
 
    Decode external strings into branded identifiers and explicit optional/reference variants. Validate references against the relevant history. Keep free-form problem/evidence text as text: it does not need an elaborate algebraic type.
 
-8. **Medium — Interview and execution types admit contradictory states.** [src/schema.ts:54](../src/schema.ts#L54), [src/schema.ts:71](../src/schema.ts#L71), [src/schema.ts:78](../src/schema.ts#L78), [src/schema.ts:85](../src/schema.ts#L85), [src/interview.ts:28](../src/interview.ts#L28).
+8. **Medium — Interview and execution types admit contradictory states.** [src/schema.ts:54](../src/schema.ts#L54), [src/schema.ts:71](../src/schema.ts#L71), [src/schema.ts:78](../src/schema.ts#L78), [src/schema.ts:85](../src/schema.ts#L85), [src/gatherRequirements.ts:28](../src/gatherRequirements.ts#L28).
 
    `complete: true` can carry an empty summary; `finished` can carry pending input and remaining work; `needs_input` can have no question. A question default need not name a proposed answer, and question/answer IDs have no uniqueness or membership validation. `answered_ids` is decoded but not used to track coverage. The workflow compensates with conditionals or trusts the agent.
 
@@ -106,7 +106,7 @@
 
     `Json` is only `Record<string, unknown>`, and `$ref` resolution assumes a present, simple, acyclic local definition. A missing reference was confirmed to return `undefined` despite the declared `Json` result; cyclic definitions recurse indefinitely. Reference siblings are dropped and traversal treats arbitrary object-valued keywords as schema nodes. The current seven schemas use the raw path, so this is a latent fallback defect, not a current agent-call failure. Either restrict and validate the supported schema subset or return a typed unsupported-schema error. Its local result-object mutation is otherwise compatible with a pure transform.
 
-25. **Low — Small orchestration helpers still use implicit mutable state and string commands.** [src/review.ts:108](../src/review.ts#L108), [src/run.ts:24](../src/run.ts#L24), [src/run.ts:32](../src/run.ts#L32), [src/run.ts:50](../src/run.ts#L50), [src/interview.ts:22](../src/interview.ts#L22), [src/interview.ts:41](../src/interview.ts#L41), [src/ui.ts:73](../src/ui.ts#L73).
+25. **Low — Small orchestration helpers still use implicit mutable state and string commands.** [src/review.ts:108](../src/review.ts#L108), [src/run.ts:24](../src/run.ts#L24), [src/run.ts:32](../src/run.ts#L32), [src/run.ts:50](../src/run.ts#L50), [src/gatherRequirements.ts:22](../src/gatherRequirements.ts#L22), [src/gatherRequirements.ts:41](../src/gatherRequirements.ts#L41), [src/ui.ts:73](../src/ui.ts#L73).
 
     Repair mutates `last` inside `Effect.map`; run tracks `k`, `answered`, and `input`; interview tracks `prompt` and `reply`; multiline parsing tracks `block` and `collected`. Empty strings and `/done`, `p`, `q`, `y` are interpreted across multiple modules. Return repaired output together with its metadata, extract reusable nonempty-input effects, and parse terminal commands into variants at a context-aware boundary. Simple sequential loops can remain where they are clearer than a reducer; the command semantics matter more than eliminating every `let`.
 
@@ -118,7 +118,7 @@
 
     Configuration loading, platform wiring, Git snapshots, archival, generic file writing, domain logs, Markdown rendering, invalid replies, and usage aggregation live together. The usage fold is pure business logic embedded in file I/O; callers receive the formatted string rather than a structured summary. Extract those pure calculations and record renderers first. Split service capabilities where distinct consumers justify it, rather than creating one service for every function.
 
-28. **Low — Workflow modules form an avoidable runtime cycle, and paths are repeated as protocol strings.** [src/interview.ts:10](../src/interview.ts#L10), [src/subjects.ts:5](../src/subjects.ts#L5), [src/subjects.ts:51](../src/subjects.ts#L51), [src/prompts.ts:6](../src/prompts.ts#L6), [src/prompts.ts:173](../src/prompts.ts#L173), [src/store.ts:64](../src/store.ts#L64).
+28. **Low — Workflow modules form an avoidable runtime cycle, and paths are repeated as protocol strings.** [src/gatherRequirements.ts:10](../src/gatherRequirements.ts#L10), [src/subjects.ts:5](../src/subjects.ts#L5), [src/subjects.ts:51](../src/subjects.ts#L51), [src/prompts.ts:6](../src/prompts.ts#L6), [src/prompts.ts:173](../src/prompts.ts#L173), [src/store.ts:64](../src/store.ts#L64).
 
     `interview.ts` imports subject factories while `subjects.ts` imports `interview`. Deferred invocation makes this work today, but it couples generic subject description to orchestration. Subject/store/prompt code independently reconstructs log and round paths, and plan completion remains a prose marker interpreted by the agents. Move conversation execution into a module below subject composition, or inject the amendment operation. Centralize artifact identity and path rendering. A structured plan-step format is only worthwhile if the orchestrator needs to validate progress; natural-language plans are an intentional product feature.
 

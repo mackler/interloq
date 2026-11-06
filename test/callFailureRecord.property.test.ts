@@ -81,7 +81,7 @@ const failure: fc.Arbitrary<ClaudeFailure> = fc.record({
   resultText: nullable(fc.string()),
   processEnd: nullable(fc.oneof(fc.record({ kind: fc.constant("signal" as const), signal: fc.string() }), fc.record({ kind: fc.constant("exit" as const), code: fc.integer() }))),
 });
-const input = fc.record({ session: nullable(fc.string()), purpose: fc.constantFrom("planning" as const, "interview" as const, "context" as const, "execution" as const), callId: fc.string(), message: fc.string(), failure });
+const input = fc.record({ session: nullable(fc.string()), purpose: fc.constantFrom("planning" as const, "clarification" as const, "context" as const, "execution" as const), callId: fc.string(), message: fc.string(), failure });
 const r = (t: string | null, secrets: readonly string[]) => (t === null ? null : redact(t, secrets));
 
 test("property: every string fact of the line is redact of the input's fact", () => {

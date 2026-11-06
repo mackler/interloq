@@ -97,9 +97,9 @@ test("the reason field carries the evidence both sides need, and the contract is
   assert.deepEqual(Object.keys(S.QuestionEntry.fields).sort(), ["context", "default_answer", "history", "id", "proposed_answers", "question", "reason", "skip_if"].sort());
 });
 
-test("a follow-up question of the first interview is held to the same determination of need", () => {
-  const rules = prompts.clarificationOpenPrompt(TEST_ROOT);
-  assert.ok(rules.includes(prompts.questionWritingRules()), "the interview carries the writer's rules, whetherToAsk among them");
+test("a follow-up question of the first clarification is held to the same determination of need", () => {
+  const rules = prompts.firstClarificationOpenPrompt(TEST_ROOT);
+  assert.ok(rules.includes(prompts.questionWritingRules()), "the clarification carries the writer's rules, whetherToAsk among them");
   assert.match(rules, /for which an answer has shown that you need the user's knowledge or decision/);
   assert.match(rules, /is not itself a reason to ask about it/);
   assert.match(rules, /settle anything else yourself from the codebase/);
