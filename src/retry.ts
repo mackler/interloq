@@ -1,7 +1,9 @@
 // The transport retry of issue #26: a call that produced no reply, because of a transport fault, is made again with
 // backoff; when the retries are exhausted the user decides.
 
-import { Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result } from "effect";
+import type { Agent } from "./agents.ts";
+import { ANSWERED, reportEarlyEnd, sayAndWrite, type WaitOutcome, waitOutLimit } from "./limitWait.ts";
+import { Clock, Deferred, Duration, Effect, Fiber, Option, Result } from "effect";
 import { AgentUnreachable, type ProcessEnded, type RunError, type TransportFault, type UsageLimited, type UserStopped } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { CLOSED_SLOT, closeSlot, openBeside, type OpenBeside, openInSlot, programContext, type QuestionDraft, type SlotCell, slotQuestion, transportOptions } from "./offer.ts";
@@ -10,7 +12,6 @@ import * as prompts from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
 import type { Config } from "./schema.ts";
 import { exhaustedStep, networkRetryDelaySeconds } from "./retryPolicy.ts";
-import type { LimitWait, LimitWaitBegan } from "./usage.ts";
 import { type Decider, RunConfig, Store, Ui } from "./services.ts";
 
 /** The waits before repeat 1, 2, …, count in seconds: the first wait, doubled on each further repeat (issues #26, #171). */
@@ -21,7 +22,7 @@ export const backoffDelays = (count: number, firstSeconds: number): readonly num
 export const retryDelays = (config: Pick<Config, "maxTransportRetries" | "transportRetryDelaySeconds">): readonly number[] =>
   backoffDelays(config.maxTransportRetries, config.transportRetryDelaySeconds);
 
-import { type LimitWaitState, NO_LIMIT_WAIT, planLimitWait, USAGE_LIMIT_MARGIN_SECONDS, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
+import { type LimitWaitState, NO_LIMIT_WAIT, USAGE_LIMIT_MARGIN_SECONDS, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
 export { USAGE_LIMIT_MARGIN_SECONDS };
 
 /**
@@ -42,8 +43,7 @@ export const ASK: Exhaustion = { kind: "ask" };
 export const FAIL: Exhaustion = { kind: "fail" };
 
 /** How a wait of the loop ended: by itself, or by the open exhaustion question's answer (W1-R1-1). */
-type WaitOutcome<W> = Readonly<{ _tag: "Waited"; value: W }> | Readonly<{ _tag: "Answered" }>;
-const ANSWERED: Readonly<{ _tag: "Answered" }> = { _tag: "Answered" };
+
 
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
 const isUserStopped = (e: unknown): e is UserStopped => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "UserStopped";
@@ -66,7 +66,7 @@ const isLimited = (e: unknown): e is UsageLimited => typeof e === "object" && e 
  * (W4-R2-1 of issue #184).
  */
 export const withTransportRetry = <A, E, R>(
-  agent: "claude" | "codex",
+  agent: Agent,
   purpose: string,
   what: string,
   attempt: (n: number) => Effect.Effect<A, E | TransportFault | UsageLimited, R>,
@@ -80,7 +80,7 @@ export const withTransportRetry = <A, E, R>(
   });
 
 const retrying = <A, E, R>(
-  agent: "claude" | "codex",
+  agent: Agent,
   purpose: string,
   what: string,
   attempt: (n: number) => Effect.Effect<A, E | TransportFault | UsageLimited, R>,
@@ -93,7 +93,8 @@ const retrying = <A, E, R>(
     const ui = yield* Ui;
     const store = yield* Store;
     const delays = retryDelays(config);
-    const say = (text: string) => ui.say(text).pipe(Effect.andThen(store.converse(`${text}\n\n`)));
+    const say = sayAndWrite(ui, store);
+    const earlyEnd = reportEarlyEnd(ui, store);
     let retried = 0;
     /** What the usage-limit waits of this call carry to its next refusal (issue #170); a transport fault clears it. */
     let limitState: LimitWaitState = NO_LIMIT_WAIT;
@@ -115,10 +116,9 @@ const retrying = <A, E, R>(
           const handle = yield* ui.openWait;
           yield* announce(handle.id);
           const end = yield* handle.sleepUntil(untilMs);
-          if (end === "endedEarly") yield* reportEarlyEnd(handle.id, subject);
+          if (end === "endedEarly") yield* earlyEnd(handle.id, subject);
         }),
       );
-    const reportEarlyEnd = (wait: number, subject: prompts.WaitSubject) => ui.notify({ _tag: "WaitEndedEarly", wait }).pipe(Effect.andThen(say(prompts.waitEndedLine(subject))));
     /**
      * Issue #243: the exhaustion question, open beside the call while Interloq keeps trying, in a Scope of its own: its
      * handle, and a Deferred its answer completes (set in the Ui's take, so the wait before the next try ends at once).
@@ -172,50 +172,10 @@ const retrying = <A, E, R>(
       }
       const error = result.failure;
       if (isLimited(error)) {
-        // Issues #68 and #170: a usage limit is waited out on the Clock, never asked, for as long as planLimitWait
-        // decides from its reset; the wait is recorded when it begins (issue #179: its start, scheduled end and basis,
-        // so that a process killed during it leaves the record) and as actually spent when it ends, an interrupted one
-        // included (P1-R1-1), before the program prints the summary. Only a stated reset's end is said to lift the
-        // limit; nothing written when the wait begins claims it.
+        // Issues #68, #170, #179, #215, #233 and #251: a refusal for a limit, of any agent, is waited out by the one wait
+        // of src/limitWait.ts; an answer that ended it, and a wait that ran out, both go on to the next attempt.
         faulted = false;
-        const fromMs = yield* Clock.currentTimeMillis;
-        const { basis, untilMs, next } = planLimitWait(error.reset, fromMs, limitState);
-        limitState = next;
-        const ranOut = basis.kind === "reset" ? "lifted" : "elapsed";
-        const began: LimitWaitBegan = { agent: error.agent, limitType: error.limitType, basis: basis.kind, fromMs, untilMs };
-        const record = (outcome: LimitWait["outcome"]) => Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ ...began, endedMs, outcome })));
-        // Issue #215: the developer may end the wait early; it is recorded as `ended`, and nothing says the limit lifted.
-        const observed = yield* observedWait(Effect.scoped(
-          Effect.gen(function* () {
-            const handle = yield* ui.openWait;
-            // Issues #233 and #251: the refusal's own text is said and written for every agent, so the real cause is seen, not only the wait.
-            yield* say(prompts.limitRefusalLine(error.agent, error.message));
-            yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, purpose, limitType: error.limitType, basis, fromMs, untilMs, wait: handle.id });
-            yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, basis, untilMs));
-            // One uninterruptible step from the begin record to the finalizer's attachment, so that an interruption between
-            // them takes effect only in the sleep, and the finalizer always clears the checkpoint's note.
-            const end = yield* Effect.uninterruptibleMask((restore) =>
-              store.recordLimitWaitBegan(began).pipe(Effect.andThen(restore(handle.sleepUntil(untilMs)).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? (exit.value === "endedEarly" ? "ended" : ranOut) : "interrupted"))))),
-            );
-            if (end === "endedEarly") yield* reportEarlyEnd(handle.id, { kind: "usageLimit", agent: error.agent, limitType: error.limitType });
-            return end;
-          }),
-        ));
-        // An answer that ended the wait interrupted its sleep, which the finalizer recorded as interrupted; nothing says
-        // the limit lifted, and the answer is read before the next attempt.
-        if (observed._tag === "Answered") {
-          yield* answeredNow(n, lastFault);
-          yield* beforeRetry;
-          continue;
-        }
-        const end = observed.value;
-        // A wait the developer ended was said above, and never said to lift the limit; a refusal after it is planned
-        // from `limitState`, as any refusal is.
-        if (end === "ranOut" && basis.kind === "reset") {
-          const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
-          yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, limitType: error.limitType, waitedMs });
-          yield* say(prompts.usageLimitLiftedLine(error.agent, error.limitType, waitedMs));
-        } else if (end === "ranOut") yield* say(prompts.usageLimitTryingAgainLine(error.agent, error.limitType));
+        limitState = (yield* waitOutLimit(error, purpose, limitState, observedWait)).next;
         yield* answeredNow(n, lastFault);
         yield* beforeRetry;
         continue;

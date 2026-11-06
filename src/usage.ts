@@ -1,6 +1,7 @@
 // The usage summary as a pure fold over the lines of usage.jsonl (findings 9 and 27 of the functional design
 // review; decision Q8). The store reads the lines; program.ts renders the summary.
 
+import type { Agent } from "./agents.ts";
 import type { LimitWaitBasis } from "./limitReset.ts";
 import type { LIMIT_WAIT_OUTCOMES } from "./schema.ts";
 import { durationText } from "./prompts.ts";
@@ -16,7 +17,7 @@ export type UsageLine =
  * the margin), recorded when the wait begins.
  */
 export type LimitWaitBegan = Readonly<{
-  agent: "claude" | "codex";
+  agent: Agent;
   limitType: string | null;
   /** What the wait rested on (issue #170). */
   basis: LimitWaitBasis["kind"];

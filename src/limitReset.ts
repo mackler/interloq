@@ -46,6 +46,11 @@ export type LimitReset =
   | Readonly<{ kind: "instant"; atMs: number }>
   | Readonly<{ kind: "timeOfDay"; at: TimeOfDay }>
   | Readonly<{ kind: "unknown" }>;
+/**
+ * A refusal for a limit, the same for every agent (issue #251): its reset and its kind of limit (`limit_type` in the
+ * records, null where the agent named none). Each adapter maps its own evidence into it; the wait knows no agent by it.
+ */
+export type LimitRefusal = Readonly<{ kind: "limited"; reset: LimitReset; limitType: string | null }>;
 
 /**
  * The one form of a reset in an error result's text that Interloq reads, the form seen on 15 Oct 2026:

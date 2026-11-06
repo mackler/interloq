@@ -1,6 +1,7 @@
 // The messages between the web page and the server (plan step 3.1), as Effect schemas so that both sides decode
 // the same way. Pure: no Node import (the browser imports this module).
 
+import { AGENTS } from "./agents.ts";
 import { FigureSchema } from "./figure.ts";
 import { CommandReportSchema } from "./testCounts.ts";
 import { type Ending, EndingSchema, UNESTABLISHED } from "./ending.ts";
@@ -212,7 +213,7 @@ const typed = <const T extends string, F extends Schema.Struct.Fields>(type: T, 
 const SubjectIdSchema = Schema.Union([Schema.Literal("update"), Schema.Literal("questions"), Schema.Literal("questionReading"), Schema.Literal("terms"), Schema.Literal("requirements"), Schema.Struct({ plan: Int }), Schema.Struct({ work: Int }), Schema.Struct({ decision: Int }), Schema.Struct({ verdict: Int })]);
 // Issue #162: the numbered kinds from src/uiEvents.ts, so the protocol and the run cannot disagree on them.
 const PhaseSchema = Schema.Union([Schema.Struct({ kind: Schema.Literal("update") }), Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(NUMBERED_PHASE_KINDS), n: Int })]);
-const AgentSchema = Schema.Literals(["claude", "codex"]);
+const AgentSchema = Schema.Literals(AGENTS);
 const round = { subject: SubjectIdSchema, round: Int };
 
 const withHeading = { heading: Str };

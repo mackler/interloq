@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
 import { type BackgroundState, type CallOutcome, checkBackground, claudeOpenProcesses, claudeOutputOf, claudeRunningNames, EMPTY_CLAUDE_OUTPUT, type OutputCommand, toolTarget, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
 import { sanitizedOutput } from "./liveOutput.ts";
-import { ClaudeCallFailed, ClaudeSessionTooLong, ProcessEnded, type RunError, TransportFault, UsageLimited } from "./errors.ts";
+import { ClaudeCallFailed, ClaudeSessionTooLong, limitRefusedBy, ProcessEnded, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode, networkCodeOf, type ProcessEnd, processEndOf } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
 import { costWarningOf } from "./usage.ts";
@@ -50,7 +50,7 @@ export const callFailure = (message: string, failure: ClaudeFailure | null): Cla
         networkCode: networkCodeOf(failure?.streamCode ?? null, [message, failure?.resultText ?? "", failure?.retrySeen?.error ?? ""]),
       });
     case "limited":
-      return new UsageLimited({ agent: "claude", message, reset: kind.reset, limitType: kind.limitType });
+      return limitRefusedBy("claude", message, kind);
     case "contextTooLong":
       return new ClaudeSessionTooLong({ message });
     case "permanent":

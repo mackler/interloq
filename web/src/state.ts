@@ -4,6 +4,7 @@
 // the same fold, so a tab that joins mid-run shows what a tab that watched from the start shows. The dashboard keeps no
 // timed list: the publication times (issue #1) and phase bands (issue #15) are the right panel's alone.
 
+import { AGENT_DISPLAY, type Agent } from "../../src/agents.ts";
 import { type Ending, endsAtItsEnd } from "../../src/ending.ts";
 import { type PreparationMark, type PreparationView, preparingItemOf } from "../../src/preparationSwitch.ts";
 import type { SubjectId } from "../../src/artifacts.ts";
@@ -555,7 +556,7 @@ export const startableOf = (state: ViewState, mode: RunMode): StartableItems =>
 /** The mode of a run's view, from its Started; null before it. */
 const modeOfRun = (run: RunView): RunMode | null => run.mode;
 
-const AGENT: Record<"claude" | "codex", string> = { claude: "Claude", codex: "Codex" };
+const AGENT: Record<Agent, string> = { claude: AGENT_DISPLAY.claude.short, codex: AGENT_DISPLAY.codex.short };
 const sameSubject = (a: SubjectId, b: SubjectId): boolean => JSON.stringify(a) === JSON.stringify(b);
 const isDecision = (subject: SubjectId): boolean => typeof subject === "object" && "decision" in subject;
 const samePhase = (a: Phase, b: Phase): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -1595,7 +1596,7 @@ export type Countdown = Readonly<{ fromMs: number; untilMs: number }>;
 /** A wait for a usage limit as the page holds it (issue #68). */
 /** Issue #215: a wait the developer may end early, with the id its announcing event carried. */
 export type EndableWait = Countdown & Readonly<{ waitId: number }>;
-export type LimitWait = EndableWait & Readonly<{ agent: "claude" | "codex"; purpose: string; limitType: string | null; basis: LimitWaitBasis }>;
+export type LimitWait = EndableWait & Readonly<{ agent: Agent; purpose: string; limitType: string | null; basis: LimitWaitBasis }>;
 
 /**
  * A retry while it lasts: an agent's call (issue #26) with the purpose the call announces (W4-R2-1 of issue #184), or a

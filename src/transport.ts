@@ -1,6 +1,6 @@
 // The classification of the agents' failures (issue #26): the one place where an SDK's failure is inspected to decide
 // whether a retry could fix it. Pure: no I/O, no Effect.
-import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, type LimitReset, timeOfDayIn } from "./limitReset.ts";
+import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, type LimitRefusal, type LimitReset, timeOfDayIn } from "./limitReset.ts";
 
 /**
  * What src/claudeEvents.ts keeps of a failed Claude Code call. The terminal facts (the result's status, reason and
@@ -100,7 +100,7 @@ export const processEndOf = (thrown: unknown): ProcessEnd | null => {
 export type FailureKind =
   | Readonly<{ kind: "permanent" }>
   | Readonly<{ kind: "transport" }>
-  | Readonly<{ kind: "limited"; reset: LimitReset; limitType: string | null }>
+  | LimitRefusal
   | Readonly<{ kind: "contextTooLong" }>
   | Readonly<{ kind: "processEnded"; end: ProcessEnd }>;
 
@@ -179,7 +179,7 @@ export const errorCode = (e: unknown): string | null => {
  * model's capacity; then any other 4xx is permanent; then a network code, a transport pattern or a 5xx is a transport
  * fault a retry could fix; anything else is permanent.
  */
-export type CodexFailureKind = Readonly<{ kind: "permanent" }> | Readonly<{ kind: "transport" }> | Readonly<{ kind: "limited"; reset: LimitReset; limitType: string }>;
+export type CodexFailureKind = Readonly<{ kind: "permanent" }> | Readonly<{ kind: "transport" }> | LimitRefusal;
 const CODEX_PERMANENT: CodexFailureKind = { kind: "permanent" };
 export const classifyCodex = (message: string, code: string | null = null, reset: LimitReset = UNKNOWN_RESET): CodexFailureKind => {
   const statuses = statusesIn(message);

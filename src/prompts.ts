@@ -30,6 +30,7 @@ import type { ReviewThread } from "./reviewThread.ts";
 import type { NonEmptyPaths } from "./commitCheck.ts";
 import type { WriteCheck } from "./errors.ts";
 import type { TrackerOperation } from "./trackerRetry.ts";
+import { AGENT_DISPLAY, AGENTS, type Agent } from "./agents.ts";
 import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, type LimitWaitBasis, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
 
 /**
@@ -3521,7 +3522,7 @@ const THREE_POSITIONS = "The options of this question are the two positions of a
 export const outcomeLabelsRule = (withResolution: boolean): string =>
   `${withResolution ? THREE_POSITIONS : TWO_POSITIONS} Write each option's label as the outcome the reader gets if he chooses it, from that position's own content, in the reader's terms, as this rule says: ${ruleTextOf("determinateOptions")} Name none of the agents in a label: no label may contain ${agentNamesText()}. The context and the history may name them.`;
 /** The agents' names, none of which an option's label of a disputed pause may carry (issue #159). */
-export const AGENT_NAMES = ["Claude Code", "Claude", "Codex"] as const;
+export const AGENT_NAMES: readonly string[] = [...new Set(AGENTS.flatMap((a) => [AGENT_DISPLAY[a].name, AGENT_DISPLAY[a].short]))];
 const AGENT_NAME_PATTERN = new RegExp(`\\b(?:${AGENT_NAMES.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "i");
 /** Whether a text names an agent: one of `AGENT_NAMES` as a whole word, in any case. */
 export const namesAgent = (text: string): boolean => AGENT_NAME_PATTERN.test(text);
@@ -3651,7 +3652,7 @@ export const TRANSPORT_RETRY_AGAIN = "Retry again";
 export const TRANSPORT_STOP = "Stop the run";
 export const TRANSPORT_ANSWERS = { retry: "r", stop: "s" } as const;
 export const transportPrompt = `${TRANSPORT_ANSWERS.retry} = retry again; ${TRANSPORT_ANSWERS.stop} = stop the run > `;
-const agentName = (agent: "claude" | "codex"): string => (agent === "claude" ? "Claude Code" : "Codex");
+const agentName = (agent: Agent): string => AGENT_DISPLAY[agent].name;
 export function transportOptionDescriptions(): Readonly<{ retry: string; stop: string }> {
   return {
     retry: "the call is made again, with another full set of retries and the waits between them starting again from the shortest.",
@@ -3694,7 +3695,7 @@ const RETRY_INTERVAL_TEXT = `${USAGE_LIMIT_RETRY_SECONDS / 60} minutes`;
  * (issue #170): a stated reset; a stated reset already past, tried again a minute later; or no stated end, tried every
  * 5 minutes. Only a stated reset is said to end the limit.
  */
-export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string | null, basis: LimitWaitBasis, untilMs: number): string {
+export function usageLimitWaitLine(agent: Agent, limitType: string | null, basis: LimitWaitBasis, untilMs: number): string {
   const reached = `${agentName(agent)}: ${limitName(limitType)} reached`;
   switch (basis.kind) {
     case "reset":
@@ -3706,7 +3707,7 @@ export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string 
   }
 }
 /** The end of a wait for a usage limit whose end was not stated (issue #170): a try, with no claim that the limit lifted. */
-export function usageLimitTryingAgainLine(agent: "claude" | "codex", limitType: string | null): string {
+export function usageLimitTryingAgainLine(agent: Agent, limitType: string | null): string {
   return `${agentName(agent)}: trying again after the wait for the ${waitedLimitNoun(limitType)}`;
 }
 /**
@@ -3720,7 +3721,7 @@ function waitedLimitNoun(limitType: string | null): string {
   return (limitType !== null && Object.hasOwn(WAIT_END_NOUNS, limitType) ? WAIT_END_NOUNS[limitType] : undefined) ?? "usage limit";
 }
 /** Issue #233 and #251: the failure an agent's adapter recorded for a request refused for a limit, said and written before the wait's line. */
-export function limitRefusalLine(agent: "claude" | "codex", message: string): string {
+export function limitRefusalLine(agent: Agent, message: string): string {
   return `${agentName(agent)} refused the request: ${message}`;
 }
 /**
@@ -3730,9 +3731,9 @@ export function limitRefusalLine(agent: "claude" | "codex", message: string): st
 export const END_WAIT_LABEL = "Try again now";
 /** Issue #215: the wait the developer ended early, by what it waited for. */
 export type WaitSubject =
-  | Readonly<{ kind: "usageLimit"; agent: "claude" | "codex"; limitType: string | null }>
-  | Readonly<{ kind: "retry"; agent: "claude" | "codex" }>
-  | Readonly<{ kind: "network"; agent: "claude" | "codex" }>
+  | Readonly<{ kind: "usageLimit"; agent: Agent; limitType: string | null }>
+  | Readonly<{ kind: "retry"; agent: Agent }>
+  | Readonly<{ kind: "network"; agent: Agent }>
   | Readonly<{ kind: "tracker"; tracker: string; what: string }>;
 /** Issue #215: the line said and written when the developer ends a wait: who ended it, and that the request is made again now; no claim that a limit lifted. */
 export function waitEndedLine(subject: WaitSubject): string {
@@ -3762,7 +3763,7 @@ export function networkRetryLine(agent: "claude" | "codex", what: string, code: 
   return `${agentName(agent)} could not be reached for ${what}: the network is unreachable (${code}); try ${attempt} in ${durationText(delaySeconds * 1000)}. Interloq keeps trying and continues by itself once ${agentName(agent)} answers; nothing is asked.`;
 }
 /** The end of a wait for a usage limit (issue #68). */
-export function usageLimitLiftedLine(agent: "claude" | "codex", limitType: string | null, waitedMs: number): string {
+export function usageLimitLiftedLine(agent: Agent, limitType: string | null, waitedMs: number): string {
   return `${agentName(agent)}: the ${waitedLimitNoun(limitType)} has lifted after ${durationText(waitedMs)}; continuing`;
 }
 /**

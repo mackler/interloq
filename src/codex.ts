@@ -2,7 +2,7 @@
 
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { Effect, Exit, Layer, Ref } from "effect";
-import { CodexCallFailed, TransportFault, UsageLimited } from "./errors.ts";
+import { CodexCallFailed, limitRefusedBy, TransportFault, type UsageLimited } from "./errors.ts";
 import type { LimitReset } from "./limitReset.ts";
 import { RecordedFailure } from "./codexArgs.ts";
 import { classifyCodex, errorCode, networkCodeOf } from "./transport.ts";
@@ -25,7 +25,7 @@ export const turnFailure = (message: string, code: string | null = null, reset: 
     case "transport":
       return new TransportFault({ agent: "codex", message, status: null, networkCode: networkCodeOf(code, [message]) });
     case "limited":
-      return new UsageLimited({ agent: "codex", message, reset: kind.reset, limitType: kind.limitType });
+      return limitRefusedBy("codex", message, kind);
     case "permanent":
       return new CodexCallFailed({ message });
   }

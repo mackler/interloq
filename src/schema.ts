@@ -2,6 +2,7 @@
 // (`typeof X.Type`), the JSON Schema for the agents (src/jsonSchema.ts) and runtime validation.
 // Replaces src/types.ts and src/schemas.ts. API names: docs/effect-v4-api.md.
 
+import { AGENTS } from "./agents.ts";
 import { type Brand, Effect, Result, Schema, SchemaIssue, Struct } from "effect";
 import { type ItemState, type StageLabels } from "./tracker.ts";
 import type { ProcessEnd } from "./transport.ts";
@@ -848,7 +849,7 @@ export const LIMIT_WAIT_OUTCOMES = ["lifted", "elapsed", "interrupted", "ended"]
 export const LimitWaitUsage = Schema.Struct({
   version: Schema.Literal(2),
   kind: Schema.Literal("usage_limit_wait"),
-  agent: Schema.Literals(["claude", "codex"]),
+  agent: Schema.Literals(AGENTS),
   time: Schema.String,
   limit_type: Schema.NullOr(Schema.String),
   basis: Schema.Literals(LIMIT_WAIT_BASES),
@@ -865,7 +866,7 @@ export const LimitWaitUsage = Schema.Struct({
 export const LimitWaitBeganUsage = Schema.Struct({
   version: Schema.Literal(2),
   kind: Schema.Literal("usage_limit_wait_began"),
-  agent: Schema.Literals(["claude", "codex"]),
+  agent: Schema.Literals(AGENTS),
   time: Schema.String,
   limit_type: Schema.NullOr(Schema.String),
   basis: Schema.Literals(LIMIT_WAIT_BASES),

@@ -1,5 +1,6 @@
 // The structured events of a run for a user interface (decision Q5): the scripted Ui records them, the web Ui turns them into the page's panels, activity line and progress. Pure; types only from src/.
 
+import { AGENT_DISPLAY, type Agent } from "./agents.ts";
 import { type SubjectId, subjectDir } from "./artifacts.ts";
 import type { LimitWaitBasis } from "./limitReset.ts";
 import type { NetworkCode } from "./transport.ts";
@@ -19,7 +20,7 @@ export type NumberedPhaseKind = (typeof NUMBERED_PHASE_KINDS)[number];
 export type Phase = Readonly<{ kind: "update" }> | Readonly<{ kind: "questions" }> | Readonly<{ kind: NumberedPhaseKind; n: number }>;
 /** Which conversation with the user runs (issue #21): the first clarification, or a follow-up on accepted requirements gaps. An empty agreed list opens none (issue #83). */
 export type InterviewStage = "clarification" | "followUp";
-export type Agent = "claude" | "codex";
+export type { Agent } from "./agents.ts";
 export type LoopResult = "converged" | "proceed" | "revise";
 
 export type UiEvent =
@@ -116,7 +117,7 @@ export type UiEvent =
 /** The report of a step that caused a PlanChanged (issue #53, G-R1-1): what makes a step current in the page. */
 export type StepReport = Readonly<{ id: string; status: "started" | "done" }>;
 
-const AGENT_LABEL: Record<Agent, string> = { claude: "Claude Code", codex: "Codex" };
+const AGENT_LABEL: Record<Agent, string> = { claude: AGENT_DISPLAY.claude.name, codex: AGENT_DISPLAY.codex.name };
 /** The name of a phase as the progress display shows it; `count` is how many phases of its kind the run holds (issue #6). */
 export const phaseName = (phase: Phase, count: number): string => (phase.kind === "questions" || phase.kind === "update" ? phaseLabel(phase.kind, 0, count) : phaseLabel(phase.kind, phase.n, count));
 /** How many of the phases are of the kind: the count the phase lines, the progress rail and the bands number by (issue #6). */

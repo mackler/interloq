@@ -3,6 +3,7 @@
 // shapes, the readers, the checkpoint, and the text an agent's reply is kept as (`serializeReply`). Every file carries
 // `version: 2`; nothing else is read.
 
+import { AGENTS } from "./agents.ts";
 import { Effect, FileSystem, Path, type PlatformError, Result, Schema } from "effect";
 import { type Artifact, LOG_SUBJECTS, pathOf, type SubjectId, subjectOf } from "./artifacts.ts";
 import { FileSystemError, StateFileInvalid } from "./errors.ts";
@@ -169,7 +170,7 @@ export const CheckpointStage = Schema.Literals(["started", "reviewed", "responde
  * committed transition, which it leaves unchanged. It says nothing about whether the limit has since lifted.
  */
 export const WaitingNote = Schema.Struct({
-  agent: Schema.Literals(["claude", "codex"]),
+  agent: Schema.Literals(AGENTS),
   limit_type: Schema.NullOr(Schema.String),
   basis: Schema.Literals(S.LIMIT_WAIT_BASES),
   from: Schema.String,

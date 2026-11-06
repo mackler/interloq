@@ -3,7 +3,8 @@
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
 import type { NetworkCode, ProcessEnd } from "./transport.ts";
-import type { LimitReset } from "./limitReset.ts";
+import type { LimitRefusal, LimitReset } from "./limitReset.ts";
+import type { Agent } from "./agents.ts";
 import { ItemState } from "./tracker.ts";
 import { type ParkNote, ParkNoteSchema } from "./chain.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
@@ -67,7 +68,10 @@ export class AgentUnreachable extends Data.TaggedError("AgentUnreachable")<{ rea
  * rate-limit event stated, a time of day the error result's text named, or none. Not a RunError: withTransportRetry
  * waits each one out by planLimitWait of src/limitReset.ts.
  */
-export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly reset: LimitReset; readonly limitType: string | null }> {}
+export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: Agent; readonly message: string; readonly reset: LimitReset; readonly limitType: string | null }> {}
+/** Issue #251: the one constructor of an agent's refusal for a limit, from its adapter's agent-neutral LimitRefusal. */
+export const limitRefusedBy = (agent: Agent, message: string, refusal: LimitRefusal): UsageLimited =>
+  new UsageLimited({ agent, message, reset: refusal.reset, limitType: refusal.limitType });
 /**
  * An execution call whose Claude Code process ended by a signal or a nonzero exit code (issue #157), with its message
  * and `attempts`, the attempts made when it was raised. Not a RunError: withTransportRetry retries it like a
