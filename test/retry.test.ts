@@ -236,10 +236,10 @@ test("a usage limit with a reset: one wait until the reset plus the margin, noti
   const until = reset + MARGIN_MS;
   assert.deepEqual(ui.notified.filter((e) => e._tag === "UsageLimitWaiting" || e._tag === "UsageLimitLifted" || e._tag === "TransportRecovered"), [
     { _tag: "UsageLimitWaiting", agent: "claude", purpose: "review", limitType: "five_hour", basis: { kind: "reset" }, fromMs: START, untilMs: until, wait: 1 },
-    { _tag: "UsageLimitLifted", agent: "claude", waitedMs: until - START },
+    { _tag: "UsageLimitLifted", agent: "claude", limitType: "five_hour", waitedMs: until - START },
   ]);
   const waitLine = prompts.usageLimitWaitLine("claude", "five_hour", { kind: "reset" }, until);
-  const liftedLine = prompts.usageLimitLiftedLine("claude", until - START);
+  const liftedLine = prompts.usageLimitLiftedLine("claude", "five_hour", until - START);
   assert.ok(ui.said.includes(waitLine), "the wait line was not said");
   assert.ok(conversation().includes(waitLine) && conversation().includes(liftedLine), "the wait is not in conversation.md");
   assert.deepEqual(ui.asked, []);
@@ -253,7 +253,7 @@ test("a usage limit with a reset: one wait until the reset plus the margin, noti
 test("the wait lines name the limit and the instant it lifts in UTC, and the time waited", () => {
   const until = Date.UTC(2026, 8, 30, 8, 11);
   assert.equal(prompts.usageLimitWaitLine("claude", "five_hour", { kind: "reset" }, until), "Claude Code: five-hour session limit reached; Interloq waits until 2026-09-30 08:11 UTC, then continues");
-  assert.equal(prompts.usageLimitLiftedLine("claude", 9_060_000), "Claude Code: the usage limit has lifted after 2:31:00; continuing");
+  assert.equal(prompts.usageLimitLiftedLine("claude", "five_hour", 9_060_000), "Claude Code: the usage limit has lifted after 2:31:00; continuing");
   assert.equal(prompts.limitName("seven_day"), "weekly limit");
   assert.equal(prompts.limitName(null), "usage limit");
   assert.equal(prompts.limitName("something_new"), "usage limit");
@@ -669,7 +669,7 @@ test("texts: Codex's rate limit is named as such, and Claude's texts are unchang
   assert.match(prompts.usageLimitWaitLine("codex", CODEX_RATE_LIMIT_TYPE, { kind: "noKnownEnd", attempt: 1 }, START), /^Codex: rate limit \(429 Too Many Requests\) reached with no stated end; /);
   assert.equal(prompts.usageLimitTryingAgainLine("codex", CODEX_RATE_LIMIT_TYPE), "Codex: trying again after the wait for the rate limit (429 Too Many Requests)");
   assert.match(prompts.waitEndedLine({ kind: "usageLimit", agent: "codex", limitType: CODEX_RATE_LIMIT_TYPE }), /rate limit \(429 Too Many Requests\)/);
-  assert.equal(prompts.codexRefusalLine("M"), "Codex refused the request: M");
+  assert.equal(prompts.limitRefusalLine("codex", "M"), "Codex refused the request: M");
   for (const limitType of [null, "five_hour", "seven_day", "overage", "unheard_of"]) {
     assert.equal(prompts.usageLimitTryingAgainLine("claude", limitType), "Claude Code: trying again after the wait for the usage limit");
     assert.equal(prompts.waitEndedLine({ kind: "usageLimit", agent: "claude", limitType }), "You ended the wait for Claude Code's usage limit; Interloq is trying the request again now");
@@ -684,7 +684,7 @@ test("a Codex 429: the refusal's text is said and written before the wait line; 
   const exit = await exitOf(withTransportRetry("codex", "review", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 2"));
   assert.deepEqual(calls, [1, 2]);
-  const refusal = prompts.codexRefusalLine(M);
+  const refusal = prompts.limitRefusalLine("codex", M);
   const waitLine = prompts.usageLimitWaitLine("codex", CODEX_RATE_LIMIT_TYPE, { kind: "noKnownEnd", attempt: 1 }, START + 300_000);
   assert.ok(ui.said.includes(refusal), "the refusal was not said");
   assert.ok(conversation().indexOf(refusal) >= 0 && conversation().indexOf(refusal) < conversation().indexOf(waitLine), "the refusal does not precede the wait line in conversation.md");

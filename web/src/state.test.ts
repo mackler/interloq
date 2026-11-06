@@ -1933,7 +1933,7 @@ describe("a wait for a usage limit", () => {
   const call: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" };
   const failed: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" };
   const waitingFor: UiEvent = { _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
-  const lifted: UiEvent = { _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_060_000 };
+  const lifted: UiEvent = { _tag: "UsageLimitLifted", agent: "claude", limitType: "five_hour", waitedMs: 9_060_000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("the wait sets limitWait, and the activity line names the limit and the instant it lifts", () => {
@@ -2598,7 +2598,7 @@ describe("a wait outlives calls other than the one it waits for", () => {
   });
 
   test("the lift and the recovery still clear the waits", () => {
-    for (const s of both([...before, notified(limited), notified(reviewCall), notified({ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 600_000 })])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
+    for (const s of both([...before, notified(limited), notified(reviewCall), notified({ _tag: "UsageLimitLifted", agent: "claude", limitType: null, waitedMs: 600_000 })])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
     for (const s of both([...before, notified(retrying), notified(reviewCall), notified({ _tag: "TransportRecovered", agent: "claude" })])) expect(runOf(s, "implementation")?.retry).toBe(null);
   });
 

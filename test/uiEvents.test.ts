@@ -42,7 +42,7 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   UsageLimitWaiting: [{ _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: 0, untilMs: 9_000_000 }, /^Claude Code: five-hour session limit reached; Interloq waits until 1970-01-01 02:30 UTC, then continues$/],
   // Issue #215: a wait the developer ended early.
   WaitEndedEarly: [{ _tag: "WaitEndedEarly", wait: 3 }, /^you ended wait 3 early$/],
-  UsageLimitLifted: [{ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_000_000 }, /^Claude Code: the usage limit has lifted after 2:30:00; continuing$/],
+  UsageLimitLifted: [{ _tag: "UsageLimitLifted", agent: "claude", limitType: "five_hour", waitedMs: 9_000_000 }, /^Claude Code: the usage limit has lifted after 2:30:00; continuing$/],
   InterviewTurn: [{ _tag: "InterviewTurn", heading, message: "Hello", summary: null, answered: 1, total: 3 }, headed(" \\(1 of 3 answered\\): Hello")],
   InterviewCounted: [{ _tag: "InterviewCounted", answered: 2, total: 3 }, /^2 of 3 answered$/],
   TermsBegan: [{ _tag: "TermsBegan" }, /^explanations of terms begun$/],

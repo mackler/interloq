@@ -134,7 +134,7 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("TrackerRecovered" as const), tracker: text }),
   // Issue #170: a usage limit's wait with its basis.
   fc.record({ _tag: fc.constant("UsageLimitWaiting" as const), wait: nat, agent, purpose: text, limitType: fc.option(text, { nil: null }), basis: limitBasis, fromMs: nat, untilMs: nat }),
-  fc.record({ _tag: fc.constant("UsageLimitLifted" as const), agent, waitedMs: nat }),
+  fc.record({ _tag: fc.constant("UsageLimitLifted" as const), agent, limitType: fc.option(text, { nil: null }), waitedMs: nat }),
   // Issue #215: a wait the developer ended early.
   fc.record({ _tag: fc.constant("WaitEndedEarly" as const), wait: nat }),
   // Issue #26: the SDK's own reconnection.

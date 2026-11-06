@@ -34,7 +34,7 @@ test("an implementation run whose plan review is refused with 429 twice waits, t
   assert.deepEqual(probe.ui.asked, []);
   assert.deepEqual(sleeps, [RETRY_MS, RETRY_MS]);
   const conversation = read(probe.dir, "conversation.md");
-  const refusal = prompts.codexRefusalLine(M);
+  const refusal = prompts.limitRefusalLine("codex", M);
   const tryingAgain = prompts.usageLimitTryingAgainLine("codex", CODEX_RATE_LIMIT_TYPE);
   const waits = waitingOf(probe.ui.notified);
   assert.deepEqual(waits.map((w) => [w.agent, w.purpose, w.limitType, w.basis]), [

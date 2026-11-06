@@ -63,7 +63,7 @@ export type UiEvent =
   | Readonly<{ _tag: "UsageLimitWaiting"; agent: Agent; purpose: string; limitType: string | null; basis: LimitWaitBasis; fromMs: number; untilMs: number; wait: number }>
   /** Issue #215: the developer ended the wait `wait` (the id its announcing event carried); its request is made again now. */
   | Readonly<{ _tag: "WaitEndedEarly"; wait: number }>
-  | Readonly<{ _tag: "UsageLimitLifted"; agent: Agent; waitedMs: number }>
+  | Readonly<{ _tag: "UsageLimitLifted"; agent: Agent; limitType: string | null; waitedMs: number }>
   /** `answered` of `total` questions so far (issue #21): the agreed ones and the follow-ups Claude reports asking. */
   | Readonly<{ _tag: "InterviewTurn"; heading: string; message: string; summary: string | null; answered: number; total: number }>
   /** Issue #184: the clarification's count, which Interloq updates as each answer is given, between Claude Code's replies. */
@@ -193,7 +193,7 @@ export const describeEvent = (event: UiEvent): string => {
     case "UsageLimitWaiting":
       return usageLimitWaitLine(event.agent, event.limitType, event.basis, event.untilMs);
     case "UsageLimitLifted":
-      return usageLimitLiftedLine(event.agent, event.waitedMs);
+      return usageLimitLiftedLine(event.agent, event.limitType, event.waitedMs);
     case "WaitEndedEarly":
       return `you ended wait ${event.wait} early`;
     case "InterviewTurn":

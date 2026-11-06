@@ -292,7 +292,7 @@ export const UiEventSchema = Schema.Union([
   tagged("UsageLimitWaiting", { agent: AgentSchema, purpose: Str, limitType: Schema.NullOr(Str), basis: LimitWaitBasisSchema, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
   // Issue #215: the developer ended a wait early.
   tagged("WaitEndedEarly", { wait: Int }),
-  tagged("UsageLimitLifted", { agent: AgentSchema, waitedMs: Schema.Finite }),
+  tagged("UsageLimitLifted", { agent: AgentSchema, limitType: Schema.NullOr(Str).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))), waitedMs: Schema.Finite }),
   tagged("AgentReconnecting", { agent: AgentSchema, by: Schema.Literal("sdk"), attempt: Schema.NullOr(Int), of: Schema.NullOr(Int), delayMs: Schema.NullOr(Int), detail: Str, callId: Str }),
   tagged("InterviewTurn", { heading: Str, message: Str, summary: Schema.NullOr(Str), answered: Int, total: Int }),
   tagged("InterviewCounted", { answered: Int, total: Int }),

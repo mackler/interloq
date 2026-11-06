@@ -30,7 +30,7 @@ import type { ReviewThread } from "./reviewThread.ts";
 import type { NonEmptyPaths } from "./commitCheck.ts";
 import type { WriteCheck } from "./errors.ts";
 import type { TrackerOperation } from "./trackerRetry.ts";
-import { CODEX_RATE_LIMIT_TYPE, type LimitWaitBasis, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
+import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, type LimitWaitBasis, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -3674,6 +3674,10 @@ const LIMIT_NAMES: Readonly<Record<string, string>> = {
   overage: "overage limit",
   /** Issue #233: a Codex turn refused with 429 Too Many Requests. */
   [CODEX_RATE_LIMIT_TYPE]: "rate limit (429 Too Many Requests)",
+  /** Issue #251: a Codex model at capacity or overloaded, a Codex usage limit, and a Codex quota. */
+  [CODEX_CAPACITY_TYPE]: "capacity limit (the model is at capacity)",
+  [CODEX_USAGE_LIMIT_TYPE]: "usage limit",
+  [CODEX_QUOTA_TYPE]: "quota",
 };
 /** The name of a usage limit by the Agent SDK's rateLimitType (issue #68); an unknown or missing type is "usage limit". */
 export function limitName(limitType: string | null): string {
@@ -3706,15 +3710,18 @@ export function usageLimitTryingAgainLine(agent: "claude" | "codex", limitType: 
   return `${agentName(agent)}: trying again after the wait for the ${waitedLimitNoun(limitType)}`;
 }
 /**
- * The noun of the limit a wait's end names: Codex's rate limit by its name (issue #233), every other limit "usage
- * limit", as before, so Claude Code's texts are unchanged.
+ * The nouns of the limits a wait's end names by their own name (issues #233 and #251): every Codex limit type.
  */
+const WAIT_END_NOUNS: Readonly<Record<string, string>> = Object.fromEntries(
+  [CODEX_RATE_LIMIT_TYPE, CODEX_CAPACITY_TYPE, CODEX_USAGE_LIMIT_TYPE, CODEX_QUOTA_TYPE].map((t) => [t, limitName(t)]),
+);
+/** The noun of the limit a wait's end names: a type of `WAIT_END_NOUNS` by its name, every other "usage limit", so Claude Code's texts are unchanged. */
 function waitedLimitNoun(limitType: string | null): string {
-  return limitType === CODEX_RATE_LIMIT_TYPE ? limitName(limitType) : "usage limit";
+  return (limitType !== null && Object.hasOwn(WAIT_END_NOUNS, limitType) ? WAIT_END_NOUNS[limitType] : undefined) ?? "usage limit";
 }
-/** Issue #233: the failure Codex recorded for a turn it refused, said and written before the wait's line. */
-export function codexRefusalLine(message: string): string {
-  return `Codex refused the request: ${message}`;
+/** Issue #233 and #251: the failure an agent's adapter recorded for a request refused for a limit, said and written before the wait's line. */
+export function limitRefusalLine(agent: "claude" | "codex", message: string): string {
+  return `${agentName(agent)} refused the request: ${message}`;
 }
 /**
  * Issue #215: the text of the control beside a wait's countdown. It asserts only that the wait ends and the request is
@@ -3755,8 +3762,8 @@ export function networkRetryLine(agent: "claude" | "codex", what: string, code: 
   return `${agentName(agent)} could not be reached for ${what}: the network is unreachable (${code}); try ${attempt} in ${durationText(delaySeconds * 1000)}. Interloq keeps trying and continues by itself once ${agentName(agent)} answers; nothing is asked.`;
 }
 /** The end of a wait for a usage limit (issue #68). */
-export function usageLimitLiftedLine(agent: "claude" | "codex", waitedMs: number): string {
-  return `${agentName(agent)}: the usage limit has lifted after ${durationText(waitedMs)}; continuing`;
+export function usageLimitLiftedLine(agent: "claude" | "codex", limitType: string | null, waitedMs: number): string {
+  return `${agentName(agent)}: the ${waitedLimitNoun(limitType)} has lifted after ${durationText(waitedMs)}; continuing`;
 }
 /**
  * The page's activity line during a wait for a usage limit (issue #68): what is waited for and until when, by what the

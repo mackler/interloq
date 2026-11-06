@@ -188,8 +188,8 @@ const retrying = <A, E, R>(
         const observed = yield* observedWait(Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* ui.openWait;
-            // Issue #233: the failure Codex recorded is said and written, so the real cause is seen, not only the wait.
-            if (error.agent === "codex") yield* say(prompts.codexRefusalLine(error.message));
+            // Issues #233 and #251: the refusal's own text is said and written for every agent, so the real cause is seen, not only the wait.
+            yield* say(prompts.limitRefusalLine(error.agent, error.message));
             yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, purpose, limitType: error.limitType, basis, fromMs, untilMs, wait: handle.id });
             yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, basis, untilMs));
             // One uninterruptible step from the begin record to the finalizer's attachment, so that an interruption between
@@ -213,8 +213,8 @@ const retrying = <A, E, R>(
         // from `limitState`, as any refusal is.
         if (end === "ranOut" && basis.kind === "reset") {
           const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
-          yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });
-          yield* say(prompts.usageLimitLiftedLine(error.agent, waitedMs));
+          yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, limitType: error.limitType, waitedMs });
+          yield* say(prompts.usageLimitLiftedLine(error.agent, error.limitType, waitedMs));
         } else if (end === "ranOut") yield* say(prompts.usageLimitTryingAgainLine(error.agent, error.limitType));
         yield* answeredNow(n, lastFault);
         yield* beforeRetry;
