@@ -161,11 +161,12 @@ describe("ItemList", () => {
 
   // Issue #219: a listing waiting out the tracker's rate limit shows its text, its countdown and Try again now, which
   // sends one frame for that wait and is then disabled.
+  const waitOf = (listing: number, waitId: number, untilMs: number, fromMs = Date.now()) => ({ listing, tracker: "GitLab", stated: true, fromMs, untilMs, waitId });
   test("a listing's rate-limit wait shows its text, countdown and Try again now, pressed once", () => {
     const ended: number[] = [];
     const sent = new Set<number>();
     const now = Date.now();
-    const props = { items: { _tag: "Loading" }, itemsWait: { tracker: "GitLab", stated: true, fromMs: now, untilMs: now + 30_000, waitId: 7 }, onEndItemsWait: (wait: number) => { ended.push(wait); sent.add(wait); }, endItemsWaitSent: (wait: number) => sent.has(wait) };
+    const props = { items: { _tag: "Loading" }, itemsWaits: [waitOf(1, 7, now + 30_000, now)], onEndItemsWait: (wait: number) => { ended.push(wait); sent.add(wait); }, endItemsWaitSent: (wait: number) => sent.has(wait) };
     const root = listed(props);
     const wait = root.querySelector("[data-items-wait]")!;
     expect(wait.textContent).toContain(prompts.itemsRateLimitText("GitLab", true));
@@ -177,6 +178,25 @@ describe("ItemList", () => {
     expect(ended).toEqual([7]);
     expect(listed(props).querySelector<HTMLButtonElement>("button[name=end-items-wait]")!.disabled).toBe(true);
     expect(listed().querySelector("[data-items-wait]")).toBe(null);
+  });
+
+  // Work review 2 of issue #219 (W2-R1-1, P3-R1-1): one press ends every listing's wait still running and not yet sent,
+  // and never a wait that already ran out.
+  test("Try again now ends every running wait of the tab's listings once, and none that ran out", () => {
+    const ended: number[] = [];
+    const sent = new Set<number>();
+    const now = Date.now();
+    const handlers = { onEndItemsWait: (wait: number) => { ended.push(wait); sent.add(wait); }, endItemsWaitSent: (wait: number) => sent.has(wait) };
+    const both = { items: { _tag: "Loading" }, itemsWaits: [waitOf(1, 7, now + 30_000, now), waitOf(2, 8, now + 40_000, now)], ...handlers };
+    listed(both).querySelector<HTMLButtonElement>("button[name=end-items-wait]")!.click();
+    flushSync();
+    expect([...ended].sort()).toEqual([7, 8]);
+    expect(listed(both).querySelector<HTMLButtonElement>("button[name=end-items-wait]")!.disabled).toBe(true);
+    ended.length = 0;
+    const oneRanOut = { items: { _tag: "Loading" }, itemsWaits: [waitOf(3, 9, now - 1_000, now - 31_000), waitOf(4, 10, now + 30_000, now)], ...handlers };
+    listed(oneRanOut).querySelector<HTMLButtonElement>("button[name=end-items-wait]")!.click();
+    flushSync();
+    expect(ended).toEqual([10]);
   });
 
   test("each item shows its id and title and its excerpt, and its button starts the tab's run with that item", () => {
@@ -243,7 +263,7 @@ describe("ItemList", () => {
   ];
   for (const [tracker, itemFrom, address] of sources) {
     test(`the address ${tracker}'s adapter reads is the href the page's row links to`, () => {
-      const sent: ServerMessage = { type: "items", mode: "implementation", result: { _tag: "Listed", items: [listedItemOf(itemFrom(), 0)] } };
+      const sent: ServerMessage = { type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [listedItemOf(itemFrom(), 0)] } };
       const received = Result.getOrThrow(decodeServer(JSON.stringify(sent)));
       if (received.type !== "items" || received.result._tag !== "Listed") throw new Error("not a listing");
       const root = show(ItemList, { mode: "implementation", items: received.result, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined });
@@ -852,7 +872,7 @@ describe("App and the draft", () => {
     test("a tab revisited after its list was loaded asks for its items again (S15)", async () => {
       const { root, ws } = await begin();
       select(root, "implementation");
-      ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+      ws.receive({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
       select(root, "refinement");
       const before = ws.sent.length;
       select(root, "implementation");
@@ -888,7 +908,7 @@ describe("App and the draft", () => {
       const prepView = (status: PreparationStatus) => ({ settings: { enabled: true, generation: 1 }, status });
       const prep = (status: PreparationStatus) => ({ type: "preparation", view: prepView(status) });
       const preparingOf = (id: string): PreparationStatus => ({ _tag: "Preparing", item: id, title: `t${id}` });
-      const listedOf = (items: readonly unknown[]) => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "checked" } });
+      const listedOf = (items: readonly unknown[]) => ({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items, terms: "checked" } });
       const itemsSent = (ws: FakeWebSocket) => sentOf(ws).filter((m) => m.type === "items" && m.mode === "refinement").length;
       const listedPage = async () => {
         const page = await begin();
@@ -944,7 +964,7 @@ describe("App and the draft", () => {
     test("a reconnection of the same incarnation with nothing outstanding sends one Refinement listing", async () => {
       vi.useFakeTimers();
       const { ws } = await begin();
-      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
       flushSync();
       ws.close();
       flushSync();
@@ -961,7 +981,7 @@ describe("App and the draft", () => {
     test("an item's button sends start with the tab's mode and the item's id, both from the listed item (the seam with the server)", async () => {
       const { root, ws } = await begin();
       select(root, "implementation");
-      ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+      ws.receive({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
       one(root, `button[name=start][data-item="${fixture.id}"]`).click();
       expect(sentOf(ws).at(-1)).toEqual(startFrame({ mode: "implementation", item: fixture }));
       expect(sentOf(ws).at(-1)).toEqual({ type: "start", mode: "implementation", item: fixture.id });
@@ -971,7 +991,7 @@ describe("App and the draft", () => {
     // and changes the choice for the next refinement; the Implementation tab has none.
     test("the Refinement tab shows the choice of terms at the listing's value; a choice is sent with the next start", async () => {
       const { root, ws } = await begin();
-      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
       flushSync();
       const choice = one(root, `[role=radiogroup][aria-label="${prompts.TERMS_CHOICE_LABEL}"]`);
       const radio = (m: string) => one(choice, `input[type=radio][value=${m}]`) as HTMLInputElement;
@@ -988,7 +1008,7 @@ describe("App and the draft", () => {
     // Issue #163: the buttons follow TERMS_MODES, least work first, On request leading.
     test("the choice of terms lists On request first, in the order of TERMS_MODES", async () => {
       const { root, ws } = await begin();
-      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
       flushSync();
       const choice = one(root, `[role=radiogroup][aria-label="${prompts.TERMS_CHOICE_LABEL}"]`);
       const values = [...choice.querySelectorAll("input[type=radio]")].map((r) => (r as HTMLInputElement).value);
@@ -1001,7 +1021,7 @@ describe("App and the draft", () => {
     test("the terms-on-request note follows the selected choice", async () => {
       const note = (root: HTMLElement) => root.querySelector("[data-terms-note]");
       const { root, ws } = await begin();
-      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "onRequest" } });
+      ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "onRequest" } });
       flushSync();
       expect(note(root)?.textContent?.trim()).toBe(prompts.TERMS_ON_REQUEST_NOTE);
       const radio = (m: string) => one(root, `[role=radiogroup] input[type=radio][value=${m}]`) as HTMLInputElement;
@@ -1015,10 +1035,10 @@ describe("App and the draft", () => {
       flushSync();
       expect(note(root)?.textContent?.trim()).toBe(prompts.TERMS_ON_REQUEST_NOTE);
       const second = await begin();
-      second.ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      second.ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
       flushSync();
       expect(note(second.root)).toBe(null);
-      second.ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "onRequest" } });
+      second.ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "onRequest" } });
       flushSync();
       expect(note(second.root)?.textContent?.trim()).toBe(prompts.TERMS_ON_REQUEST_NOTE);
     });
@@ -1026,11 +1046,11 @@ describe("App and the draft", () => {
     // Issue #147 (S13): the chain's control is on the Implementation tab and not on the Refinement tab.
     test("the Implementation tab shows the chain's control, and the Refinement tab does not", async () => {
       const { root, ws } = await begin();
-      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
       flushSync();
       expect(root.querySelector("input[name=chain]")).toBe(null);
       select(root, "implementation");
-      ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+      ws.receive({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
       flushSync();
       expect(root.querySelector("input[name=chain]")).not.toBe(null);
       expect(root.textContent).toContain(prompts.CHAIN_SWITCH_LABEL);
@@ -1125,7 +1145,7 @@ describe("App and the draft", () => {
       const listedImplementation = async () => {
         const page = await begin();
         select(page.root, "implementation");
-        page.ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+        page.ws.receive({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
         flushSync();
         return page;
       };
@@ -1148,7 +1168,7 @@ describe("App and the draft", () => {
       test("the switch off hides Add to queue, the queued marks and the queue editor; on shows them again", async () => {
         const { root, ws } = await listedImplementation();
         const other = { ...fixture, id: "99", title: "other" };
-        ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture, other] } });
+        ws.receive({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [fixture, other] } });
         const queued = { ...helloChain, queue: { source: "queue" as const, entries: [{ item: fixture.id as ItemId, title: fixture.title }], applied: [] } };
         ws.receive({ type: "chain", state: { ...queued, settings: OFF_SETTINGS } });
         flushSync();
@@ -1182,7 +1202,7 @@ describe("App and the draft", () => {
     test("the Implementation tab has no choice of terms", async () => {
       const { root, ws } = await begin();
       select(root, "implementation");
-      ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+      ws.receive({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
       flushSync();
       expect(root.querySelector(`[aria-label="${prompts.TERMS_CHOICE_LABEL}"]`)).toBe(null);
     });
@@ -1274,7 +1294,7 @@ describe("App and the draft", () => {
 
     test("an unavailable tracker is a notice in the tab with Try again, which asks again", async () => {
       const { root, ws } = await begin();
-      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: timeout" } });
+      ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: timeout" } });
       expect(one(root, "section.items [role=alert]").textContent).toContain("could not be reached");
       const before = ws.sent.length;
       one(root, "button[name=retry]").click();
@@ -1380,7 +1400,7 @@ describe("App and the draft", () => {
 
       test("(c) two messages are both shown; dismissing one leaves the other; starting a run removes neither", async () => {
         const { root, ws } = await begin();
-        ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+        ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
         ws.receive({ type: "refused", mode: null, reason: "first message" });
         ws.receive({ type: "refused", mode: null, reason: "second message" });
         expect(messageTexts(root)).toEqual(["first message", "second message"]);
@@ -2227,7 +2247,7 @@ describe("App: several refinement runs", () => {
     const { root, ws } = await open([1]);
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
     clickRunTab(root, "list");
-    ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [{ id: "11", title: "a", excerpt: "", url: null, sentBack: 0, preparation: null }, { id: "12", title: "b", excerpt: "", url: null, sentBack: 0, preparation: null }], terms: "checked" } });
+    ws.receive({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [{ id: "11", title: "a", excerpt: "", url: null, sentBack: 0, preparation: null }, { id: "12", title: "b", excerpt: "", url: null, sentBack: 0, preparation: null }], terms: "checked" } });
     expect((one(root, 'button[name=start][data-item="11"]') as HTMLButtonElement).disabled).toBe(true);
     expect((one(root, 'button[name=start][data-item="12"]') as HTMLButtonElement).disabled).toBe(false);
     expect(root.querySelector("section.items")?.textContent).toContain(prompts.ITEM_IN_PROGRESS);
@@ -3990,7 +4010,7 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
   test("while the run is in progress the listed items are readable and their starts disabled", async () => {
     const { root, ws } = await open([startedOf("21")]);
     clickRunTab(root, "list");
-    ws.receive({ type: "items", mode: "implementation", result: listed });
+    ws.receive({ type: "items", listing: 1, mode: "implementation", result: listed });
     expect(root.querySelector("section.items")?.textContent).toContain("the next refined item");
     expect((one(root, 'button[name=start][data-item="22"]') as HTMLButtonElement).disabled).toBe(true);
   });

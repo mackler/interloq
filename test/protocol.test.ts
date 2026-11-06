@@ -245,11 +245,13 @@ const server: fc.Arbitrary<ServerMessage> = fc.oneof(
   fc.record({ type: fc.constant("event" as const), run: nat, seq: nat, time: text, event: runEvent }),
   fc.record({
     type: fc.constant("items" as const),
+    listing: nat,
     mode: fc.constant("refinement" as const),
     result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(listedItem, { maxLength: 3 }), terms: fc.constantFrom(...TERMS_MODES) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
   }),
   fc.record({
     type: fc.constant("items" as const),
+    listing: nat,
     mode: fc.constant("implementation" as const),
     result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(listedItem, { maxLength: 3 }) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
   }),
@@ -265,7 +267,7 @@ const decoded = <A>(r: Result.Result<A, string>): A => {
 
 // Issue #125: an item's address reaches the page only as an https address, or null where the tracker gave none.
 test("an items frame whose item's address is not https does not decode; one with an https address or null does", () => {
-  const frame = (url: unknown) => JSON.stringify({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [{ id: "1", title: "t", excerpt: "", url, sentBack: 0, preparation: null }] } });
+  const frame = (url: unknown) => JSON.stringify({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [{ id: "1", title: "t", excerpt: "", url, sentBack: 0, preparation: null }] } });
   assert.ok(Result.isFailure(decodeServer(frame("javascript:alert(1)"))));
   assert.ok(Result.isFailure(decodeServer(frame("http://github.com/x"))));
   assert.ok(Result.isSuccess(decodeServer(frame("https://github.com/mackler/interloq/issues/125"))));
@@ -281,12 +283,12 @@ test("listedItemOf: the id, the title, the excerpt of the body, and the address 
 
 // Issue #186 (F1): the count of send-backs crosses the protocol as a non-negative whole number.
 test("an items frame's sentBack decodes as a non-negative whole number, and a negative or a fraction is refused", () => {
-  const frame = (sentBack: unknown) => JSON.stringify({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [{ id: "7", title: "t", excerpt: "", url: null, sentBack, preparation: null }] } });
+  const frame = (sentBack: unknown) => JSON.stringify({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [{ id: "7", title: "t", excerpt: "", url: null, sentBack, preparation: null }] } });
   assert.ok(Result.isSuccess(decodeServer(frame(2))));
   assert.ok(Result.isSuccess(decodeServer(frame(0))));
   assert.ok(Result.isFailure(decodeServer(frame(-1))));
   assert.ok(Result.isFailure(decodeServer(frame(1.5))));
-  assert.ok(Result.isFailure(decodeServer(JSON.stringify({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [{ id: "7", title: "t", excerpt: "", url: null }] } }))));
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify({ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [{ id: "7", title: "t", excerpt: "", url: null }] } }))));
 });
 
 // Issue #120: a run is started from a mode and an item; the page sends no project and no task text.
@@ -644,7 +646,7 @@ test("issue #49: an output frame round-trips, and one with an unknown status doe
 
 // Issue #131: the page and the server ship together, so a listed item without its preparation mark does not decode.
 test("a listed item without its preparation mark does not decode", () => {
-  const frame = (item: Record<string, unknown>) => JSON.stringify({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [item], terms: "checked" } });
+  const frame = (item: Record<string, unknown>) => JSON.stringify({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [item], terms: "checked" } });
   const item = { id: "7", title: "t", excerpt: "", url: null, sentBack: 0 };
   assert.ok(Result.isFailure(decodeServer(frame(item))));
   assert.ok(Result.isSuccess(decodeServer(frame({ ...item, preparation: { _tag: "Prepared", questions: 3 } }))));
@@ -771,13 +773,28 @@ test("an ExecutionEnded recorded before a check's selection and counts decodes w
 });
 
 // Issue #219: a tab's listing waiting out the tracker's rate limit, and the developer ending that wait.
-test("the itemsWaiting and endItemsWait frames decode, and one without its wait does not", () => {
-  const waiting = { type: "itemsWaiting", mode: "refinement", tracker: "GitLab", fromMs: 0, untilMs: 31_000, stated: true, wait: 4 };
+test("the itemsWaiting and endItemsWait frames decode, and one without its wait or its listing does not", () => {
+  const waiting = { type: "itemsWaiting", listing: 2, mode: "refinement", tracker: "GitLab", fromMs: 0, untilMs: 31_000, stated: true, wait: 4 };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(waiting))), waiting);
   const { wait: _w, ...waitingWithout } = waiting;
   assert.ok(Result.isFailure(decodeServer(JSON.stringify(waitingWithout))));
+  const { listing: _l, ...waitingWithoutListing } = waiting;
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify(waitingWithoutListing))));
   const end = { type: "endItemsWait", incarnation: "i-1", wait: 4 };
   assert.deepEqual(decoded(decodeClient(JSON.stringify(end))), end);
   const { wait: _e, ...endWithout } = end;
   assert.ok(Result.isFailure(decodeClient(JSON.stringify(endWithout))));
+});
+
+// Work review 2 of issue #219 (W2-R1-1): an items frame names its listing in both modes; one without it does not decode.
+test("an items frame with its listing decodes in both modes, and one without it does not", () => {
+  const frames = [
+    { type: "items", listing: 3, mode: "refinement", result: { _tag: "Listed", items: [], terms: "checked" } },
+    { type: "items", listing: 3, mode: "implementation", result: { _tag: "Unavailable", notice: "n" } },
+  ];
+  for (const frame of frames) {
+    assert.deepEqual(decoded(decodeServer(JSON.stringify(frame))), frame);
+    const { listing: _l, ...without } = frame;
+    assert.ok(Result.isFailure(decodeServer(JSON.stringify(without))));
+  }
 });

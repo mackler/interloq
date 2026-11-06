@@ -124,6 +124,8 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       const writer = yield* socket.writer;
       const send = (message: ServerMessage) => writer.write(JSON.stringify(message)).pipe(Effect.ignore);
       const { queue: buffered, overflowed, output } = yield* subscribeBounded(manager, queueBound);
+      // Work review 2 of issue #219 (W2-R1-1): each listing's id on this socket, carried by its itemsWaiting and items frames.
+      const listings = yield* Ref.make(0);
       const { runs, ui } = yield* manager.replay;
       yield* send({ type: "hello", location: manager.location, current: yield* manager.current, incarnation: manager.incarnation, chain: yield* manager.chain, preparation: yield* manager.preparation });
       yield* send({ type: "replay", runs, ui });
@@ -176,9 +178,15 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
           case "items":
             // Issue #120: the server makes the tracker call; the page receives ids, titles and excerpts alone.
             // Issue #219: a wait for the tracker's rate limit is told to this tab, which may end it; a closed tab interrupts it.
-            return Effect.forkScoped(
-              manager.listItems(message.mode, (w) => send({ type: "itemsWaiting", mode: message.mode, tracker: w.tracker, fromMs: w.fromMs, untilMs: w.untilMs, stated: w.stated, wait: w.wait })).pipe(Effect.flatMap((answer) => send({ type: "items", ...answer }))),
-            ).pipe(Effect.asVoid);
+            // W2-R1-1: the listing's id is taken before the fork, and both its frames carry it.
+            return Ref.updateAndGet(listings, (n) => n + 1).pipe(
+              Effect.flatMap((listing) =>
+                Effect.forkScoped(
+                  manager.listItems(message.mode, (w) => send({ type: "itemsWaiting", listing, mode: message.mode, tracker: w.tracker, fromMs: w.fromMs, untilMs: w.untilMs, stated: w.stated, wait: w.wait })).pipe(Effect.flatMap((answer) => send({ type: "items", listing, ...answer }))),
+                ),
+              ),
+              Effect.asVoid,
+            );
           case "answer":
             return manager.answer(message.incarnation, message.run, message.prompt, message.text).pipe(Effect.flatMap(refuse));
           case "hold":

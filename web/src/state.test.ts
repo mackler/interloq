@@ -20,7 +20,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { limitPauseOf, shownAnalysis, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, foldEvent, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState, dismissNotice, notice } from "./state.ts";
+import { limitPauseOf, shownItemsWait, shownAnalysis, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, foldEvent, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState, dismissNotice, notice } from "./state.ts";
 import { type ConnectionCondition, connectionNotices, messages, type Notices } from "./notices.ts";
 import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
@@ -725,25 +725,49 @@ describe("runs, replay and gaps", () => {
 
   test("a hello turns a mode's Loading items Unasked and leaves a listed mode as it is (S16)", () => {
     const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null }];
-    const listed = fold([hello(null), { type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "unchecked" } }]);
+    const listed = fold([hello(null), { type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items, terms: "unchecked" } }]);
     const s = fold([hello(null)], itemsRequested(listed, "implementation"));
     expect(s.modes.implementation.items).toEqual({ _tag: "Unasked" });
     expect(s.modes.refinement.items).toEqual({ _tag: "Listed", items, terms: "unchecked" });
   });
 
-  // Issue #219: a listing waiting out the tracker's rate limit, shown in its tab until its answer, a new request or a hello.
-  test("itemsWaiting sets its mode's wait; the items answer, a new request and a hello clear it; the outstanding count is unchanged", () => {
-    const items = [{ id: "120", title: "Two modes", excerpt: "x", url: null, sentBack: 0, preparation: null }];
-    const waiting: ServerMessage = { type: "itemsWaiting", mode: "refinement", tracker: "GitLab", fromMs: 1000, untilMs: 32_000, stated: true, wait: 7 };
+  // Issue #219: a listing waiting out the tracker's rate limit, shown in its tab until that listing's answer or a hello.
+  // Work review 2 (W2-R1-1): each listing's frames carry its id, and an answer clears only its own listing's wait.
+  const waitingOf = (listing: number, wait: number, untilMs = 32_000): ServerMessage => ({ type: "itemsWaiting", listing, mode: "refinement", tracker: "GitLab", fromMs: 1000, untilMs, stated: true, wait });
+  const waitOf = (listing: number, wait: number, untilMs = 32_000) => ({ listing, tracker: "GitLab", stated: true, fromMs: 1000, untilMs, waitId: wait });
+  const answerOf = (listing: number): ServerMessage => ({ type: "items", listing, mode: "refinement", result: { _tag: "Listed", items: [{ id: "120", title: "Two modes", excerpt: "x", url: null, sentBack: 0, preparation: null }], terms: "unchecked" } });
+  test("itemsWaiting sets its listing's wait; that listing's answer and a hello clear it; a new request keeps it; the outstanding count is unchanged", () => {
     const asked = itemsRequested(fold([hello(null)]), "refinement");
-    const s = fold([waiting], asked);
-    expect(s.modes.refinement.itemsWait).toEqual({ tracker: "GitLab", stated: true, fromMs: 1000, untilMs: 32_000, waitId: 7 });
-    expect(s.modes.implementation.itemsWait).toBe(null);
+    const s = fold([waitingOf(1, 7)], asked);
+    expect(s.modes.refinement.itemsWaits).toEqual([waitOf(1, 7)]);
+    expect(shownItemsWait(s.modes.refinement)).toEqual(waitOf(1, 7));
+    expect(s.modes.implementation.itemsWaits).toEqual([]);
+    expect(shownItemsWait(s.modes.implementation)).toBe(null);
     expect(s.refinementOutstanding).toBe(asked.refinementOutstanding);
-    expect(fold([{ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "unchecked" } }], s).modes.refinement.itemsWait).toBe(null);
-    expect(itemsRequested(s, "refinement").modes.refinement.itemsWait).toBe(null);
-    expect(fold([hello(null)], s).modes.refinement.itemsWait).toBe(null);
-    expect(fold([{ ...hello(null), incarnation: "other" } as ServerMessage], s).modes.refinement.itemsWait).toBe(null);
+    expect(fold([answerOf(1)], s).modes.refinement.itemsWaits).toEqual([]);
+    expect(itemsRequested(s, "refinement").modes.refinement.itemsWaits).toEqual([waitOf(1, 7)]);
+    expect(fold([hello(null)], s).modes.refinement.itemsWaits).toEqual([]);
+    expect(fold([{ ...hello(null), incarnation: "other" } as ServerMessage], s).modes.refinement.itemsWaits).toEqual([]);
+  });
+
+  test("another listing's answer leaves a waiting listing's wait; its own answer clears it (W2-R1-1)", () => {
+    const asked = itemsRequested(itemsRequested(fold([hello(null)]), "refinement"), "refinement");
+    const s = fold([waitingOf(1, 7), answerOf(2)], asked);
+    expect(s.modes.refinement.itemsWaits).toEqual([waitOf(1, 7)]);
+    expect(s.refinementOutstanding).toBe(1);
+    expect(fold([answerOf(1)], s).modes.refinement.itemsWaits).toEqual([]);
+  });
+
+  test("two listings' waits are both kept, the newest shown, and the older shown again after the newer's answer (W2-R1-1)", () => {
+    const s = fold([waitingOf(1, 7), waitingOf(2, 8)], itemsRequested(itemsRequested(fold([hello(null)]), "refinement"), "refinement"));
+    expect(s.modes.refinement.itemsWaits).toEqual([waitOf(1, 7), waitOf(2, 8)]);
+    expect(shownItemsWait(s.modes.refinement)?.waitId).toBe(8);
+    expect(shownItemsWait(fold([answerOf(2)], s).modes.refinement)?.waitId).toBe(7);
+  });
+
+  test("a listing's later wait replaces its earlier one (P3-R1-1)", () => {
+    const s = fold([waitingOf(1, 7, 5_000), waitingOf(1, 8, 40_000)], itemsRequested(fold([hello(null)]), "refinement"));
+    expect(s.modes.refinement.itemsWaits).toEqual([waitOf(1, 8, 40_000)]);
   });
 
   // W3-R1-1 of work review 3: a tracker id of one server names nothing in another, which may serve another project.
@@ -751,13 +775,13 @@ describe("runs, replay and gaps", () => {
   const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null }];
 
   test("a hello of another incarnation drops a listed mode's items, so the tab asks the new server (W3-R1-1)", () => {
-    const s = fold([helloAt("/projects/old", "a"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems, terms: "unchecked" } }, helloAt("/projects/new", "b")]);
+    const s = fold([helloAt("/projects/old", "a"), { type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: listedItems, terms: "unchecked" } }, helloAt("/projects/new", "b")]);
     expect(s.modes.refinement.items).toEqual({ _tag: "Unasked" });
     expect(s.location).toBe("/projects/new");
   });
 
   test("a hello of another incarnation drops a mode's tracker notice (W3-R1-1)", () => {
-    const s = fold([helloAt("/projects/old", "a"), { type: "items", mode: "implementation", result: { _tag: "Unavailable", notice: "no tracker" } }, helloAt("/projects/new", "b")]);
+    const s = fold([helloAt("/projects/old", "a"), { type: "items", listing: 1, mode: "implementation", result: { _tag: "Unavailable", notice: "no tracker" } }, helloAt("/projects/new", "b")]);
     expect(s.modes.implementation.items).toEqual({ _tag: "Unasked" });
   });
 
@@ -769,8 +793,8 @@ describe("runs, replay and gaps", () => {
   test("a hello of the same incarnation, a reconnection, keeps the items, the notice and the refusal (W3-R1-1)", () => {
     const before = fold([
       helloAt("/p", "a"),
-      { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems, terms: "unchecked" } },
-      { type: "items", mode: "implementation", result: { _tag: "Unavailable", notice: "no tracker" } },
+      { type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: listedItems, terms: "unchecked" } },
+      { type: "items", listing: 1, mode: "implementation", result: { _tag: "Unavailable", notice: "no tracker" } },
       { type: "refused", mode: "implementation", reason: "r" },
     ]);
     const s = fold([helloAt("/p", "a")], before);
@@ -794,10 +818,10 @@ describe("runs, replay and gaps", () => {
       case "listed":
       {
         const items = Array.from({ length: step.count }, (_, n) => ({ id: `${state.incarnation}:${n}`, title: "t", excerpt: "e", url: null, sentBack: 0, preparation: null }));
-        return reduce(state, step.mode === "refinement" ? { type: "items", mode: step.mode, result: { _tag: "Listed", items, terms: "unchecked" } } : { type: "items", mode: step.mode, result: { _tag: "Listed", items } });
+        return reduce(state, step.mode === "refinement" ? { type: "items", listing: 1, mode: step.mode, result: { _tag: "Listed", items, terms: "unchecked" } } : { type: "items", listing: 1, mode: step.mode, result: { _tag: "Listed", items } });
       }
       case "unavailable":
-        return reduce(state, step.mode === "refinement" ? { type: "items", mode: step.mode, result: { _tag: "Unavailable", notice: `${state.incarnation}` } } : { type: "items", mode: step.mode, result: { _tag: "Unavailable", notice: `${state.incarnation}` } });
+        return reduce(state, step.mode === "refinement" ? { type: "items", listing: 1, mode: step.mode, result: { _tag: "Unavailable", notice: `${state.incarnation}` } } : { type: "items", listing: 1, mode: step.mode, result: { _tag: "Unavailable", notice: `${state.incarnation}` } });
       case "refused":
         return reduce(state, { type: "refused", mode: step.mode, reason: "r" });
       case "request":
@@ -839,9 +863,9 @@ describe("runs, replay and gaps", () => {
     const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null }];
     const loading = itemsRequested(fold([hello(null), { type: "refused", mode: "implementation", reason: "r" }]), "implementation");
     expect(loading.modes.implementation.items).toEqual({ _tag: "Loading" });
-    const s = fold([{ type: "items", mode: "implementation", result: { _tag: "Listed", items } }], loading);
+    const s = fold([{ type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items } }], loading);
     expect([s.modes.implementation.items, s.modes.implementation.refusal, s.modes.refinement.items]).toEqual([{ _tag: "Listed", items }, null, { _tag: "Unasked" }]);
-    const unavailable = fold([{ type: "items", mode: "refinement", result: { _tag: "Unavailable", notice: "no tracker" } }], s);
+    const unavailable = fold([{ type: "items", listing: 1, mode: "refinement", result: { _tag: "Unavailable", notice: "no tracker" } }], s);
     expect(unavailable.modes.refinement.items).toEqual({ _tag: "Unavailable", notice: "no tracker" });
     expect(unavailable.modes.implementation.items).toEqual({ _tag: "Listed", items });
   });
@@ -2374,7 +2398,7 @@ describe("the tab shown before the user chooses one", () => {
 // it; his choice applies to the next refinement alone, and the next shows the configured value again.
 describe("the choice of terms", () => {
   const items = [{ id: "11", title: "t", excerpt: "e", url: null, sentBack: 0, preparation: null }];
-  const listed = (terms: "checked" | "unchecked" | "onRequest"): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms } });
+  const listed = (terms: "checked" | "unchecked" | "onRequest"): ServerMessage => ({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items, terms } });
   const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
   const startedRefinement: RunEvent = { ...started, mode: "refinement", item: { id: "11", title: "t" } } as RunEvent;
 
@@ -2403,7 +2427,7 @@ describe("the choice of terms", () => {
     const chosen = chooseTerms(fold([helloAt("a"), listed("unchecked")]), "checked");
     expect(shownTerms(fold([helloAt("a")], chosen))).toBe("checked");
     expect(shownTerms(fold([helloAt("b")], chosen))).toBe(null);
-    const impl = fold([helloAt("a"), { type: "items", mode: "implementation", result: { _tag: "Listed", items } }]);
+    const impl = fold([helloAt("a"), { type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items } }]);
     expect(impl.modes.implementation.items).toEqual({ _tag: "Listed", items });
     expect(shownTerms(impl)).toBe(null);
   });
@@ -3376,7 +3400,7 @@ describe("preparation", () => {
   const item = (id: string, preparation: ListedItem["preparation"] = null): ListedItem => ({ id, title: `t${id}`, excerpt: "", url: null, sentBack: 0, preparation });
   const listedRefinement = (): ViewState => {
     const helloed = reduce(initialState, { type: "hello", preparation: view({ _tag: "Off" }, false), chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
-    return reduce(selectMode(helloed, "refinement"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: [item("1"), item("2", { _tag: "SetAside", reason: "r" })], terms: "checked" } });
+    return reduce(selectMode(helloed, "refinement"), { type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: [item("1"), item("2", { _tag: "SetAside", reason: "r" })], terms: "checked" } });
   };
   const preparing = (id: string): PreparationStatus => ({ _tag: "Preparing", item: id, title: `t${id}` });
 
@@ -3414,7 +3438,7 @@ describe("preparation", () => {
 
   // W2-R1-1 (work review 2): a change of the item being prepared while a Refinement listing is outstanding is asked for
   // once every outstanding listing has answered, and a listed Preparing the view does not name is not shown.
-  const listed = (items: readonly ListedItem[]): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "checked" } });
+  const listed = (items: readonly ListedItem[]): ServerMessage => ({ type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items, terms: "checked" } });
   const sameHello: ServerMessage = { type: "hello", preparation: view({ _tag: "Idle" }), chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" };
 
   test("(i) a change while the list loads is asked for after the answer, and the stale Preparing is hidden", () => {
@@ -3455,7 +3479,7 @@ describe("preparation", () => {
 
   test("(v) an Implementation items frame changes neither the count nor the flag", () => {
     const deferred = reduce(refreshSent(listedRefinement()), frame(preparing("1")));
-    const after = reduce(deferred, { type: "items", mode: "implementation", result: { _tag: "Listed", items: [] } });
+    const after = reduce(deferred, { type: "items", listing: 1, mode: "implementation", result: { _tag: "Listed", items: [] } });
     expect(after.refinementOutstanding).toBe(1);
     expect(after.itemsRefreshPending).toBe(true);
     expect(after.itemsRefresh).toBe(deferred.itemsRefresh);

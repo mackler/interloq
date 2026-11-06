@@ -39,17 +39,20 @@
   // Issue #219: `itemsWait`, the listing waiting out the tracker's rate limit, shown with its countdown and Try again now
   // (as the status line shows a run's wait), which calls `onEndItemsWait` once per wait and is disabled once pressed
   // [visibility of system status; user control and freedom]. It asserts only that the list is asked for again then.
-  type Props = { itemsWait?: ItemsWait | null; onEndItemsWait?: (wait: number) => void; endItemsWaitSent?: (wait: number) => boolean; mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; markOf?: (item: ListedItem) => PreparationMark | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void; queued?: readonly string[]; onQueue?: ((item: ListedItem) => void) | null };
-  let { itemsWait = null, onEndItemsWait = () => undefined, endItemsWaitSent = () => false, mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), markOf = (i: ListedItem) => i.preparation, onTerms = () => undefined, onStart, onRefresh, queued = [], onQueue = null }: Props = $props();
+  // Work review 2 (W2-R1-1, P3-R1-1): `itemsWaits`, one wait per listing of the tab still waiting; the newest is shown,
+  // and one press ends every wait still running and not yet sent, never one that already ran out.
+  type Props = { itemsWaits?: readonly ItemsWait[]; onEndItemsWait?: (wait: number) => void; endItemsWaitSent?: (wait: number) => boolean; mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; markOf?: (item: ListedItem) => PreparationMark | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void; queued?: readonly string[]; onQueue?: ((item: ListedItem) => void) | null };
+  let { itemsWaits = [], onEndItemsWait = () => undefined, endItemsWaitSent = () => false, mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), markOf = (i: ListedItem) => i.preparation, onTerms = () => undefined, onStart, onRefresh, queued = [], onQueue = null }: Props = $props();
   const queueable = $derived(mode === "implementation" && onQueue !== null);
   const markText = (mark: PreparationMark): string => (mark._tag === "Preparing" ? PREPARING_MARK : mark._tag === "Prepared" ? preparedMarkText(mark.questions) : setAsideMarkText(mark.reason));
   const texts = $derived(TAB_TEXTS[mode]);
   const inProgress = (id: string): boolean => startable._tag === "Except" && startable.items.includes(id);
   const startableItem = (id: string): boolean => startable._tag === "Except" && !startable.items.includes(id);
   let now = $state(Date.now());
+  const itemsWait = $derived(itemsWaits.at(-1) ?? null);
   $effect(() => {
-    if (itemsWait === null) return;
-    const until = itemsWait.untilMs;
+    if (itemsWaits.length === 0) return;
+    const until = Math.max(...itemsWaits.map((w) => w.untilMs));
     now = Date.now();
     const tick = setInterval(() => (now = Date.now()), 1000);
     const end = setTimeout(() => (now = Math.max(Date.now(), until)), Math.max(until - Date.now(), 0));
@@ -58,7 +61,11 @@
       clearTimeout(end);
     };
   });
-  const endable = $derived(itemsWait !== null && countdownView(itemsWait, now) !== null ? itemsWait : null);
+  const running = $derived(itemsWaits.filter((w) => countdownView(w, now) !== null));
+  const unsent = $derived(running.filter((w) => !endItemsWaitSent(w.waitId)));
+  const endAll = (): void => {
+    for (const w of unsent) onEndItemsWait(w.waitId);
+  };
 </script>
 
 <section class="items" aria-label={texts.list}>
@@ -85,7 +92,7 @@
       <p class="m3-font-body-medium">{itemsRateLimitText(itemsWait.tracker, itemsWait.stated)}</p>
       <div class="wait-row">
         <Countdown wait={itemsWait} label={RATE_LIMIT_WAITING_LABEL} attr="data-items-countdown" />
-        {#if endable !== null}<Button variant="text" type="button" name="end-items-wait" disabled={endItemsWaitSent(endable.waitId)} onclick={() => onEndItemsWait(endable.waitId)}>{END_WAIT_LABEL}</Button>{/if}
+        {#if running.length > 0}<Button variant="text" type="button" name="end-items-wait" disabled={unsent.length === 0} onclick={endAll}>{END_WAIT_LABEL}</Button>{/if}
       </div>
     </div>
   {/if}

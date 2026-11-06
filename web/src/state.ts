@@ -320,10 +320,13 @@ const LIST: Focus = { _tag: "List" };
  * whose start this page asked for, until its Started or refusal; its items; and the refusal of its last action, which its
  * next items frame or Started clears.
  */
-/** Issue #219: a tab's listing waiting out the tracker's rate limit, with the server's wait the tab may end. */
-export type ItemsWait = Readonly<{ tracker: string; stated: boolean; fromMs: number; untilMs: number; waitId: number }>;
-export type ModeView = Readonly<{ current: readonly number[]; runs: readonly RunView[]; focus: Focus; starting: string | null; items: ItemsView; refusal: string | null; itemsWait: ItemsWait | null }>;
-const emptyMode: ModeView = { current: [], runs: [], focus: LIST, starting: null, items: { _tag: "Unasked" }, refusal: null, itemsWait: null };
+/**
+ * Issue #219: a tab's listing waiting out the tracker's rate limit, with the server's wait the tab may end; `listing` the
+ * listing's id on the socket (work review 2, W2-R1-1).
+ */
+export type ItemsWait = Readonly<{ listing: number; tracker: string; stated: boolean; fromMs: number; untilMs: number; waitId: number }>;
+export type ModeView = Readonly<{ current: readonly number[]; runs: readonly RunView[]; focus: Focus; starting: string | null; items: ItemsView; refusal: string | null; itemsWaits: readonly ItemsWait[] }>;
+const emptyMode: ModeView = { current: [], runs: [], focus: LIST, starting: null, items: { _tag: "Unasked" }, refusal: null, itemsWaits: [] };
 export type ViewState = Readonly<{
   connection: "connecting" | "open" | "reconnecting" | "failed";
   /** The identification of the server's working directory, the one project, from the last hello (issue #29); null before the first. */
@@ -503,9 +506,12 @@ export const startRequested = (state: ViewState, mode: RunMode, item: string): V
 export const refinementInProgress = (state: ViewState): readonly string[] => state.modes.refinement.runs.flatMap((r) => (r.ended === null && r.item !== null ? [r.item.id] : []));
 /** A tab's items asked for: loading until the server's items frame. */
 export const itemsRequested = (state: ViewState, mode: RunMode): ViewState => {
-  const requested = withMode(state, mode, (m) => ({ ...m, items: { _tag: "Loading" }, itemsWait: null }));
+  // W2-R1-1: a new request leaves the waits of the listings still outstanding.
+  const requested = withMode(state, mode, (m) => ({ ...m, items: { _tag: "Loading" } }));
   return mode === "refinement" ? refreshSent(requested) : requested;
 };
+/** Work review 2 of issue #219 (W2-R1-1): the wait a tab's countdown shows, the newest of its listings' waits, or none. */
+export const shownItemsWait = (mode: ModeView): ItemsWait | null => mode.itemsWaits.at(-1) ?? null;
 /** The run a mode's tab shows, its newest, and the server's incarnation: what the draft and the notifications key by. */
 export type Shown = Readonly<{ incarnation: string | null; run: RunView | null }>;
 export const shownRun = (state: ViewState, mode: RunMode = state.selected): Shown => {
@@ -1456,7 +1462,7 @@ const startedFocus = (mode: RunMode, before: ModeView, runs: readonly RunView[],
 };
 
 /** A mode after a hello of the same incarnation, a reconnection: everything kept, the items as `afterHello` leaves them. */
-const reconnectedMode = (mode: ModeView, current: readonly number[]): ModeView => ({ ...mode, current, items: afterHello(mode.items), itemsWait: null });
+const reconnectedMode = (mode: ModeView, current: readonly number[]): ModeView => ({ ...mode, current, items: afterHello(mode.items), itemsWaits: [] });
 /** A mode's runs in progress as a hello gives them (issue #191). */
 const currentOf = (current: CurrentRuns, mode: RunMode): readonly number[] => (mode === "refinement" ? current.refinement : current.implementation === null ? [] : [current.implementation]);
 /** The runs a mode holds after one is added, ascending by id: the implementation tab keeps its two newest. */
@@ -1506,10 +1512,14 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       return { ...focused, selected: unchosenTab(focused) };
     }
     // Issue #219: the listing waits out the tracker's rate limit; it answers no listing, so the outstanding count stays.
-    case "itemsWaiting":
-      return withMode(state, message.mode, (m) => ({ ...m, itemsWait: { tracker: message.tracker, stated: message.stated, fromMs: message.fromMs, untilMs: message.untilMs, waitId: message.wait } }));
+    // W2-R1-1, P3-R1-1: a listing has at most one wait open at a time, so its latest replaces its earlier one.
+    case "itemsWaiting": {
+      const wait: ItemsWait = { listing: message.listing, tracker: message.tracker, stated: message.stated, fromMs: message.fromMs, untilMs: message.untilMs, waitId: message.wait };
+      return withMode(state, message.mode, (m) => ({ ...m, itemsWaits: [...m.itemsWaits.filter((w) => w.listing !== message.listing), wait] }));
+    }
     case "items": {
-      const listed = withMode(state, message.mode, (m) => ({ ...m, items: message.result, refusal: null, itemsWait: null }));
+      // W2-R1-1: the answer clears its own listing's wait alone.
+      const listed = withMode(state, message.mode, (m) => ({ ...m, items: message.result, refusal: null, itemsWaits: m.itemsWaits.filter((w) => w.listing !== message.listing) }));
       if (message.mode !== "refinement") return listed;
       // W2-R1-1: the answer that leaves no Refinement listing outstanding asks for a change deferred meanwhile, so its
       // answer is the last to arrive and was computed after the last change.

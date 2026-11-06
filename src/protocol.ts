@@ -186,12 +186,14 @@ export type ServerMessage =
     }>
   | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
-  | (Readonly<{ type: "items" }> & ItemsAnswer)
+  /** Work review 2 of issue #219 (W2-R1-1): `listing` the listing's id on its socket, which its itemsWaiting frames carry too. */
+  | (Readonly<{ type: "items"; listing: number }> & ItemsAnswer)
   /**
    * Issue #219: the tab's listing waits out the tracker's rate limit until `untilMs` (`stated` false where the tracker
-   * stated no reset); `wait` the server's wait, which endItemsWait ends. The listing's items frame follows.
+   * stated no reset); `wait` the server's wait, which endItemsWait ends; `listing` the listing's id on its socket. The
+   * listing's items frame, with the same `listing`, follows.
    */
-  | Readonly<{ type: "itemsWaiting"; mode: RunMode; tracker: string; fromMs: number; untilMs: number; stated: boolean; wait: number }>
+  | Readonly<{ type: "itemsWaiting"; listing: number; mode: RunMode; tracker: string; fromMs: number; untilMs: number; stated: boolean; wait: number }>
   /** Why an action was not carried out, with the mode of the tab whose action it was, or null where it belongs to none (issue #120). */
   | Readonly<{ type: "refused"; mode: RunMode | null; reason: string }>
   /** The run's whole shared state after a change (issue #87); a tab keeps the state of the higher version. */
@@ -425,9 +427,9 @@ export const ServerMessageSchema = Schema.Union([
   typed("hello", { location: Str, current: CurrentRunsSchema, incarnation: Str, chain: ChainStateSchema, preparation: PreparationViewSchema }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
-  typed("items", { mode: Schema.Literal("refinement"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema, terms: S.TermsMode }), UnavailableSchema]) }),
-  typed("items", { mode: Schema.Literal("implementation"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema }), UnavailableSchema]) }),
-  typed("itemsWaiting", { mode: RunMode, tracker: Str, fromMs: Schema.Finite, untilMs: Schema.Finite, stated: Schema.Boolean, wait: Int }),
+  typed("items", { listing: Int, mode: Schema.Literal("refinement"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema, terms: S.TermsMode }), UnavailableSchema]) }),
+  typed("items", { listing: Int, mode: Schema.Literal("implementation"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema }), UnavailableSchema]) }),
+  typed("itemsWaiting", { listing: Int, mode: RunMode, tracker: Str, fromMs: Schema.Finite, untilMs: Schema.Finite, stated: Schema.Boolean, wait: Int }),
   typed("refused", { mode: Schema.NullOr(RunMode), reason: Str }),
   typed("ui", { run: Int, state: RunUiStateSchema }),
   typed("chain", { state: ChainStateSchema }),

@@ -315,7 +315,7 @@ test("a start in a project that does not exist is refused with the reason and it
     const a = await connect(port);
     a.send(itemsFrame("refinement"));
     await until("the items", () => a.messages.some((m) => m.type === "items"));
-    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0, preparation: null })), terms: "onRequest" } });
+    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", listing: 1, mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0, preparation: null })), terms: "onRequest" } });
     a.close();
   });
 });
@@ -366,6 +366,49 @@ test("a listing with several comment reads refused for the rate limit sends one 
     assert.ok(items.type === "items" && items.result._tag === "Listed");
     assert.equal(a.messages.filter((m) => m.type === "itemsWaiting").length, 1);
     a.close();
+  });
+});
+
+// Work review 2 of issue #219 (W2-R1-1): two listings of one mode on one socket each name their own listing, so the
+// page can tell which listing an answer ends; a listing's later wait carries the same listing, and ending it while the
+// earlier one has run out is not refused.
+test("two listings of one mode name distinct listings, and a listing's later wait carries its listing and can be ended", async () => {
+  const repo = tempRepo();
+  const tracker = fakeTrackerOf(MANAGER_ITEMS);
+  const limited = (seconds: number) => new TrackerRateLimited({ tracker: "GitLab", status: 429, message: "GitLab answered GET the unrefined issues with status 429", reset: { _tag: "After", seconds } });
+  await run(tracker.failNext("list", limited(3600)));
+  const manager = await managerOf(repo, [], [], tracker);
+  await serve(manager, dist(), async (port) => {
+    const a = await connect(port);
+    a.send(itemsFrame("refinement"));
+    await until("the first wait", () => a.messages.some((m) => m.type === "itemsWaiting"));
+    a.send(itemsFrame("refinement"));
+    await until("the second listing's items", () => a.messages.some((m) => m.type === "items"));
+    const waiting = Result.getOrThrow(decodeServer(JSON.stringify(a.messages.find((m) => m.type === "itemsWaiting"))));
+    const answered = Result.getOrThrow(decodeServer(JSON.stringify(a.messages.find((m) => m.type === "items"))));
+    assert.ok(waiting.type === "itemsWaiting" && answered.type === "items");
+    assert.notEqual(answered.listing, waiting.listing);
+    a.close();
+  });
+
+  const second = fakeTrackerOf(MANAGER_ITEMS);
+  await run(second.failNext("list", limited(0)));
+  await run(second.failNext("list", limited(3600)));
+  const other = await managerOf(tempRepo(), [], [], second);
+  await serve(other, dist(), async (port) => {
+    const b = await connect(port);
+    b.send(itemsFrame("refinement"));
+    await until("the second wait", () => b.messages.filter((m) => m.type === "itemsWaiting").length === 2, 10_000);
+    const waits = b.messages.filter((m) => m.type === "itemsWaiting").map((m) => Result.getOrThrow(decodeServer(JSON.stringify(m))));
+    assert.ok(waits[0].type === "itemsWaiting" && waits[1].type === "itemsWaiting");
+    assert.equal(waits[1].listing, waits[0].listing);
+    assert.notEqual(waits[1].wait, waits[0].wait);
+    b.send(endItemsWaitFrame(other.incarnation, waits[1].wait));
+    await until("the items", () => b.messages.some((m) => m.type === "items"), 5_000);
+    const items = Result.getOrThrow(decodeServer(JSON.stringify(b.messages.find((m) => m.type === "items"))));
+    assert.ok(items.type === "items" && items.listing === waits[0].listing);
+    assert.deepEqual(refusals(b), []);
+    b.close();
   });
 });
 
