@@ -1144,6 +1144,35 @@ export const STEP_CHECK_REVIEW_CRITERION = `Raise an issue for a remaining step 
  */
 export const PLAN_COMMIT_STEP_RULE =
   "The plan's last step commits the run's changes as the project's own instructions direct. Interloq does not count the run finished while a file the run changed is uncommitted, except files git ignores and does not track and the paths Interloq is configured to ignore; files that were already uncommitted when the run began are not counted.";
+/**
+ * Issue #228 (the developer's instructions of 2 and 5 Nov 2026): the types-first, test-first sequence every code step
+ * follows, stated by Interloq itself in every implementation run rather than left to each project's instruction files.
+ * One source, given to the plan writer (TEST_FIRST_RULE), the plan review (TEST_FIRST_REVIEW_CRITERION) and the code
+ * review (TEST_FIRST_WORK_CRITERION), as the step check rule (issue #162) and the commit step (issue #176) are.
+ */
+/** What a code step is, and the steps the rule exempts (settled in the refinement's question review). */
+export const CODE_STEP_SENTENCE =
+  "A code step is a step that changes what the program does: its source; a configuration file the program reads, where the change alters its behavior; or a generator's source, together with what it regenerates. A step that changes only tests and leaves the program's behavior unchanged (repairing a test, adding a test of behavior that already exists), a step that changes only documentation or records, and the step that commits the run's changes are exempt. A test that specifies a change to the program belongs to that change's step.";
+/** Decisions Q1 and Q2: the types-first part applies where the project already type-checks the step's code, judged from its files; no setting. */
+export const TYPE_CHECKER_SENTENCE =
+  "The types-first part applies only to a step that changes code the project already type-checks, judged from the project's files (a tsconfig.json that covers the code, a Python type checker's configuration, a compiler for a statically typed language). A step that changes code the project runs no type checker on (Python without a type checker's configuration, JavaScript the TypeScript checker does not check) has no types-first part and starts at the tests.";
+/** The one statement of which first failures count, shared by the writer's rule and the code review's criterion. */
+export const COUNTED_FAILURES_SENTENCE =
+  "A test's first failure counts only where it fails for the reason the change exists: a failed assertion, or a type error naming a signature being changed. A failure because a module is missing, because of a typo, or because a selector finds nothing does not count.";
+export const TYPES_FIRST_SENTENCE =
+  "First, the types: the data types and signatures the change needs are written and settled before the tests, and a test whose first failure is a type error naming a signature being changed fails in the ordinary way.";
+export const TESTS_FIRST_SENTENCE =
+  `Then, the tests: every test that specifies the change, at every level (unit, component, scenario, end-to-end and layout), is written and run before the code and seen to fail. ${COUNTED_FAILURES_SENTENCE} A new module may first be written with its final signature and a body that does nothing useful, so that its test fails on its assertion. Where a test needs an element that does not exist yet, the step first gives the element its name, role or attribute, so that the test fails on the behavior.`;
+export const LEAST_CODE_SENTENCE = "Then, the least code that makes the tests pass.";
+export const REFACTOR_SENTENCE =
+  "Then, the refactor: the code is improved without changing its behavior, and the step's tests and the suites the change touches are run again unchanged and pass. A test that has to change is evidence of a change of behavior, which belongs in a step of its own. The step records what the refactor improved, or that nothing needed it.";
+export const END_TO_END_SENTENCE =
+  "A step's end-to-end and layout tests belong to the step that changes the page: they are written or adjusted before its code and seen to fail against the page as it stood, and the step's check runs the targeted scenario after the page is built with the project's own build command, within the step check's time limit. They are never planned in a later step or stage than the code they specify. The run's final command still runs the whole end-to-end suite.";
+export const TEST_FIRST_RULE =
+  `Every code step's text states, in this order, the types it settles where they apply, each test that specifies its change with the failure expected of each, and its refactor, and the step is carried out in that order. ${TYPES_FIRST_SENTENCE} ${TESTS_FIRST_SENTENCE} ${LEAST_CODE_SENTENCE} ${REFACTOR_SENTENCE} ${END_TO_END_SENTENCE} ${CODE_STEP_SENTENCE} ${TYPE_CHECKER_SENTENCE}`;
+/** The plan review's criterion, the counterpart of TEST_FIRST_RULE, judged in the writer's own words. */
+export const TEST_FIRST_REVIEW_CRITERION =
+  `Raise an issue for a remaining code step whose text leaves out a part the rule on how a code step is developed requires, for a code step that states the types-first part where it does not apply, and for a step whose end-to-end or layout test is planned in a later step or stage than the code it specifies. ${CODE_STEP_SENTENCE} ${TYPE_CHECKER_SENTENCE}`;
 /** Issue #176: the plan review's criterion, the counterpart of PLAN_COMMIT_STEP_RULE. */
 export const COMMIT_STEP_REVIEW_CRITERION = "Raise an issue for a plan whose remaining steps do not end with a step that commits the run's changes as the project's own instructions direct.";
 /**
@@ -1201,6 +1230,7 @@ ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
+${TEST_FIRST_RULE}
 ${planIdRule(root)}${extra === null ? "" : `\n${extra}`}
 Do not modify any file. Do not implement anything.
 ${PLAN_BUILD_RULE}
@@ -1214,6 +1244,7 @@ ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
+${TEST_FIRST_RULE}
 ${planIdRule(root)}
 ${phase === null ? "" : `${keepCorrectionsApplyRule(root, pathOf({ kind: "log", subject: { plan: phase } }))}\n`}Do not modify any file.
 Return an empty questions_for_user array.`;
@@ -1239,7 +1270,11 @@ ${planStepCheckRule(checks)}
 ${STEP_CHECK_REVIEW_CRITERION}
 The plan writer was given this rule on committing the run's changes:
 ${PLAN_COMMIT_STEP_RULE}
+${TEST_FIRST_RULE}
 ${COMMIT_STEP_REVIEW_CRITERION}
+The plan writer was given this rule on how a code step is developed:
+${TEST_FIRST_RULE}
+${TEST_FIRST_REVIEW_CRITERION}
 The plan writer was given this rule on its questions to the user:
 ${PLAN_QUESTIONS_RULE}
 ${PLAN_QUESTIONS_REVIEW_CRITERION}
@@ -1302,6 +1337,7 @@ ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
+${TEST_FIRST_RULE}
 ${planIdRule(root)}
 Do not modify any file.`;
 }
@@ -1429,6 +1465,7 @@ ${planStepCheckRule(checks)}
 ${REPORT_CHECKS_SENTENCE}
 ${NARRATION_OUTCOME_SENTENCE}
 ${EXECUTION_COMMIT_SENTENCE}
+${TEST_FIRST_RULE}
 ${BACKGROUND_SUITE_SENTENCE}
 ${CONTINUING_STATUS_SENTENCE}
 ${BLOCKED_STATUS_SENTENCE}
@@ -2280,6 +2317,7 @@ ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
+${TEST_FIRST_RULE}
 ${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 ${questions}
@@ -4745,6 +4783,7 @@ ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
+${TEST_FIRST_RULE}
 ${planIdRule(root)}
 Do not modify any file. Do not implement anything.
 ${PLAN_BUILD_RULE}
