@@ -41,3 +41,20 @@ test("issue #228: a phase of two calls records both calls' test-first records, i
   const recorded = JSON.parse(fs.readFileSync(path.join(probe.dir, "execution-1", "result.json"), "utf8"));
   assert.deepEqual(recorded.outcome?.testFirst ?? recorded.testFirst, [first, second]);
 });
+
+test("issue #228: a code review raises a completed step whose report shows no observed failure, and the run revises the plan", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), {
+    tracker: fakeTrackerOf([scriptedItem]),
+    steps: [{ output: { questions_for_user: [] }, plan: "v1" }, { output: respond([["W1-R1-S1-1", "accepted"]]) }, { output: { questions_for_user: [] }, plan: "v1" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    partReviews: { "step-S1": [{ issues: [{ ...issue("W1-R1-S1-1"), location: "S1" }] }] },
+    execs: [finished, finished],
+    execScripts: [{ reports: [["S1", "started"], ["S1", "done"]] }],
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const first = probe.reviewer.partPrompts[0]!;
+  assert.ok(prompts.TEST_FIRST_WORK_CRITERION.length > 0);
+  assert.ok(first.includes(prompts.TEST_FIRST_WORK_CRITERION), "the step's first part prompt");
+  assert.ok(first.includes(prompts.NO_TEST_FIRST_REPORTED));
+  assert.equal(probe.ui.notified.filter((e) => e._tag === "PhaseBegan" && e.phase.kind === "planning").length, 2);
+});

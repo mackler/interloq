@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result, Schema } from "effect";
+import fc from "fast-check";
 import { execReport, interpretExecution } from "../src/claudeEvents.ts";
 import { UiEventSchema } from "../src/protocol.ts";
 import * as prompts from "../src/prompts.ts";
@@ -108,4 +109,52 @@ test("issue #228: an outcome and an ExecutionEnded recorded before the field dec
   const event = Schema.decodeUnknownSync(UiEventSchema)({ _tag: "ExecutionEnded", phase: 1, outcome: old });
   assert.ok(event._tag === "ExecutionEnded");
   assert.deepEqual(event.outcome.testFirst, []);
+});
+
+// ---- S3: the code review's criterion and a step's record -------------------------------------------------------------
+
+const workOf = (testFirst: ReadonlyArray<S.StepTestFirst>) => ({ outcome: { status: "finished" as const, summary: "s", question: "", remainingWork: "", userInput: null, checks: [], testFirst }, plan: "p" });
+const stepPart = (id: string) => ({ _tag: "Step" as const, id, label: "l", text: "t" });
+
+test("issue #228: a step's part of the code review carries the criterion and that step's record alone, in its first round", () => {
+  const other: S.StepTestFirst = { step: "S2", tests: [{ test: "test/other.test.ts", observed: "OTHER-FAILURE" }], refactor: "OTHER-REFACTOR" };
+  const work = workOf([record, other]);
+  assert.ok(prompts.TEST_FIRST_WORK_CRITERION.length > 0 && prompts.NO_TEST_FIRST_REPORTED.length > 0);
+  const first = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued", stepPart("S1"), null);
+  assert.ok(first.includes(prompts.TEST_FIRST_WORK_CRITERION));
+  assert.ok(first.includes(prompts.testFirstText(work.outcome, "S1")) && first.includes(record.tests[0]!.observed));
+  assert.ok(!first.includes("OTHER-FAILURE") && !first.includes("OTHER-REFACTOR"), "another step's record");
+  const whole = prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued", { _tag: "Whole" }, null);
+  assert.ok(!whole.includes(prompts.TEST_FIRST_WORK_CRITERION));
+  assert.ok(!prompts.workReviewPrompt(TEST_ROOT, 1, 2, false, work, "continued", stepPart("S1"), null).includes(prompts.TEST_FIRST_WORK_CRITERION), "a later round in the thread");
+  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 3, false, work, "new", stepPart("S1"), null).includes(prompts.TEST_FIRST_WORK_CRITERION), "a new thread's first round");
+  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued", stepPart("S3"), null).includes(prompts.NO_TEST_FIRST_REPORTED));
+});
+
+test("issue #228: the writer and both reviewers judge by the same sentences", () => {
+  for (const s of [prompts.CODE_STEP_SENTENCE, prompts.COUNTED_FAILURES_SENTENCE]) assert.ok(s.length > 0);
+  for (const text of [prompts.TEST_FIRST_RULE, prompts.TEST_FIRST_REVIEW_CRITERION, prompts.TEST_FIRST_WORK_CRITERION]) assert.ok(text.includes(prompts.CODE_STEP_SENTENCE));
+  for (const text of [prompts.TESTS_FIRST_SENTENCE, prompts.TEST_FIRST_RULE, prompts.TEST_FIRST_WORK_CRITERION]) assert.ok(text.includes(prompts.COUNTED_FAILURES_SENTENCE));
+  assert.match(prompts.TEST_FIRST_WORK_CRITERION, /step's id, not a file path, in the location field/u);
+});
+
+test("issue #228: testFirstText shows a step's every test and failure in order, and nothing of another step's", () => {
+  const marker = fc.uuid().map((u) => `m-${u}`);
+  const entry = fc.record({ step: fc.constantFrom("S1", "S2", "S3"), tests: fc.array(fc.record({ test: marker, observed: marker }), { maxLength: 3 }), refactor: marker });
+  fc.assert(
+    fc.property(fc.uniqueArray(entry, { maxLength: 6, selector: (e) => e.refactor }), fc.constantFrom("S1", "S2", "S3"), (records, step) => {
+      const text = prompts.testFirstText(workOf(records).outcome, step);
+      const own = records.filter((r) => r.step === step);
+      const markers = own.flatMap((r) => [...r.tests.flatMap((t) => [t.test, t.observed]), r.refactor]);
+      let at = -1;
+      for (const m of own.flatMap((r) => r.tests.flatMap((t) => [t.test, t.observed]))) {
+        const i = text.indexOf(m, at + 1);
+        if (i < 0) return false;
+        at = i;
+      }
+      const foreign = records.filter((r) => r.step !== step).flatMap((r) => [...r.tests.flatMap((t) => [t.test, t.observed]), r.refactor]).filter((m) => !markers.includes(m));
+      return markers.every((m) => text.includes(m)) && foreign.every((m) => !text.includes(m)) && (own.length > 0 || text === prompts.NO_TEST_FIRST_REPORTED);
+    }),
+    { numRuns: 200 },
+  );
 });

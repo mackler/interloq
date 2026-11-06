@@ -2063,6 +2063,21 @@ const stepChecksText = (execution: WorkExecution, step: string): string =>
  * shares it, reported together and revised as a whole.
  */
 export const LIFECYCLE_CHECK = "Where you find a defect in one stage of a thing's lifecycle (its creation, the acceptance of an answer, its cancellation, its completion), check the same lifecycle across every path that shares it: each caller, the page's state and the records. Report every failing case together, and state in the issue that the revision must fix the whole lifecycle, not the case found alone.";
+/**
+ * Issue #228: the code review's criterion of the test-first rule, judged in a step's own part with the record Claude Code
+ * reported for that step, in the writer's own words of what a code step is and which first failures count.
+ */
+export const TEST_FIRST_WORK_CRITERION = `Where this step is a code step, raise an issue if its record reports no observed failure for a test that specifies its change (an end-to-end or layout test included), if it reports a failure of a kind that does not count, or if ${"`"}changes.diff${"`"} shows a test that its refactor changed. ${CODE_STEP_SENTENCE} ${COUNTED_FAILURES_SENTENCE} For an issue under this criterion, put the step's id, not a file path, in the location field.`;
+/** Issue #228: a step's record where its execution phase reported none. */
+export const NO_TEST_FIRST_REPORTED = "none reported";
+/** Issue #228: the test-first records one step reported, across its phase's calls, as a Markdown list. */
+export const testFirstText = (outcome: ExecOutcome, step: string): string => {
+  const own = outcome.testFirst.filter((r) => r.step === step);
+  if (own.length === 0) return NO_TEST_FIRST_REPORTED;
+  return own
+    .map((r) => [...r.tests.map((t) => `- ${codeSpan(t.test)} first failed: ${t.observed}`), `- refactor: ${r.refactor}`].join("\n"))
+    .join("\n");
+};
 /** Issue #252: a step's named tests and scenarios checked in one review. */
 export const NAMED_TESTS_CHECK = "Check every test and scenario the step's text names, and raise an issue for each named one that was not written, with the step's id in the location field.";
 /**
@@ -2114,6 +2129,9 @@ ${WORK_CHECK_CRITERION}
 ${NAMED_TESTS_CHECK}
 The check commands execution phase ${phase} reported for step ${part.id}:
 ${stepChecksText(execution, part.id)}
+The tests execution phase ${phase} reported as first failing for step ${part.id}, and its refactor:
+${testFirstText(execution.outcome, part.id)}
+${TEST_FIRST_WORK_CRITERION}
 ${shared}`;
 }
 
