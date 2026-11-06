@@ -117,7 +117,6 @@ export type UiEvent =
 /** The report of a step that caused a PlanChanged (issue #53, G-R1-1): what makes a step current in the page. */
 export type StepReport = Readonly<{ id: string; status: "started" | "done" }>;
 
-const AGENT_LABEL: Record<Agent, string> = { claude: AGENT_DISPLAY.claude.name, codex: AGENT_DISPLAY.codex.name };
 /** The name of a phase as the progress display shows it; `count` is how many phases of its kind the run holds (issue #6). */
 export const phaseName = (phase: Phase, count: number): string => (phase.kind === "questions" || phase.kind === "update" ? phaseLabel(phase.kind, 0, count) : phaseLabel(phase.kind, phase.n, count));
 /** How many of the phases are of the kind: the count the phase lines, the progress rail and the bands number by (issue #6). */
@@ -174,13 +173,13 @@ export const describeEvent = (event: UiEvent): string => {
     case "ExecutionEnded":
       return `execution ${event.phase} ended: ${event.outcome.status}`;
     case "AgentCallStarted":
-      return `${AGENT_LABEL[event.agent]} call started: ${event.purpose}`;
+      return `${AGENT_DISPLAY[event.agent].name} call started: ${event.purpose}`;
     case "ToolUsed":
-      return `${AGENT_LABEL[event.agent]} used ${event.tool} ${event.target}`.trimEnd();
+      return `${AGENT_DISPLAY[event.agent].name} used ${event.tool} ${event.target}`.trimEnd();
     case "AgentCallEnded":
-      return `${AGENT_LABEL[event.agent]} call ended: ${event.ok ? "ok" : "failed"}`;
+      return `${AGENT_DISPLAY[event.agent].name} call ended: ${event.ok ? "ok" : "failed"}`;
     case "AgentReconnecting":
-      return agentReconnectingLine(AGENT_LABEL[event.agent], event.attempt, event.of, event.delayMs, event.detail);
+      return agentReconnectingLine(AGENT_DISPLAY[event.agent].name, event.attempt, event.of, event.delayMs, event.detail);
     case "TransportRetrying":
       return transportRetryLine(event.agent, event.attempt, event.of, event.delaySeconds, event.fault);
     case "NetworkRetrying":

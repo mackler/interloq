@@ -116,7 +116,7 @@ export type TimelineEntry = Readonly<{
   counts: readonly CommandReport[];
 }>;
 /** An agent call that runs; calls nest when a decision is taken inside an execution call (P1-R2-1). */
-export type AgentCall = Readonly<{ agent: "claude" | "codex"; purpose: string; label: string; startedAt: string; callId: string }>;
+export type AgentCall = Readonly<{ agent: Agent; purpose: string; label: string; startedAt: string; callId: string }>;
 /** The prompt the run waits on, with every choice it offers (the catalog's and those of the preceding event). */
 /** A pending prompt: the agent's options (an interview turn's numbered answers or a relayed question's options,
  * rendered as cards) apart from the catalog's fixed choices (buttons), issue #12. */
@@ -556,7 +556,6 @@ export const startableOf = (state: ViewState, mode: RunMode): StartableItems =>
 /** The mode of a run's view, from its Started; null before it. */
 const modeOfRun = (run: RunView): RunMode | null => run.mode;
 
-const AGENT: Record<Agent, string> = { claude: AGENT_DISPLAY.claude.short, codex: AGENT_DISPLAY.codex.short };
 const sameSubject = (a: SubjectId, b: SubjectId): boolean => JSON.stringify(a) === JSON.stringify(b);
 const isDecision = (subject: SubjectId): boolean => typeof subject === "object" && "decision" in subject;
 const samePhase = (a: Phase, b: Phase): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -965,7 +964,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return { ...run, timeline, dashboard: { ...run.dashboard, interviewHelp: interviewHelp(event.heading) } };
     }
     case "AgentCallStarted": {
-      const label = `${AGENT[event.agent]} — ${purposeLabel(event.purpose)}`;
+      const label = `${AGENT_DISPLAY[event.agent].short} — ${purposeLabel(event.purpose)}`;
       // Issue #63: the retried call's start ends the wait before it; the retry's text stays with the call. W4-R2-1 of
       // issue #184: only the waited call's start, named by its agent and purpose; another call leaves the wait in place.
       const retried = run.retry !== null && waitedBy(run.retry, event);
@@ -979,10 +978,10 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     // W3-R2-1 of issue #184: calls overlap, so an event is labeled by the running call whose id it carries.
     case "ToolUsed":
-      return withActivity(run, `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${event.tool}: ${event.target}`.replace(/: $/, ""));
+      return withActivity(run, `${callOf(run.calls, event.callId)?.label ?? AGENT_DISPLAY[event.agent].short} — ${event.tool}: ${event.target}`.replace(/: $/, ""));
     // Issue #26: the SDK's own reconnection during a call, and the program's retry while it lasts; neither is progress.
     case "AgentReconnecting":
-      return withActivity(run, `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}`);
+      return withActivity(run, `${callOf(run.calls, event.callId)?.label ?? AGENT_DISPLAY[event.agent].short} — ${reconnectingActivity(event.attempt, event.of, event.detail)}`);
     case "TransportRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
       const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs, waitId: event.wait } };
@@ -1038,7 +1037,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
             ? limitWaitLine(run.limitWait)
             : retry !== null && retry.agent !== "tracker" && retry.wait !== null
               ? retryLine(retry.agent, retry.text)
-              : `${ended?.label ?? AGENT[event.agent]} — ${event.ok ? "done" : "failed"}`;
+              : `${ended?.label ?? AGENT_DISPLAY[event.agent].short} — ${event.ok ? "done" : "failed"}`;
       // Issue #53 (P1-R1-1): the end of the execution call itself, a retried attempt's included, leaves no step current;
       // the end of a call nested in it does not.
       const timeline = ended?.purpose === "execution" ? run.timeline.map((e) => (e.currentStep === null ? e : { ...e, currentStep: null })) : run.timeline;
@@ -1602,7 +1601,7 @@ export type LimitWait = EndableWait & Readonly<{ agent: Agent; purpose: string; 
  * A retry while it lasts: an agent's call (issue #26) with the purpose the call announces (W4-R2-1 of issue #184), or a
  * request to the tracker (issue #171), which no agent call is and whose purpose is null.
  */
-export type Retry = Readonly<{ agent: "claude" | "codex" | "tracker"; purpose: string | null; text: string; wait: EndableWait | null }>;
+export type Retry = Readonly<{ agent: Agent | "tracker"; purpose: string | null; text: string; wait: EndableWait | null }>;
 
 /** Whether a call is the one a wait waits for (W4-R2-1 of issue #184): the same agent and the same purpose. */
 export const waitedBy = (wait: Readonly<{ agent: string; purpose: string | null }>, call: Readonly<{ agent: string; purpose: string }>): boolean => wait.agent === call.agent && wait.purpose === call.purpose;
@@ -1611,10 +1610,10 @@ export const waitedBy = (wait: Readonly<{ agent: string; purpose: string | null 
 /** Issue #139: a run's usage-limit wait as its tab shows it, while the run is in progress; its end known only for a stated reset. */
 export const limitPauseOf = (run: RunView): LimitPause | null =>
   run.ended !== null || run.limitWait === null ? null : { fromMs: run.limitWait.fromMs, untilMs: run.limitWait.untilMs, known: run.limitWait.basis.kind === "reset" };
-const limitWaitLine = (wait: LimitWait): string => `${AGENT[wait.agent]} — ${usageLimitActivity(wait.limitType, wait.basis, wait.untilMs)}`;
+const limitWaitLine = (wait: LimitWait): string => `${AGENT_DISPLAY[wait.agent].short} — ${usageLimitActivity(wait.limitType, wait.basis, wait.untilMs)}`;
 
 /** The activity line of an agent's retry, from the retry itself; a tracker's is built by its own case. */
-const retryLine = (agent: "claude" | "codex", text: string): string => `${AGENT[agent]} — ${text}`;
+const retryLine = (agent: Agent, text: string): string => `${AGENT_DISPLAY[agent].short} — ${text}`;
 
 /**
  * A wait for a usage limit at an instant (issue #68): the percentage of it elapsed, 0 to 100 and never falling, and the

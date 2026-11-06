@@ -4,6 +4,7 @@
 
 import { Effect, Fiber, Ref, Result, Schema } from "effect";
 import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
+import { AGENT_DISPLAY, type Agent } from "./agents.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError, type UserStopped } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
 import { largestInput, threadAfter, type ReviewThread } from "./reviewThread.ts";
@@ -178,7 +179,6 @@ export const askPlannerQuestion = (question: UserQuestion, heading: string, phas
     return decision;
   });
 
-const AGENT_LABEL = { claude: "Claude Code", codex: "Codex" } as const;
 
 /**
  * A second turn spent on a defective reply, in the same session or thread (decision S2 of issues #26, #30 and #31):
@@ -194,7 +194,7 @@ export type Repair = Readonly<{ kind: "schema" | "validation" | "corrective" | "
  * Excess properties are ignored: they break no assumption of the program.
  */
 export const decodeWithRepair = <Out extends Schema.Decoder<unknown>, E, R>(
-  agent: keyof typeof AGENT_LABEL,
+  agent: Agent,
   schema: Out,
   reply: unknown,
   repair: (repair: Repair) => Effect.Effect<unknown, E, R>,
@@ -208,7 +208,7 @@ export const decodeWithRepair = <Out extends Schema.Decoder<unknown>, E, R>(
  * accepted value are returned, not recorded.
  */
 export const decodeValidating = <Out extends Schema.Decoder<unknown>, E, R>(
-  agent: keyof typeof AGENT_LABEL,
+  agent: Agent,
   schema: Out,
   reply: unknown,
   repair: (repair: Repair) => Effect.Effect<unknown, E, R>,
@@ -233,7 +233,7 @@ export const decodeValidating = <Out extends Schema.Decoder<unknown>, E, R>(
         const decoded = decode(value);
         if (!decoded.ok) {
           const file = yield* keep(value);
-          if (schemaFile !== null) return yield* Effect.fail(new AgentReplyInvalid({ agent: AGENT_LABEL[agent], issue: decoded.issue, files: [schemaFile, file] }));
+          if (schemaFile !== null) return yield* Effect.fail(new AgentReplyInvalid({ agent: AGENT_DISPLAY[agent].name, issue: decoded.issue, files: [schemaFile, file] }));
           return yield* step(yield* repair({ kind: "schema", prompt: repairReplyPrompt(decoded.issue) }), file, validationUsed);
         }
         if (validate === null) return { value: decoded.value, notes: [] };

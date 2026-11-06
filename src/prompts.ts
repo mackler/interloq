@@ -3660,7 +3660,7 @@ export function transportOptionDescriptions(): Readonly<{ retry: string; stop: s
   };
 }
 /** A retry of the program after a transport fault, as the page and conversation.md show it. */
-export function transportRetryLine(agent: "claude" | "codex", attempt: number, of: number, delaySeconds: number, fault: string): string {
+export function transportRetryLine(agent: Agent, attempt: number, of: number, delaySeconds: number, fault: string): string {
   return `${agentName(agent)}: connection lost, retry ${attempt} of ${of} in ${delaySeconds} s (${fault})`;
 }
 /** The accessible name of the determinate indicator while the program waits for a usage limit to lift (issue #68). */
@@ -3752,14 +3752,14 @@ export function waitEndedLine(subject: WaitSubject): string {
 export const WAIT_NOT_WAITING_TEXT = "That run is not waiting.";
 export const WAIT_ALREADY_ENDED_TEXT = "That wait has already ended.";
 /** Issue #184: a background try of a request whose retries are used up, while the developer answers the agreed questions. */
-export function backgroundRetryLine(agent: "claude" | "codex", what: string, count: number, seconds: number): string {
+export function backgroundRetryLine(agent: Agent, what: string, count: number, seconds: number): string {
   return `${agentName(agent)} could not be reached for ${what}; trying again in the background every ${durationText(seconds * 1000)} while you answer, try ${count}`;
 }
 /**
  * Issue #201: a try for an unreachable network after the retries are used up, as the page and conversation.md show it:
  * the code that shows no answer was reached, the try counted from 1, and its wait; no bound, since there is none.
  */
-export function networkRetryLine(agent: "claude" | "codex", what: string, code: NetworkCode, attempt: number, delaySeconds: number): string {
+export function networkRetryLine(agent: Agent, what: string, code: NetworkCode, attempt: number, delaySeconds: number): string {
   return `${agentName(agent)} could not be reached for ${what}: the network is unreachable (${code}); try ${attempt} in ${durationText(delaySeconds * 1000)}. Interloq keeps trying and continues by itself once ${agentName(agent)} answers; nothing is asked.`;
 }
 /** The end of a wait for a usage limit (issue #68). */
@@ -3785,14 +3785,14 @@ export function remainingTime(remainingMs: number): string {
   return `${durationText(remainingMs)} left`;
 }
 /** A call that succeeded after a retry. */
-export function transportRecoveredLine(agent: "claude" | "codex"): string {
+export function transportRecoveredLine(agent: Agent): string {
   return `${agentName(agent)}: connection restored`;
 }
 /**
  * The question of the pause when the retries are exhausted (S52, W5-R1-1): the agent and the kind of call, both chosen
  * by the program. The attempts and the fault, whose length the program does not choose, are in its details.
  */
-export function transportExhaustedQuestion(agent: "claude" | "codex", what: string): string {
+export function transportExhaustedQuestion(agent: Agent, what: string): string {
   return `${agentName(agent)} could not be reached for ${what}; the attempts and the last error are shown under "${attachedHeading("fault")}". Interloq keeps trying meanwhile. Do you want Interloq to retry again at once with a full set of retries, or to stop the run?`;
 }
 /**
@@ -3811,7 +3811,7 @@ export function transportDetails(attempts: number, fault: string): readonly Bloc
         : [{ kind: "paragraph", pieces: [plainPiece(`${lead} `), codePiece(shown.text), ...(shown.kind === "escaped" ? escapedNotePieces(" ") : [])] }];
   return fault_;
 }
-export function transportDecisionLine(answer: "retry" | "stop", agent: "claude" | "codex", what: string): string {
+export function transportDecisionLine(answer: "retry" | "stop", agent: Agent, what: string): string {
   return `**User decision:** ${answer === "retry" ? "retry again" : "stop the run"} after ${agentName(agent)} could not be reached for ${what}.\n\n`;
 }
 /** The halt of AgentUnreachable. */
@@ -3886,7 +3886,7 @@ export function unrecordedHaltLine(ids: readonly number[]): string {
   return `Interloq: the halt of run${ids.length === 1 ? "" : "s"} ${ids.join(", ")} could not be confirmed in ${ids.length === 1 ? "its records" : "their records"}; each was published to the page as ended with code 1.`;
 }
 
-export function agentUnreachableText(agent: "claude" | "codex", attempts: number, lastFault: string): string {
+export function agentUnreachableText(agent: Agent, attempts: number, lastFault: string): string {
   return `${agentName(agent)} could not be reached after ${attempts} attempts: ${lastFault}. The records are preserved.`;
 }
 
@@ -3987,7 +3987,7 @@ export function questionTitle(n: number): string {
 }
 /** The note beside a context paragraph that the program wrote itself (S7, S10). */
 export const CONTEXT_BY_PROGRAM = "written by Interloq";
-const agentWords = (agent: "claude" | "codex"): string => (agent === "claude" ? "Claude Code, the coding agent," : "Codex, the reviewing agent,");
+const agentWords = (agent: Agent): string => (agent === "claude" ? "Claude Code, the coding agent," : "Codex, the reviewing agent,");
 /**
  * Where a question came from, in ordinary words (S5): the subdued line under its heading. A question inside decision k
  * says that it belongs to the analysis the user asked for, and why it is asked (issue #57).
@@ -4022,7 +4022,7 @@ const originText = (origin: QuestionOrigin): string => {
     case "unchanged":
       return `Asked because Claude Code accepted points of the ${origin.pass} in ${origin.heading} but did not change the file`;
     case "transport":
-      return `Asked because ${origin.agent === "claude" ? "Claude Code" : "Codex"} could not be reached`;
+      return `Asked because ${AGENT_DISPLAY[origin.agent].name} could not be reached`;
     case "tracker":
       return `Asked because the ${origin.tracker} issue tracker could not be reached`;
     case "suiteStopped":
@@ -4339,7 +4339,7 @@ export function contextFallbackNote(reason: string): string {
 }
 
 /** The facts of the transport pause a context call is given (S12). */
-export function transportFacts(agent: "claude" | "codex", what: string, attempts: number, fault: string): string {
+export function transportFacts(agent: Agent, what: string, attempts: number, fault: string): string {
   return `${agentName(agent)} could not be reached for ${what} after ${attempts} attempts; the last error was: ${fault}. Interloq waited between the attempts, each time twice as long as before. Retry again makes another full set of attempts; Stop the run ends the run and keeps its records.`;
 }
 
@@ -4815,8 +4815,8 @@ export const suiteAnswerLine = (choice: "retry" | "stop", command: string): stri
 export const trackerBesideRetryLine = (tracker: string, what: string, attempts: number, seconds: number): string =>
   `${what} on ${tracker} failed after ${attempts} attempts; Interloq repeats it in ${durationText(seconds * 1000)}, and the question about it waits for your answer beside the repeats.`;
 /** Issue #243: the transport retries used up with no network code: Interloq keeps trying, the question open beside the call. */
-export const transportBesideLine = (agent: "claude" | "codex", what: string, tries: number, seconds: number): string =>
-  `${agent === "claude" ? "Claude Code" : "Codex"} could not be reached for ${what} after its retries; Interloq tries again in ${durationText(seconds * 1000)} (try ${tries}), and the question about it waits for your answer beside the call.`;
+export const transportBesideLine = (agent: Agent, what: string, tries: number, seconds: number): string =>
+  `${AGENT_DISPLAY[agent].name} could not be reached for ${what} after its retries; Interloq tries again in ${durationText(seconds * 1000)} (try ${tries}), and the question about it waits for your answer beside the call.`;
 /** Issue #243: an answer to a disagreement given after its review ended, recorded where the run can still change the work. */
 export const disputeAnsweredLine = (heading: string, text: string): string =>
   `${heading}: your answer "${text}" to a disagreement put to you there is recorded in user-decisions.md, and the run follows it from here.`;
