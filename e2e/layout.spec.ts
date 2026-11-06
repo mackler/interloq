@@ -406,6 +406,26 @@ const widestBounds = async (page: Page) => {
   await settled(page);
 };
 
+/**
+ * Issue #253, S8: in the list view with the switch on, empties the queue and chooses the backlog source, so a test
+ * starts from them whatever an earlier test that failed before its cleanup left in the server's chain.json.
+ */
+const chainReset = async (page: Page): Promise<void> => {
+  const editor = page.getByRole("region", { name: QUEUE_HEADING });
+  const sources = page.getByRole("region", { name: CHAIN_SWITCH_LABEL }).getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL });
+  if ((await sources.getByRole("radio", { name: CHAIN_SOURCE_TEXTS.queue }).isChecked())) {
+    const removes = editor.locator("li").getByRole("button", { name: /^Remove / });
+    while ((await removes.count()) > 0) {
+      const before = await removes.count();
+      await removes.first().click();
+      await expect(removes).toHaveCount(before - 1);
+    }
+    await sources.getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
+  }
+  await expect(sources.getByRole("radio", { name: CHAIN_SOURCE_TEXTS.backlog })).toBeChecked();
+  await expect(editor).toHaveCount(0);
+};
+
 /** Issue #253: turns the chain's switch to `on` where it is not, waiting until the control shows it. */
 const chainSwitched = async (control: Locator, on: boolean): Promise<void> => {
   const input = control.locator("input[name=chain]");
@@ -1232,20 +1252,45 @@ test.describe("the tests of the planSteps server, in order", () => {
   for (const width of [1280, 1000, 840] as const) {
     test(`(L41) the chain's control at ${width} × 800: every part inside the rail's column`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
-      const item = await startTask(page, layoutUrl("planSteps"));
+      // Issue #253, S8: turning the switch on adopts the run (issue #249), and an end of that run let the chain start
+      // another item, which took the run's tab. So the switch is turned on and a run limit of 1 committed in the list
+      // view, confirmed from a reloaded page, before the run starts: if it ends, the chain ends and starts nothing.
+      await page.goto(layoutUrl("planSteps"));
+      await expect(page.getByText("connected", { exact: true })).toBeVisible();
+      await toTheList(page, "implementation");
+      const listControl = page.getByRole("region", { name: CHAIN_SWITCH_LABEL });
+      await chainSwitched(listControl, true);
+      await chainReset(page);
+      await listControl.locator("input[name=chain-runs]").fill("1");
+      await listControl.locator("input[name=chain-runs]").press("Enter");
+      await expect(async () => {
+        await page.reload();
+        await expect(page.getByText("connected", { exact: true })).toBeVisible({ timeout: 5_000 });
+        await toTheList(page, "implementation");
+        await expect(listControl.locator("input[name=chain]")).toBeChecked({ timeout: 2_000 });
+        await expect(listControl.locator("input[name=chain-runs]")).toHaveValue("1", { timeout: 2_000 });
+      }).toPass({ timeout: 30_000 });
+      const start = listOf(page).locator("li").first().locator("button[name=start]:not([disabled])");
+      await expect(start).toBeVisible();
+      const item = (await start.getAttribute("data-item")) ?? "";
+      await start.click();
+      await expect(runTabOf(page, item, "implementation")).toBeVisible();
+      await runTabOf(page, item, "implementation").click();
       await expect(railSeparator(page)).toHaveAttribute("aria-valuenow", "14");
-      await expect(page.locator("div.rail-column .chain")).toBeVisible();
-      // Issue #253: the fields are rendered only while the switch is on; turning it on adopts this run (issue #249),
-      // which waits, and the switch is turned off again at the end.
-      await chainSwitched(page.locator("div.rail-column .chain"), true);
+      const rail = page.locator("div.rail-column .chain");
+      await expect(rail).toBeVisible();
+      await expect(rail.locator("input[name=chain]")).toBeChecked();
       const runs = page.locator('div.rail-column input[name="chain-runs"]');
+      await expect(runs).toHaveValue("1");
+      await expect(rail.getByRole("status")).toContainText("Run 1 of 1 of the chain");
+      // Issue #203's limit of 10, typed as a draft and never sent: fill fires no change event, so nothing commits it.
       await runs.fill("10");
-      await runs.press("Enter");
       await settled(page);
       await chainInside(page);
       await runs.fill("x");
       await runs.press("Enter");
       await expect(page.locator("div.rail-column .chain").getByText(CHAIN_INVALID_RUNS)).toBeVisible();
+      await expect(rail.getByRole("status")).toContainText("Run 1 of 1 of the chain");
       await settled(page);
       await chainInside(page);
       // Issue #196: the choice of source and the queue's empty text lie inside the column too; the backlog restored after.
@@ -1278,6 +1323,10 @@ test.describe("the tests of the planSteps server, in order", () => {
       await expect(editor.getByText(QUEUE_EMPTY)).toBeVisible();
       await page.getByRole("region", { name: CHAIN_SWITCH_LABEL }).getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
       await expect(editor).toHaveCount(0);
+      const runsInList = page.getByRole("region", { name: CHAIN_SWITCH_LABEL }).locator("input[name=chain-runs]");
+      await runsInList.fill("");
+      await runsInList.press("Enter");
+      await settled(page);
       await chainSwitched(page.getByRole("region", { name: CHAIN_SWITCH_LABEL }), false);
       await noSidewaysScroll(page);
     });
