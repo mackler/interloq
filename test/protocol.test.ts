@@ -66,7 +66,7 @@ const questionEntry = fc.record({ id: text, context: fc.array(block, { maxLength
 // Defect A of docs/page-question-phase-defects.md: the question subject's response carries the amended list too.
 // Issue #156: its dispositions carry Claude Code's mark, as the question list's schema requires.
 const markedDisposition = fc.tuple(disposition, fc.boolean()).map(([d, task_dispute]) => ({ ...d, task_dispute }));
-const markedListResponse = fc.tuple(plannerResponse, fc.array(markedDisposition, { maxLength: 3 }), fc.array(questionEntry, { maxLength: 2 })).map(([r, dispositions, questions]) => ({ ...r, dispositions, questions }));
+const markedListResponse = fc.tuple(plannerResponse, fc.array(markedDisposition, { maxLength: 3 }), fc.array(questionEntry, { maxLength: 2 })).map(([r, dispositions, questions]) => ({ ...r, dispositions, questions, correction_passages: [] }));
 const response = fc.oneof(plannerResponse, markedListResponse);
 const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }), checks: fc.array(fc.record({ step: text, command: text, seconds: fc.double({ noNaN: true, noDefaultInfinity: true }), selection: fc.boolean(), counts: fc.option(fc.record({ passed: nat, failed: nat, skipped: nat }), { nil: null }) }), { maxLength: 2 }), testFirst: fc.array(fc.record({ step: text, tests: fc.array(fc.record({ test: text, observed: text }), { maxLength: 2 }), refactor: text }), { maxLength: 2 }) });
 // Issue #216 (W1-R1-2): the noun of Codex's pass that a pause, limit or unchanged origin carries.
@@ -106,9 +106,9 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("PhaseEnded" as const), phase, result: text }),
   fc.record({ _tag: fc.constant("RoundBegan" as const), subject, round: nat, limit: nat }),
   fc.record({ _tag: fc.constant("ReviewReceived" as const), subject, round: nat, review, counted: nat }),
-  fc.record({ _tag: fc.constant("ResponseReceived" as const), subject, round: nat, response, resultText: text }),
+  fc.record({ _tag: fc.constant("ResponseReceived" as const), subject, round: nat, response }),
   fc.record({ _tag: fc.constant("LoopFinished" as const), subject, result: fc.constantFrom("converged" as const, "proceed" as const, "revise" as const) }),
-  fc.record({ _tag: fc.constant("PlanWritten" as const), phase: nat, resultText: text }),
+  fc.record({ _tag: fc.constant("PlanWritten" as const), phase: nat, revised: fc.boolean() }),
   fc.record({ _tag: fc.constant("ExecutionEnded" as const), phase: nat, outcome }),
   fc.record({ _tag: fc.constant("AgentCallStarted" as const), agent, purpose: text, callId: text }),
   fc.record({ _tag: fc.constant("ToolUsed" as const), agent, tool: text, target: text, callId: text }),
@@ -362,13 +362,28 @@ const questionListResponse: QuestionListResponse = {
   correction_passages: [],
   questions: [entryOf({ id: "Q1", context: "c", question: "Which database?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }], default_answer: "PostgreSQL" })],
 };
-const responseEvent = (subject: SubjectId, response: QuestionListResponse | PlannerResponse | DecisionResponse): RunEvent => ({ _tag: "Notified", event: { _tag: "ResponseReceived", subject, round: 1, response, resultText: "" } });
+const responseEvent = (subject: SubjectId, response: QuestionListResponse | PlannerResponse | DecisionResponse): RunEvent => ({ _tag: "Notified", event: { _tag: "ResponseReceived", subject, round: 1, response } });
 
 test("a question review's ResponseReceived survives the round trip, live and in a replay", () => {
-  const event: ServerMessage = { type: "event", run: 1, seq: 5, time: T, event: { _tag: "Notified", event: { _tag: "ResponseReceived", subject: "questions", round: 1, response: questionListResponse, resultText: "" } } };
+  const event: ServerMessage = { type: "event", run: 1, seq: 5, time: T, event: { _tag: "Notified", event: { _tag: "ResponseReceived", subject: "questions", round: 1, response: questionListResponse } } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(event))), event);
   const replay: ServerMessage = { type: "replay", runs: [{ id: 1, events: [{ time: event.time, event: event.event }] }], ui: [] };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(replay))), replay);
+});
+
+// Issue #27: an event recorded before the change carries the serialized reply as `resultText`; it still decodes, the
+// text dropped, and a PlanWritten without `revised` decodes as written fresh.
+test("an older PlanWritten with resultText and no revised decodes without the text, revised false", () => {
+  const plan = JSON.stringify({ kind: "plan", plan: { stages: [{ id: "A", label: "Stage", steps: [{ id: "S1", label: "Step", text: "do it" }] }] }, questions_for_user: [] });
+  const frame = JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "PlanWritten", phase: 2, resultText: plan } } });
+  const message = decoded(decodeServer(frame));
+  assert.deepEqual(message, { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "PlanWritten", phase: 2, revised: false } } });
+});
+
+test("an older ResponseReceived with resultText decodes without the text", () => {
+  const event = { _tag: "ResponseReceived", subject: "questions", round: 1, response: questionListResponse };
+  const frame = JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { ...event, resultText: JSON.stringify(questionListResponse) } } });
+  assert.deepEqual(decoded(decodeServer(frame)), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
 });
 
 const decisionAnalysis = { decision: "d", columns: [{ kind: "argued", option: "A", advantages: [], disadvantages: [] }, { kind: "argued", option: "B", advantages: [], disadvantages: [] }], recommendation: { option: "", reason: "" } };

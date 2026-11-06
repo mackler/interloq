@@ -121,7 +121,7 @@ const drive = (setup: ReviewSetup, rounds: readonly Round[], answers: readonly A
         const round = roundCheckOf(t.state)(response);
         fc.pre(Result.isSuccess(round));
         if (Result.isFailure(round)) throw new Error("unreachable");
-        event = { kind: command.kind === "CallPlanner" ? "ResponseDecoded" : command.kind === "CallCorrective" ? "CorrectionDecoded" : "InvestigationDecoded", response, round: round.success, resultText: "", costUsd: null };
+        event = { kind: command.kind === "CallPlanner" ? "ResponseDecoded" : command.kind === "CallCorrective" ? "CorrectionDecoded" : "InvestigationDecoded", response, round: round.success, costUsd: null };
         break;
       }
       case "AskDecision":

@@ -96,7 +96,7 @@ const drive = (scripts: readonly Script[], use: ReviewSetup = setup) => {
           finished = "RoundInvalid";
           break;
         }
-        event = { kind: "ResponseDecoded", response, round: round.success, resultText: "", costUsd: 0.2 };
+        event = { kind: "ResponseDecoded", response, round: round.success, costUsd: 0.2 };
         break;
       }
       case "AskDecision":
@@ -321,7 +321,7 @@ test("property: an unexplained change is never asked, and the next review carrie
       const review: Review = { issues: [issue("A")] };
       const reviewed = advance(begun.state, { kind: "ReviewDecoded", review, validated: Result.getOrThrow(validateReview(review)) });
       const response = respond([["A", "rejected"]]);
-      const responded = advance(reviewed.state, { kind: "ResponseDecoded", response, round: Result.getOrThrow(roundCheckOf(reviewed.state)(response)), resultText: "", costUsd: null });
+      const responded = advance(reviewed.state, { kind: "ResponseDecoded", response, round: Result.getOrThrow(roundCheckOf(reviewed.state)(response)), costUsd: null });
       const observed = advance(responded.state, { kind: "FileObserved", hash: "h1", text: after });
       assert.ok(!observed.commands.some((c) => c.kind === "AskDecision"));
       const next = observed.commands.at(-1);

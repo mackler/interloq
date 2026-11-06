@@ -18,7 +18,7 @@ const complete = (s: ReviewState, e: TestEvent): ReviewEvent =>
   e.kind === "ReviewDecoded"
     ? { ...e, validated: Result.getOrThrow(validateReview(e.review)) }
     : e.kind === "ResponseDecoded"
-      ? { ...e, resultText: "", costUsd: 0.1, round: Result.getOrThrow(roundCheckOf(s)(e.response)) }
+      ? { ...e, costUsd: 0.1, round: Result.getOrThrow(roundCheckOf(s)(e.response)) }
       : e;
 const advance = (s: ReviewState, e: TestEvent): Transition => advanceState(s, complete(s, e));
 const run = (first: Transition, ...events: TestEvent[]): Transition => events.reduce((t, e) => advance(t.state, e), first);

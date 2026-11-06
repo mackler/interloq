@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Fiber } from "effect";
-import { refinementRun, run } from "../src/run.ts";
+import { type PlanningCause, planRevised, refinementRun, run } from "../src/run.ts";
 import { countOfKind, foreseenPhases, iterationsOf, type Phase, phaseName, type UiEvent } from "../src/uiEvents.ts";
 import { sourceOf, finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT, scriptedItem } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
@@ -388,10 +388,21 @@ test("the run announces the Codex model it was configured with, or the login's d
   assert.ok(!byDefault.probe.ui.said.some((l) => l.startsWith("Codex model:")));
 });
 
+// Issue #27 (requirements G-R1-1): a planning phase revises the plan exactly where it starts from an existing plan, an
+// earlier run's (issue #180, #185) or this run's after an execution; a first plan and one written fresh from a parked
+// branch are written. planRevised reads the cause's tag alone.
+test("planRevised: false for a first plan and a parked branch, true for an earlier plan and every revision cause", () => {
+  const causes: readonly (readonly [PlanningCause["_tag"], boolean])[] = [
+    ["FirstPlan", false], ["ParkedBranch", false], ["EarlierPlan", true],
+    ["ExecutionEnded", true], ["SuiteFailed", true], ["Uncommitted", true], ["VerdictWithdrawn", true], ["DisputesAnswered", true],
+  ];
+  for (const [tag, revised] of causes) assert.equal(planRevised({ _tag: tag } as PlanningCause), revised, tag);
+});
+
 // Plan step 1.5 (decision Q5): the run reports its phases, plan writes and execution outcomes to the Ui.
 test("the run notifies the phases, the plan write and the execution outcome in order", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    steps: [{ output: noQuestions, plan: "v1", resultText: "plan written" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
@@ -401,7 +412,7 @@ test("the run notifies the phases, the plan write and the execution outcome in o
     probe.ui.notified.filter((e) => phaseLevel.has(e._tag)),
     [
       { _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } },
-      { _tag: "PlanWritten", phase: 1, resultText: "plan written" },
+      { _tag: "PlanWritten", phase: 1, revised: false },
       { _tag: "LoopFinished", subject: { plan: 1 }, result: "converged" },
       { _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" },
       { _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } },

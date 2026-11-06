@@ -5,7 +5,7 @@ import { AGENTS } from "./agents.ts";
 import { FigureSchema } from "./figure.ts";
 import { CommandReportSchema } from "./testCounts.ts";
 import { type Ending, EndingSchema, UNESTABLISHED } from "./ending.ts";
-import { Effect, Option, Result, Schema } from "effect";
+import { Effect, Option, Result, Schema, SchemaTransformation } from "effect";
 import { type PreparationMark, PreparationMarkSchema, type PreparationView, PreparationViewSchema } from "./preparationSwitch.ts";
 import * as S from "./schema.ts";
 import { NUMBERED_PHASE_KINDS, type UiEvent } from "./uiEvents.ts";
@@ -204,6 +204,25 @@ const Int = S.NonNegativeInt;
 const Str = Schema.String;
 const tagged = <const T extends string, F extends Schema.Struct.Fields>(tag: T, fields: F) => Schema.Struct({ _tag: Schema.Literal(tag), ...fields });
 /**
+ * Issue #27: an event member that no longer carries the serialized reply `resultText`. An event recorded or sent before
+ * the change still has it, and the strict decoding refuses an excess property, so the encoded side admits the key and
+ * the decoding drops it; the decoded type has no such field.
+ */
+const withoutLegacyText = <const T extends string, F extends Schema.Struct.Fields>(tag: T, fields: F) => {
+  const current = tagged(tag, fields);
+  const legacy = Schema.Struct({ ...current.fields, resultText: Schema.optionalKey(Str) });
+  // The two sides differ only by the optional key, which the generic fields keep TypeScript from seeing.
+  return legacy.pipe(
+    Schema.decodeTo(current, SchemaTransformation.transform<typeof current.Encoded, typeof legacy.Type>({
+      decode: (input) => {
+        const { resultText: _, ...rest } = input as Readonly<Record<string, unknown>>;
+        return rest as unknown as typeof current.Encoded;
+      },
+      encode: (value) => value as unknown as typeof legacy.Type,
+    })),
+  );
+};
+/**
  * Issue #13: the one frame the server sends a tab it closes for falling more than its bound behind the run
  * (`subscribeBounded` of src/webServer.ts). It carries no text: the page's words are `FELL_BEHIND_NOTICE`.
  */
@@ -277,9 +296,9 @@ export const UiEventSchema = Schema.Union([
   // The question subject's response is the planner's plus `questions` (defect A of docs/page-question-phase-defects.md).
   // A decision's response carries its amended analysis (W2-R1-1), the plan's the whole plan (issue #6), Bring Up to Date's
   // the issue brought up to date (issue #216) and a verdict's what the requirements leave out (issue #186).
-  tagged("ResponseReceived", { ...round, response: S.LoopResponse, resultText: Str }),
+  withoutLegacyText("ResponseReceived", { ...round, response: S.LoopResponse }),
   tagged("LoopFinished", { subject: SubjectIdSchema, result: Schema.Literals(["converged", "proceed", "revise"]) }),
-  tagged("PlanWritten", { phase: Int, resultText: Str }),
+  withoutLegacyText("PlanWritten", { phase: Int, revised: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))) }),
   tagged("ExecutionEnded", { phase: Int, outcome: S.ExecOutcome }),
   tagged("AgentCallStarted", { agent: AgentSchema, purpose: Str, callId: Str }),
   tagged("ToolUsed", { agent: AgentSchema, tool: Str, target: Str, callId: Str }),

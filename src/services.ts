@@ -135,7 +135,7 @@ export type PlanningPurpose = "planning" | "interview" | "context";
  */
 export const REVIEW_PURPOSE = "review";
 export const EXECUTION_PURPOSE = "execution";
-export type PlanningResult = Readonly<{ output: unknown; resultText: string; costUsd: number | null }>;
+export type PlanningResult = Readonly<{ output: unknown; costUsd: number | null }>;
 /**
  * What a planning call may do (finding 1 of docs/gui-review.md): "records" may edit only under plan-review/ (behaviour 3);
  * "readOnly" may call no tool but the structured output (a work response, behaviour 12), its repair turn included;

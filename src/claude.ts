@@ -554,7 +554,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           capability === "readOnly" ? () => readOnlyPermission : capability === "readProject" ? () => readProjectPermission : planningPermission(decider),
         );
         if (outcome.error !== null) return yield* Effect.fail(callFailure(outcome.error, outcome.failure));
-        return { output: outcome.structured, resultText: outcome.resultText, costUsd: outcome.costUsd };
+        return { output: outcome.structured, costUsd: outcome.costUsd };
       }),
     executing: (prompt, reporter) =>
       Effect.gen(function* () {

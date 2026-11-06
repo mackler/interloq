@@ -2412,6 +2412,14 @@ export function interviewHelp(heading: string): string {
 export function planWrittenHeading(label: string): string {
   return `Claude wrote the plan (${label}).`;
 }
+/**
+ * Issue #27 (requirements Q1, G-R1-1): the body of Claude Code's latest message after a plan is written or revised. It
+ * says what happened in which stage and points to the dashboard's heading of the plan, named by `label`
+ * (`documentLabel` of the plan subject), and never holds any part of the planning call's reply.
+ */
+export function planWrittenBody(revised: boolean, stage: string, label: string): string {
+  return `Claude Code ${revised ? "revised" : "wrote"} the plan in ${stage}; open the ${label} heading below to read it.`;
+}
 /** The heading of the summary Claude proposes at the end of an interview, in the page. */
 export const SUMMARY_PROPOSED_HEADING = "Summary proposed by Claude:";
 

@@ -265,7 +265,7 @@ export const resolveValidation = <T>(source: ValidationSource<T>): Effect.Effect
   source === null || typeof source === "function" ? Effect.succeed(source) : source.load;
 
 /** The decoded output of a planning call, the free text and cost of the call that produced it, and whether a repair turn was needed. */
-export type PlanningCall<Out> = Readonly<{ output: Out; reply: unknown; resultText: string; costUsd: number | null; repaired: boolean }>;
+export type PlanningCall<Out> = Readonly<{ output: Out; reply: unknown; costUsd: number | null; repaired: boolean }>;
 
 /**
  * A call in which Claude Code may write only under plan-review/ ("records"), or change nothing ("readOnly", a work
@@ -317,7 +317,7 @@ export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string
     for (const note of notes) yield* store.converse(note);
     const second = yield* Ref.get(repairCall);
     const used = second ?? first;
-    return { output, reply: used.output, resultText: used.resultText, costUsd: used.costUsd, repaired: second !== null };
+    return { output, reply: used.output, costUsd: used.costUsd, repaired: second !== null };
   });
 
 /**
@@ -700,7 +700,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
             // Issue #38: a round whose review raised a disputed point again asks first for a resolution of both concerns.
             const respondPrompt = subject.respond.prompt(store.root, command.round, context);
             const call = yield* planningCall(command.investigating.length === 0 ? respondPrompt : `${respondPrompt}\n\n${prompts.investigationNote(command.investigating)}`, subject.respond.schema, "planning", subject.respond.capability, round.after(yield* resolveValidation(subject.respond.validate)), rawSave(command.round, "response"));
-            return { kind: "ResponseDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
+            return { kind: "ResponseDecoded", response: call.output, round: yield* round.of(call.output), costUsd: call.costUsd };
           }
           case "CallCorrective": {
             // Issue #30: the corrective turn, a Repair of its own in the same session, validated against the reply it
@@ -714,7 +714,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
             yield* store.saveCorrection(id, command.round, command.attempt, call.reply);
             if (subject.respond.after !== null) yield* subject.respond.after(call.output);
             yield* publishDocument;
-            return { kind: "CorrectionDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
+            return { kind: "CorrectionDecoded", response: call.output, round: yield* round.of(call.output), costUsd: call.costUsd };
           }
           case "CallInvestigation": {
             // Issue #38: the investigation turn, built as the corrective turn is: validated against the reply it follows,
@@ -727,7 +727,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
             yield* store.saveInvestigation(id, command.round, command.attempt, call.reply);
             if (subject.respond.after !== null) yield* subject.respond.after(call.output);
             yield* publishDocument;
-            return { kind: "InvestigationDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
+            return { kind: "InvestigationDecoded", response: call.output, round: yield* round.of(call.output), costUsd: call.costUsd };
           }
           case "ApplyDecisions":
             yield* applyDecisions(subject as Subject<PlannerResponse, D>);

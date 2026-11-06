@@ -343,6 +343,24 @@ export type PlanStart =
   | Readonly<{ _tag: "ParkedMerge"; root: RunRoot; branch: string; plan: S.RecordedPlan | null }>;
 /** Why a planning phase writes or revises the plan: the first plan, a plan taken from an earlier run (issue #180), or a revision. */
 export type PlanningCause = FirstPlanCause | RevisionCause;
+/**
+ * Issue #27 (requirements G-R1-1): whether planning phase k's plan is a revision, the phase starting from an existing
+ * plan, which PlanWritten carries so the page says "revised" or "wrote" without reading the phase number.
+ */
+export const planRevised = (cause: PlanningCause): boolean => {
+  switch (cause._tag) {
+    case "FirstPlan":
+    case "ParkedBranch":
+      return false;
+    case "EarlierPlan":
+    case "ExecutionEnded":
+    case "SuiteFailed":
+    case "Uncommitted":
+    case "VerdictWithdrawn":
+    case "DisputesAnswered":
+      return true;
+  }
+};
 /** The prompt of planning phase k for its cause. */
 const planningPrompt = (root: RunRoot, task: string, withRequirements: boolean, k: number, cause: PlanningCause, checks: S.StepChecks): string => {
   switch (cause._tag) {
@@ -692,7 +710,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
           if (replied.kind === "plan") {
             yield* store.savePlanWrite(k, { questions_for_user: [] });
             yield* savePlan(k, replied.plan, before);
-            yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: reply.resultText });
+            yield* ui.notify({ _tag: "PlanWritten", phase: k, revised: planRevised(previous) });
             return { _tag: "Reviewed", loop: (yield* settled(subject, yield* reviewLoop(subject)))! } as const;
           }
           verdicts += 1;
@@ -708,7 +726,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
           yield* sayAndWrite(verdictWithdrawnLine(n));
           const replaced = yield* planningCall(planAfterVerdictPrompt(store.root, task, withRequirements, n, first, checks), S.PlanOnly, "planning", "records", planField<S.PlanOnly>(planValidation(store.root, before)));
           yield* savePlan(k, replaced.output.plan, before);
-          yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: replaced.resultText });
+          // Issue #27 (G-R1-1): the first plan written after a withdrawn verdict is written, whatever the phase's cause.
+          yield* ui.notify({ _tag: "PlanWritten", phase: k, revised: false });
           return { _tag: "Reviewed", loop: (yield* settled(subject, yield* reviewLoop(subject)))! } as const;
         }
 
@@ -716,7 +735,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         const written = yield* planningCall(planningPrompt(store.root, task, withRequirements, k, previous, checks), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
         yield* store.savePlanWrite(k, written.output);
         yield* savePlan(k, written.output.plan, before);
-        yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: written.resultText });
+        yield* ui.notify({ _tag: "PlanWritten", phase: k, revised: planRevised(previous) });
 
         let answered = false;
         for (const question of written.output.questions_for_user) {

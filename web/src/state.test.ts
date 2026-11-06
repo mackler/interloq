@@ -202,22 +202,34 @@ describe("ordering and the panels", () => {
     }
   });
 
-  // Issue #46 (S19): a question of the plan writer reaches the user once, as its presented question; the plan's result
-  // text is Claude Code's latest message, and the plan itself has its place in the rail.
-  test("a plan write's result text is Claude Code's latest message under the plan's heading; an empty one changes nothing", () => {
-    const events: RunEvent[] = [started, notified({ _tag: "PlanWritten", phase: 1, resultText: "I wrote the plan." })];
+  // Issue #46 (S19): a question of the plan writer reaches the user once, as its presented question. Issue #27: after
+  // every plan write Claude Code's latest message is the plan's heading and the sentence pointing to the Plan heading,
+  // never the planning call's reply, which the event no longer carries.
+  test("a plan write sets Claude Code's latest message to the plan's heading and the pointer sentence", () => {
+    const events: RunEvent[] = [started, notified({ _tag: "PlanWritten", phase: 1, revised: false })];
     for (const s of [fold(live(events)), replayed(events)]) {
       // Issue #6: the run holds one planning phase, so it carries no number.
-      expect(claudeOf(s)).toEqual({ heading: prompts.planWrittenHeading("Planning"), body: "I wrote the plan.", running: [] });
+      expect(claudeOf(s)).toEqual({ heading: prompts.planWrittenHeading("Planning"), body: prompts.planWrittenBody(false, "Planning", prompts.documentLabel({ plan: 1 })), running: [] });
+      expect(claudeOf(s)?.body).not.toContain("{");
     }
+  });
+
+  test("a plan revised in planning phase 2 names Planning 2 and says revised", () => {
+    const began = (n: number) => notified({ _tag: "PhaseBegan", phase: { kind: "planning", n } });
+    const s = fold(live([started, began(1), notified({ _tag: "PlanWritten", phase: 1, revised: false }), began(2), notified({ _tag: "PlanWritten", phase: 2, revised: true })]));
+    expect(claudeOf(s)).toEqual({ heading: prompts.planWrittenHeading("Planning 2"), body: prompts.planWrittenBody(true, "Planning 2", prompts.documentLabel({ plan: 2 })), running: [] });
+    expect(claudeOf(s)?.body).toMatch(/revised the plan in Planning 2/);
+  });
+
+  test("a plan write replaces what Claude Code said before", () => {
     const claudeSaid = notified({ _tag: "ClaudeSaid", text: "before", running: [] });
-    expect(claudeOf(fold(live([started, claudeSaid, notified({ _tag: "PlanWritten", phase: 1, resultText: "" })])))).toEqual({ heading: null, body: "before", running: [] });
+    expect(claudeOf(fold(live([started, claudeSaid, notified({ _tag: "PlanWritten", phase: 1, revised: false })])))).toEqual({ heading: prompts.planWrittenHeading("Planning"), body: prompts.planWrittenBody(false, "Planning", prompts.documentLabel({ plan: 1 })), running: [] });
   });
 
   test("reviews and responses go to the right panel as Codex and Claude Code messages", () => {
     const review = { issues: [{ id: "A", severity: "major" as const, location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] };
     const response = { dispositions: [{ id: "A", action: "accepted" as const, rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
-    const s = fold(live([started, notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 2, review, counted: 1 }), notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 2, response, resultText: "" })]));
+    const s = fold(live([started, notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 2, review, counted: 1 }), notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 2, response })]));
     expect(runOf(s, "implementation")?.right.map((m) => [m.author, m.heading])).toEqual([["codex", "Planning phase 1, cycle 2"], ["claude", "Planning phase 1, cycle 2"]]);
     expect(runOf(s, "implementation")?.right[0].body).toMatch(/\*\*\[A\]\*\*/);
     // The author is the message's; the body does not repeat it (aesthetic and minimalist design).
@@ -253,7 +265,7 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
     const withRunning = notified({ _tag: "ClaudeSaid", text: "waiting", running: ["npm test"] });
     for (const s of both([started, withRunning])) expect(claudeOf(s)).toEqual({ heading: null, body: "waiting", running: ["npm test"] });
     for (const s of both([started, withRunning, claudeSaid("done")])) expect(claudeOf(s)).toEqual({ heading: null, body: "done", running: [] });
-    for (const s of both([started, withRunning, notified({ _tag: "PlanWritten", phase: 1, resultText: "I wrote the plan." })])) expect(claudeOf(s)?.running).toEqual([]);
+    for (const s of both([started, withRunning, notified({ _tag: "PlanWritten", phase: 1, revised: false })])) expect(claudeOf(s)?.running).toEqual([]);
   });
 
   test("the activity line and the page's prompts say Claude", () => {
@@ -415,7 +427,6 @@ describe("the cycles of a review loop in the timeline", () => {
       subject: plan,
       round: 1,
       response: { dispositions: [disposition("A", "accepted"), disposition("B", "partially_accepted"), disposition("C", "rejected")], self_corrections: [{ id: "", new_action: "plan_error", explanation: "x", concern: "c", remedy: "r", resolution: null }, { id: "C", new_action: "accepted", explanation: "x", concern: "c", remedy: "r", resolution: null }], reviewer_feedback: "", questions_for_user: [] },
-      resultText: "",
     }),
     notified({ _tag: "RoundBegan", subject: plan, round: 2, limit: 5 }),
   ];
@@ -440,7 +451,7 @@ describe("the cycles of a review loop in the timeline", () => {
   // Issue #30 (P1-R2-2): a corrective turn's reply is a second ResponseReceived of the same round; it replaces the
   // round's contribution instead of adding to it.
   test("a second response of the same round replaces that round's corrections", () => {
-    const response = (action: "accepted" | "rejected") => notified({ _tag: "ResponseReceived", subject: plan, round: 1, response: { dispositions: [disposition("A", action)], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" });
+    const response = (action: "accepted" | "rejected") => notified({ _tag: "ResponseReceived", subject: plan, round: 1, response: { dispositions: [disposition("A", action)], self_corrections: [], reviewer_feedback: "", questions_for_user: [] } });
     const head = [started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), notified({ _tag: "RoundBegan", subject: plan, round: 1, limit: 5 }), notified({ _tag: "ReviewReceived", subject: plan, round: 1, review: { issues: [issueOf("A")] }, counted: 1 })];
     for (const [second, expected] of [["accepted", 1], ["rejected", 0]] as const) {
       const all = [...head, response("accepted"), response(second)];
@@ -452,7 +463,7 @@ describe("the cycles of a review loop in the timeline", () => {
   test("property: any number of responses of one round leave the corrections of the last one", () => {
     const head = [started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), notified({ _tag: "RoundBegan", subject: plan, round: 1, limit: 5 }), notified({ _tag: "ReviewReceived", subject: plan, round: 1, review: { issues: [issueOf("A"), issueOf("B")] }, counted: 2 })];
     const actionArb = fc.constantFrom("accepted", "partially_accepted", "rejected", "no_change_needed", "clarification_requested" as const);
-    const responseArb = fc.tuple(actionArb, actionArb).map(([a, b]) => notified({ _tag: "ResponseReceived", subject: plan, round: 1, response: { dispositions: [disposition("A", a), disposition("B", b)], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" }));
+    const responseArb = fc.tuple(actionArb, actionArb).map(([a, b]) => notified({ _tag: "ResponseReceived", subject: plan, round: 1, response: { dispositions: [disposition("A", a), disposition("B", b)], self_corrections: [], reviewer_feedback: "", questions_for_user: [] } }));
     fc.assert(
       fc.property(fc.array(responseArb, { minLength: 1, maxLength: 5 }), (responses) => {
         const lastOne = responses.at(-1)!;
@@ -832,7 +843,7 @@ describe("runs, replay and gaps", () => {
       { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 2 },
       { _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 },
       { _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e", concern: "c", remedy: "r" }] }, counted: 1 },
-      { _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [{ id: "A", action: "accepted", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" },
+      { _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [{ id: "A", action: "accepted", rationale: "r", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] } },
       { _tag: "LoopFinished", subject: { plan: 1 }, result: "converged" },
       { _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" },
       { _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 },
@@ -1057,7 +1068,6 @@ describe("a replay of a question phase", () => {
           correction_passages: [],
           questions: [{ id: "Q1", context: plainBlocks("c"), history: [], question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p"), figure: null }, { label: plainPieces("SQLite"), description: plainPieces("s"), figure: null }], default_answer: "PostgreSQL", skip_if: null }],
         },
-        resultText: "",
       }),
       notified({ _tag: "LoopFinished", subject: "questions", result: "converged" }),
       notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 }),
@@ -1091,7 +1101,7 @@ describe("a replay of a question phase", () => {
 // no timed list, so this is the "Claude and Codex" panel's.
 describe("the time of a message", () => {
   const review = notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [] }, counted: 0 });
-  const response = notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" });
+  const response = notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] } });
   const shown = (s: ViewState) => runOf(s, "implementation")?.right.map((m) => m.showTime) ?? [];
 
   test("a message carries its event's time, live and after a replay, and the first of a panel shows it", () => {
@@ -1170,7 +1180,7 @@ describe("phase bands", () => {
   const execution = (n: number) => began({ kind: "execution", n });
   const reviewOf = (subject: SubjectId) => notified({ _tag: "ReviewReceived", subject, round: 1, review: { issues: [] }, counted: 0 });
   const review = reviewOf({ plan: 1 });
-  const response = notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" });
+  const response = notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] } });
   const views = (events: readonly RunEvent[], times: readonly number[]) => [fold(live(events, 1, times)), replayed(events, 1, 1, times)];
   const shown = (s: ViewState) => runOf(s, "implementation")?.right.map((m) => m.showTime) ?? [];
 
@@ -1320,7 +1330,7 @@ test("a decision's ResponseReceived is one Claude message in the right panel, li
   const analysisOf = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
   const response = { dispositions: [{ id: "D1-R1-1", action: "accepted" as const, rationale: "amended", duplicate_of: "", reverses: "", concern: "c", remedy: "r", resolution: null }], self_corrections: [], reviewer_feedback: "", questions_for_user: [], correction_passages: [], analysis: analysisOf };
   const phase = notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } });
-  const events: RunEvent[] = [started, phase, notified({ _tag: "ResponseReceived", subject: { decision: 1 }, round: 1, response, resultText: "" })];
+  const events: RunEvent[] = [started, phase, notified({ _tag: "ResponseReceived", subject: { decision: 1 }, round: 1, response })];
   const before = fold(live([started, phase]));
   for (const s of [fold(live(events)), replayed(events)]) {
     expect(runOf(s, "implementation")?.right.map((m) => m.author)).toEqual(["claude"]);

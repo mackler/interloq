@@ -390,7 +390,7 @@ export const questionEntry = (id: string, question: string, answers: readonly (r
  * `callFailed` fails it with ClaudeCallFailed, as the adapter fails a usage limit without one; `sessionTooLong` fails it
  * with ClaudeSessionTooLong, as the adapter fails a request refused because its session is too long (issue #122).
  */
-export type PlanningStep = { /** Issue #193: fails the call with a defect, `Effect.die(new Error(defect))`, an error of Interloq that is not a typed error. */ defect?: string; /** Issue #170: fails the call by the adapter's own mapping, callFailure of src/claude.ts, from these facts. */ failure?: Readonly<{ message: string; facts: ClaudeFailure }>; fault?: string; /** Issue #201: the network code the fault carries. */ faultCode?: NetworkCode; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean; /** Issue #184: the call waits for this promise (interruptibly) before it returns its output or failure. */ gate?: () => Promise<void> };
+export type PlanningStep = { /** Issue #193: fails the call with a defect, `Effect.die(new Error(defect))`, an error of Interloq that is not a typed error. */ defect?: string; /** Issue #170: fails the call by the adapter's own mapping, callFailure of src/claude.ts, from these facts. */ failure?: Readonly<{ message: string; facts: ClaudeFailure }>; fault?: string; /** Issue #201: the network code the fault carries. */ faultCode?: NetworkCode; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean; /** Issue #184: the call waits for this promise (interruptibly) before it returns its output or failure. */ gate?: () => Promise<void> };
 
 /** What one scripted execution does besides its outcome (issue #6): report_step calls, and hooks around them. */
 /** `unreachable` fails the call with AgentUnreachable after its reports, as the adapter does when the user stops at the exhaustion pause (issue #26). */
@@ -489,7 +489,7 @@ export class ScriptedPlanner implements PlannerShape {
     root.history.set(this.session, [...(root.history.get(this.session) ?? []), prompt]);
   }
   /** Returns the scripted output as it is: the caller decodes it, as with the real agent. */
-  planning(prompt: string, schema: Schema.Top, purpose?: PlanningPurpose, capability: PlanningCapability = "records"): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
+  planning(prompt: string, schema: Schema.Top, purpose?: PlanningPurpose, capability: PlanningCapability = "records"): Effect.Effect<{ output: unknown; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
     // S17: the explanations of the terms (their writing, their responses, their repairs) have their own script, and
     // without one no question needs a term.
     if (schema === S.TermsWrite || schema === S.TermsResponse) {
@@ -502,7 +502,7 @@ export class ScriptedPlanner implements PlannerShape {
         const callId = `scripted-${++root.callCount}`;
         const notify = (e: UiEvent) => (root.ui === null ? Effect.void : root.ui.notify(e));
         return notify({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId }).pipe(
-          Effect.andThen(this.gated(step ?? {}, Effect.succeed({ output: step === undefined ? { entries: [] } : withCorrectionPassages(step.output), resultText: "", costUsd: 0.01 }))),
+          Effect.andThen(this.gated(step ?? {}, Effect.succeed({ output: step === undefined ? { entries: [] } : withCorrectionPassages(step.output), costUsd: 0.01 }))),
           Effect.onExit((exit) => notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit), callId })),
         );
       });
@@ -527,7 +527,7 @@ export class ScriptedPlanner implements PlannerShape {
       });
     }
     if (purpose === "context") {
-      return Effect.suspend((): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | ClaudeSessionTooLong> => {
+      return Effect.suspend((): Effect.Effect<{ output: unknown; costUsd: number | null }, TransportFault | ClaudeSessionTooLong> => {
         this.sent(prompt);
         this.contextPrompts.push(prompt);
         this.contextCapabilities.push(capability);
@@ -536,7 +536,7 @@ export class ScriptedPlanner implements PlannerShape {
         if (step?.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null, networkCode: step.faultCode ?? null }));
         if (step?.sessionTooLong !== undefined) return Effect.fail(new ClaudeSessionTooLong({ message: step.sessionTooLong }));
         if (step?.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "changed\n");
-        return Effect.succeed({ output: step === undefined ? scriptedContextReply(prompt) : typeof step.output === "function" ? (step.output as (p: string) => unknown)(prompt) : step.output, resultText: "", costUsd: 0.01 });
+        return Effect.succeed({ output: step === undefined ? scriptedContextReply(prompt) : typeof step.output === "function" ? (step.output as (p: string) => unknown)(prompt) : step.output, costUsd: 0.01 });
       });
     }
     return Effect.suspend(() => {
@@ -558,7 +558,7 @@ export class ScriptedPlanner implements PlannerShape {
     });
   }
   /** The outcome of a scripted planning step once its gate opened: its writes, then its failure or its output. */
-  private planned(step: PlanningStep, schema: Schema.Top): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
+  private planned(step: PlanningStep, schema: Schema.Top): Effect.Effect<{ output: unknown; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
     {
       if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "changed\n");
       const records = this.state.records();
@@ -577,7 +577,7 @@ export class ScriptedPlanner implements PlannerShape {
       if (step.sessionTooLong !== undefined) return Effect.fail(new ClaudeSessionTooLong({ message: step.sessionTooLong }));
       if (step.failure !== undefined) return Effect.fail(callFailure(step.failure.message, step.failure.facts));
       if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", reset: step.limit.reset, limitType: step.limit.limitType }));
-      return Effect.succeed({ output: this.withPlan(schema, step), resultText: step.resultText ?? "", costUsd: 0.1 });
+      return Effect.succeed({ output: this.withPlan(schema, step), costUsd: 0.1 });
     }
   }
   /** Issue #184: the scripted replies of the first interview, apart from `steps`, and the prompts they answered. */
@@ -594,7 +594,7 @@ export class ScriptedPlanner implements PlannerShape {
     return Effect.callback<void>((resume) => void gate().then(() => resume(Effect.void))).pipe(Effect.andThen(then));
   }
   /** The outcome of a scripted step of the interview: its failure, or its output. */
-  private outcome(step: PlanningStep, schema: Schema.Top): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
+  private outcome(step: PlanningStep, schema: Schema.Top): Effect.Effect<{ output: unknown; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
     step.onCall?.();
     if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null, networkCode: step.faultCode ?? null }));
     if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
@@ -602,7 +602,7 @@ export class ScriptedPlanner implements PlannerShape {
     if (step.failure !== undefined) return Effect.fail(callFailure(step.failure.message, step.failure.facts));
     if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", reset: step.limit.reset, limitType: step.limit.limitType }));
     if (step.usage) this.recordUsage();
-    return Effect.succeed({ output: this.withPlan(schema, step), resultText: step.resultText ?? "", costUsd: 0.1 });
+    return Effect.succeed({ output: this.withPlan(schema, step), costUsd: 0.1 });
   }
   /** The text of the last plan scripted, which a reply without `plan` returns unchanged (issue #6, F1). */
   private lastPlan: string | null = null;

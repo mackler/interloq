@@ -77,9 +77,9 @@ export type ReviewEvent =
   // Issue #151: a decoded review or response carries the value the interpreter validated, with its repair turn, before
   // the state machine sees it (reviewValidation, roundValidation of src/round.ts), so no transition refuses one.
   | Readonly<{ kind: "ReviewDecoded"; review: Review; validated: ValidatedReview }>
-  | Readonly<{ kind: "ResponseDecoded"; response: PlannerResponse; round: ValidatedRound; resultText: string; costUsd: number | null }>
-  | Readonly<{ kind: "CorrectionDecoded"; response: PlannerResponse; round: ValidatedRound; resultText: string; costUsd: number | null }>
-  | Readonly<{ kind: "InvestigationDecoded"; response: PlannerResponse; round: ValidatedRound; resultText: string; costUsd: number | null }>
+  | Readonly<{ kind: "ResponseDecoded"; response: PlannerResponse; round: ValidatedRound; costUsd: number | null }>
+  | Readonly<{ kind: "CorrectionDecoded"; response: PlannerResponse; round: ValidatedRound; costUsd: number | null }>
+  | Readonly<{ kind: "InvestigationDecoded"; response: PlannerResponse; round: ValidatedRound; costUsd: number | null }>
   | Readonly<{ kind: "DecisionGiven"; text: string }>
   | Readonly<{ kind: "DecisionsApplied" }>
   | Readonly<{ kind: "Amended" }>
@@ -886,7 +886,7 @@ const followReply = (investigatingNow: ReadonlyMap<string, readonly Investigatio
   return map;
 };
 
-const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: ValidatedRound, resultText: string, costUsd: number | null, mode: ReplyMode = "response"): Transition => {
+const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: ValidatedRound, costUsd: number | null, mode: ReplyMode = "response"): Transition => {
   const { heading, phase } = s.setup;
   const n = s.round;
   const review = s.current.review!;
@@ -928,7 +928,7 @@ const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: Val
         notes: round.notes,
       },
     },
-    notify({ _tag: "ResponseReceived", subject: s.setup.subject, round: n, response, resultText }),
+    notify({ _tag: "ResponseReceived", subject: s.setup.subject, round: n, response }),
     ...(mode === "corrective" ? [{ kind: "Converse", markdown: `**${prompts.correctiveTurnHeading(s.current.corrections, n)}**\n\n` } as ReviewCommand] : []),
     ...(mode === "investigation" ? [{ kind: "Converse", markdown: `**${prompts.investigationTurnHeading(n)}**\n\n` } as ReviewCommand] : []),
     { kind: "Converse", markdown: renderRound(heading, n, review, response) },
@@ -1126,11 +1126,11 @@ export const advance = (state: ReviewState, event: ReviewEvent): Transition => {
     case "ReviewDecoded":
       return state.step.name === "awaitingReview" ? onReviewDecoded(state, event.review, event.validated) : noop(state);
     case "ResponseDecoded":
-      return state.step.name === "awaitingResponse" ? onResponseDecoded(state, event.response, event.round, event.resultText, event.costUsd) : noop(state);
+      return state.step.name === "awaitingResponse" ? onResponseDecoded(state, event.response, event.round, event.costUsd) : noop(state);
     case "CorrectionDecoded":
-      return state.step.name === "correcting" ? onResponseDecoded(state, event.response, event.round, event.resultText, event.costUsd, "corrective") : noop(state);
+      return state.step.name === "correcting" ? onResponseDecoded(state, event.response, event.round, event.costUsd, "corrective") : noop(state);
     case "InvestigationDecoded":
-      return state.step.name === "investigating" ? onResponseDecoded(state, event.response, event.round, event.resultText, event.costUsd, "investigation") : noop(state);
+      return state.step.name === "investigating" ? onResponseDecoded(state, event.response, event.round, event.costUsd, "investigation") : noop(state);
     case "DecisionGiven":
       return onDecisionGiven(state, event.text);
     case "DecisionsApplied":

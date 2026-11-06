@@ -31,10 +31,10 @@ export type UiEvent =
   | Readonly<{ _tag: "RoundBegan"; subject: SubjectId; round: number; limit: number }>
   | Readonly<{ _tag: "ReviewReceived"; subject: SubjectId; round: number; review: Review | EffectReview; counted: number }>
   /** The question subject answers with its amended list besides (defect A of docs/page-question-phase-defects.md), a decision with its amended analysis (W2-R1-1), the plan with the whole plan (issue #6). */
-  | Readonly<{ _tag: "ResponseReceived"; subject: SubjectId; round: number; response: LoopResponse; resultText: string }>
+  | Readonly<{ _tag: "ResponseReceived"; subject: SubjectId; round: number; response: LoopResponse }>
   | Readonly<{ _tag: "LoopFinished"; subject: SubjectId; result: LoopResult }>
   /** A plan was written; its questions for the user are presented one by one after it (S19), not listed here. */
-  | Readonly<{ _tag: "PlanWritten"; phase: number; resultText: string }>
+  | Readonly<{ _tag: "PlanWritten"; phase: number; revised: boolean }>
   | Readonly<{ _tag: "ExecutionEnded"; phase: number; outcome: ExecOutcome }>
   | Readonly<{ _tag: "AgentCallStarted"; agent: Agent; purpose: string; callId: string }>
   | Readonly<{ _tag: "ToolUsed"; agent: Agent; tool: string; target: string; callId: string }>

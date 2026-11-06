@@ -71,7 +71,7 @@ test("a planning call returns the structured output and records usage", async ()
   const call = await run(fake.planner.planning("write the plan", schema));
 
   assert.deepEqual(call.output, { questions_for_user: [questionOf({ context: "c", question: "q?", terms: [], options: [] })] });
-  assert.equal(call.resultText, "done");
+  assert.deepEqual(Object.keys(call).sort(), ["costUsd", "output"]);
   assert.equal(call.costUsd, 0.25);
   assert.equal(Effect.runSync(fake.planner.sessionId), "session-7");
   const usage = fs.readFileSync(path.join(fake.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
@@ -88,7 +88,7 @@ test("a successful planning call without structured output returns it as absent 
   const fake = await planner([messages(init(), success(null, "no schema output"))]);
   const call = await run(fake.planner.planning("write the plan", schema));
   assert.equal(call.output ?? null, null);
-  assert.equal(call.resultText, "no schema output");
+  assert.deepEqual(Object.keys(call).sort(), ["costUsd", "output"]);
 });
 
 test("the planning hook denies an edit outside plan-review/ and permits one inside", async () => {

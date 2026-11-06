@@ -311,7 +311,7 @@ export const SCENARIOS: Record<string, TestOptions> = {
     config: { maxRounds: 100, maxIdleRounds: 100 },
     steps: [
       { output: noQuestions, plan: "v0\n" },
-      ...Array.from({ length: LONG }, (_, i) => ({ output: respond([[`P1-R${i + 1}-1`, "accepted"]]), plan: `v${i + 1}\n`, resultText: `Round ${i + 1}: the plan now covers point ${i + 1} in detail. `.repeat(4) })),
+      ...Array.from({ length: LONG }, (_, i) => ({ output: respond([[`P1-R${i + 1}-1`, "accepted"]]), plan: `v${i + 1}\n` })),
       { output: respond([[`P1-R${LONG + 1}-1`, "rejected"]]) },
       { output: respond([[`P1-R${LONG + 2}-1`, "rejected"]]) },
       { output: respond([[`P1-R${LONG + 3}-1`, "rejected"]], { questions_for_user: [questionOf({ context: "c", question: LONG_RUN_QUESTION, terms: [], options: [] })] }) },

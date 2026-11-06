@@ -12,7 +12,7 @@ import type { Asked, Countdown as AnswerCountdown, ChainFrameSettings, CurrentRu
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import { added, afterHello as noticesAfterHello, type ConnectionCondition, dismissed, EMPTY_NOTICES, type NoticeId, type Notices } from "./notices.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, NO_UNANSWERED_QUESTIONS, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, planWrittenBody, documentLabel, modelLine, NO_UNANSWERED_QUESTIONS, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -930,8 +930,11 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "PlanWritten": {
       // Issue #46 (S19): the plan writer's questions are presented one by one after this message, never listed in it.
-      // Issue #22: the plan has its place in the rail; only its result text is Claude Code's latest message.
-      return event.resultText === "" ? run : withClaude(run, { heading: planWrittenHeading(phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase }))), body: event.resultText, running: [] });
+      // Issue #22: the plan has its place in the rail. Issue #27 (requirements Q1, G-R1-1): Claude Code's latest message
+      // says the plan was written or revised in this stage and points to the dashboard's heading of the plan, named by
+      // the same documentLabel; the event carries no part of the planning call's reply.
+      const stage = phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase }));
+      return withClaude(run, { heading: planWrittenHeading(stage), body: planWrittenBody(event.revised, stage, documentLabel({ plan: event.phase })), running: [] });
     }
     case "InterviewTurn": {
       const turn = event.summary === null ? { kind: "continuing" as const, message: event.message } : { kind: "summary_proposed" as const, message: event.message, summary: event.summary };

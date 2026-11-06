@@ -16,7 +16,7 @@ const setupOf = (extra: Partial<ReviewSetup> = {}): ReviewSetup => ({ subject: {
 type TestEvent =
   | Exclude<ReviewEvent, Readonly<{ kind: "ReviewDecoded" | "ResponseDecoded" | "CorrectionDecoded" | "InvestigationDecoded" }>>
   | Readonly<{ kind: "ReviewDecoded"; review: S.Review }>
-  | Readonly<{ kind: "ResponseDecoded" | "CorrectionDecoded" | "InvestigationDecoded"; response: S.PlannerResponse; resultText: string; costUsd: number | null }>;
+  | Readonly<{ kind: "ResponseDecoded" | "CorrectionDecoded" | "InvestigationDecoded"; response: S.PlannerResponse; costUsd: number | null }>;
 const complete = (s: ReviewState, e: TestEvent): ReviewEvent => {
   switch (e.kind) {
     case "ReviewDecoded":
@@ -34,7 +34,7 @@ const run = (first: Transition, ...events: TestEvent[]): Transition => events.re
 const begin = (log: readonly S.LogEntry[] = [], extra: Partial<ReviewSetup> = {}): Transition =>
   advance(initialState(setupOf(extra), { maxRounds: 9, maxIdleRounds: 9, countMinor: true }), { kind: "Begin", hash: "h0", text: "", log });
 const reviewed = (...ids: string[]): TestEvent => ({ kind: "ReviewDecoded", review: { issues: ids.map((i) => issue(i)) } });
-const responded = (r: S.PlannerResponse, kind: "ResponseDecoded" | "CorrectionDecoded" | "InvestigationDecoded" = "ResponseDecoded"): TestEvent => ({ kind, response: r, resultText: "", costUsd: 0.1 });
+const responded = (r: S.PlannerResponse, kind: "ResponseDecoded" | "CorrectionDecoded" | "InvestigationDecoded" = "ResponseDecoded"): TestEvent => ({ kind, response: r, costUsd: 0.1 });
 const observed = (hash: string): TestEvent => ({ kind: "FileObserved", hash, text: hash });
 const last = (t: Transition): ReviewCommand => t.commands[t.commands.length - 1];
 /** Issue #243: the disputes opened beside the review, where issue #38 asked them in the foreground. */
@@ -324,7 +324,7 @@ test("property: an investigated open point raised again is asked or settled at t
           self_corrections: r.selfCorrection === null || current(r.selfCorrection.id) === undefined || r.raised.includes(r.selfCorrection.id) ? [] : [{ id: r.selfCorrection.id, new_action: r.selfCorrection.action, explanation: "x", concern: "c", remedy: "m", resolution: null }],
         };
         const response = Result.isSuccess(roundCheckOf(t.state)(withExtras)) ? withExtras : plain;
-        t = advance(t.state, { kind: "ResponseDecoded", response, resultText: "", costUsd: 0.1 });
+        t = advance(t.state, { kind: "ResponseDecoded", response, costUsd: 0.1 });
         for (let guard = 0; guard < 20 && !["CallReviewer", "Finish", "Halt"].includes(last(t).kind); guard++) {
           const k = last(t).kind;
           if (k === "ObserveFile") t = advance(t.state, observed(`g${++hash}`));
