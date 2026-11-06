@@ -37,6 +37,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Effect.provideContext` (read 28 Sep 2026, decision support) | 10898 | `provideContext(context)(self)`: the context captured with `Effect.context` when the Decider was built, so that `decide` requires nothing and an SDK callback can run it |
 | `Effect.context` | 10549 | `<R>() => Effect<Context.Context<R>, never, R>` (v3 `Effect.context`/`runtime`) |
 | `Effect.contextWith` | 10607 | `(f: (context: Context<R>) => Effect)` |
+| `Effect.flatten` (read 6 Nov 2026, work review 1 of issue #219) | 2698 | `(self: Effect<Effect<A, E, R>, E2, R2>) => Effect<A, E \| E2, R \| R2>`: runs the effect an effect produced (`rateLimitWaiting` in src/trackerRetry.ts runs the leader's or the follower's role that one `Ref.modify` chose) |
 | `Effect.forkChild` | 16373 | `(self) => Effect<Fiber<A, E>, never, R>` (v3 `fork`; there is no `Effect.fork` in v4) |
 | `Effect.forkDetach` (read 26 Sep, web GUI stage 3.3) | 16529 | `forkDetach(options?: { startImmediately?, uninterruptible? })` or `forkDetach(effect, options?)` → `Effect<Fiber<A, E>, never, R>`: the fiber is attached to the global scope and outlives the fiber that forked it (the run manager's runs). **Observed**: without `startImmediately: true`, a fiber interrupted before it first ran never runs its `onExit`; the manager starts it at once |
 | `Effect.forEach(items, f, { discard: true })` (read 26 Sep, web GUI stage 3.3) | 939 | runs `f` for every item in order; with `discard: true` the result is `void` (the run manager's broadcast) |

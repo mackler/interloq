@@ -343,6 +343,32 @@ test("a listing refused for the rate limit tells the tab its wait, which the pag
   });
 });
 
+// Work review 1 of issue #219 (W1-R1-1): a listing whose concurrent comment reads are refused for the rate limit sends
+// its tab one itemsWaiting frame; the page's frame ending that wait answers the items.
+test("a listing with several comment reads refused for the rate limit sends one itemsWaiting frame, whose end answers the items", async () => {
+  const repo = tempRepo();
+  const note = { id: seededId(), body: "a developer's note", created: "2026-10-28T00:00:00Z" };
+  const tracker = fakeTrackerOf(MANAGER_ITEMS.map((i) => (i.state === "unrefined" ? { ...i, comments: [note] } : i)));
+  for (let n = 0; n < 4; n++) await run(tracker.failNext("comments", new TrackerRateLimited({ tracker: "GitLab", status: 429, message: "GitLab answered GET the notes with status 429", reset: { _tag: "After", seconds: 3600 } })));
+  const manager = await managerOf(repo, [], [], tracker);
+  await serve(manager, dist(), async (port) => {
+    const a = await connect(port);
+    a.send(itemsFrame("refinement"));
+    await until("the wait", () => a.messages.some((m) => m.type === "itemsWaiting"));
+    await sleep(100);
+    const waits = a.messages.filter((m) => m.type === "itemsWaiting");
+    assert.equal(waits.length, 1);
+    const waiting = Result.getOrThrow(decodeServer(JSON.stringify(waits[0])));
+    assert.ok(waiting.type === "itemsWaiting");
+    a.send(endItemsWaitFrame(manager.incarnation, waiting.wait));
+    await until("the items", () => a.messages.some((m) => m.type === "items"), 5_000);
+    const items = a.messages.find((m) => m.type === "items")!;
+    assert.ok(items.type === "items" && items.result._tag === "Listed");
+    assert.equal(a.messages.filter((m) => m.type === "itemsWaiting").length, 1);
+    a.close();
+  });
+});
+
 // Issue #120, the seam of the start: the frame the page builds from a listed item (web/src/tabs.ts), the mode and item of
 // the run the server starts, and the item the run reads from the tracker, all derived from one fixture item.
 for (const mode of ["refinement", "implementation"] as const) {

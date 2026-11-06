@@ -387,6 +387,13 @@ export const heldTrackerEnv = (ui: UiShape, settings: TrackerRetrySettings, held
 const acceptable = (answer: string): boolean => parseTransportAnswer(answer) !== null;
 
 /** Issue #219: a wait of the server's own tracker request for the rate limit, as a listing tells its tab. */
+/**
+ * Work review 1 of issue #219 (W1-R1-1): the one rate-limit wait the operations of a wrapped tracker share: idle, or
+ * waiting, its followers awaiting `done`, which the wait's leader succeeds however the wait ends.
+ */
+type RateLimitGate = Readonly<{ _tag: "Idle" }> | Readonly<{ _tag: "Waiting"; done: Deferred.Deferred<void> }>;
+const IDLE_GATE: RateLimitGate = { _tag: "Idle" };
+
 export type RateLimitWait = Readonly<{ tracker: string; fromMs: number; untilMs: number; stated: boolean; wait: WaitId }>;
 
 /**
@@ -394,24 +401,43 @@ export type RateLimitWait = Readonly<{ tracker: string; fromMs: number; untilMs:
  * a start's read and comments, the chain's listing, the preparation pass), which are not repeated for any other
  * failure (behavior 11). While an operation fails with TrackerRateLimited it waits until the stated reset (a wait of
  * `waits`, which the developer may end early), told through `onWait`, and calls it again, with no limit; every other
- * failure passes through. The sleep is interruptible, so a closed tab ends it.
+ * failure passes through. The sleep is interruptible, so a closed tab ends it. Work review 1 of issue #219 (W1-R1-1):
+ * the wrapped tracker's operations share one wait (`RateLimitGate`): an operation refused while it lasts awaits it, so
+ * concurrent refusals are announced once and ending the wait early resumes every one of them; each then calls its
+ * operation again, a refusal after the wait opening a new one.
  */
-export const rateLimitWaiting = (tracker: TrackerShape, waits: Waits, onWait: (wait: RateLimitWait) => Effect.Effect<void>): TrackerShape => {
-  const waited = <A>(operation: Effect.Effect<A, TrackerError>): Effect.Effect<A, TrackerError> =>
-    Effect.catchIf(
-      operation,
-      (error): error is TrackerRateLimited => error._tag === "TrackerRateLimited",
-      (error) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const fromMs = yield* Clock.currentTimeMillis;
-            const { untilMs, stated } = rateLimitUntil(error.reset, fromMs);
-            const handle = yield* waits.open;
-            yield* onWait({ tracker: error.tracker, fromMs, untilMs, stated, wait: handle.id });
-            yield* handle.sleepUntil(untilMs);
-          }),
-        ).pipe(Effect.andThen(Effect.suspend(() => waited(operation)))),
-    );
+export const rateLimitWaiting = (tracker: TrackerShape, waits: Waits, onWait: (wait: RateLimitWait) => Effect.Effect<void>): Effect.Effect<TrackerShape> =>
+  Effect.map(Ref.make<RateLimitGate>(IDLE_GATE), (gate) => {
+    // The leader opens and announces the one wait; the gate is taken and its release attached in one uninterruptible
+    // step, so however the wait ends (ran out, ended early, interrupted) the gate is freed and every follower woken.
+    const wait = (error: TrackerRateLimited): Effect.Effect<void> =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fromMs = yield* Clock.currentTimeMillis;
+          const { untilMs, stated } = rateLimitUntil(error.reset, fromMs);
+          const handle = yield* waits.open;
+          yield* onWait({ tracker: error.tracker, fromMs, untilMs, stated, wait: handle.id });
+          yield* handle.sleepUntil(untilMs);
+        }),
+      );
+    const awaitWait = (error: TrackerRateLimited): Effect.Effect<void> =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.flatMap(Deferred.make<void>(), (fresh) =>
+          Effect.flatten(
+            Ref.modify(gate, (g): readonly [Effect.Effect<void>, RateLimitGate] =>
+              g._tag === "Waiting"
+                ? [restore(Deferred.await(g.done)), g]
+                : [restore(wait(error)).pipe(Effect.ensuring(Effect.andThen(Ref.set(gate, IDLE_GATE), Deferred.succeed(fresh, undefined)))), { _tag: "Waiting", done: fresh }],
+            ),
+          ),
+        ),
+      );
+    const waited = <A>(operation: Effect.Effect<A, TrackerError>): Effect.Effect<A, TrackerError> =>
+      Effect.catchIf(
+        operation,
+        (error): error is TrackerRateLimited => error._tag === "TrackerRateLimited",
+        (error) => awaitWait(error).pipe(Effect.andThen(Effect.suspend(() => waited(operation)))),
+      );
   return {
     list: (state) => waited(tracker.list(state)),
     listMarked: (state) => waited(tracker.listMarked(state)),
@@ -424,4 +450,4 @@ export const rateLimitWaiting = (tracker: TrackerShape, waits: Waits, onWait: (w
     comments: (id) => waited(tracker.comments(id)),
     deleteComment: (id, comment) => waited(tracker.deleteComment(id, comment)),
   };
-};
+  });

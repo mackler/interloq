@@ -401,7 +401,7 @@ export const makeRunManager = (
         const layer = access.tracker(config.success);
         if (Result.isFailure(layer)) return Result.fail(trackerFailureText(layer.failure));
         // Issue #219: every operation waits out a rate limit, the server's requests being repeated for no other failure.
-        const used = yield* Effect.result(Effect.flatMap(Tracker, (t) => use(rateLimitWaiting(t, serverWaits, onWait), config.success)).pipe(Effect.provide(layer.success)));
+        const used = yield* Effect.result(Effect.flatMap(Tracker, (t) => Effect.flatMap(rateLimitWaiting(t, serverWaits, onWait), (wrapped) => use(wrapped, config.success))).pipe(Effect.provide(layer.success)));
         return Result.mapError(used, trackerFailureText);
       });
 

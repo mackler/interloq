@@ -1011,6 +1011,30 @@ test("#219: endItemsWait ends the listing's wait at once; a second is refused as
   assert.deepEqual(await run(h.manager.endItemsWait(h.manager.incarnation, 999_999)), { refused: WAIT_NOT_WAITING_TEXT, mode: null });
 });
 
+// Work review 1 of issue #219 (W1-R1-1): the listing's concurrent comment reads share one wait, announced once, and
+// ending it early answers the listing.
+test("#219: four concurrent comment reads refused for the rate limit share one wait, and ending it answers the listing", async () => {
+  const sentBack = { id: seededId(), body: commentText({ _tag: "SentBack", key: runCommentKey("run-a", "verdict-1"), date: "2026-10-28", missing: "m" }), created: "2026-10-28T00:00:00Z" };
+  const commented = ITEMS.map((i) => (i.state === "refined" ? { ...i, comments: [sentBack] } : i));
+  assert.ok(commented.filter((i) => i.state === "refined").length >= 4);
+  const tracker = fakeTrackerOf(commented);
+  const h = await harness(tempRepo(), [], undefined, [], tracker);
+  for (let n = 0; n < 4; n++) await run(tracker.failNext("comments", rateLimited(3600)));
+  const told: ItemsWaited[] = [];
+  const listing = Effect.runFork(h.manager.listItems("implementation", (w) => Effect.sync(() => void told.push(w))));
+  try {
+    await until("the listing's wait", () => told.length >= 1);
+    await sleep(50);
+    assert.equal(told.length, 1);
+    assert.equal(await run(h.manager.endItemsWait(h.manager.incarnation, told[0]!.wait)), null);
+    const answer = await Promise.race([run(Fiber.join(listing)), sleep(5_000).then(() => assert.fail("the listing did not answer after its one wait was ended"))]);
+    assert.ok(answer.result._tag === "Listed" && answer.result.items.every((i) => i.sentBack === 1));
+    assert.equal(told.length, 1);
+  } finally {
+    await run(Fiber.interrupt(listing));
+  }
+});
+
 test("#219: a start whose read is refused for the rate limit once waits it out and starts the run", async () => {
   const h = await harness(tempRepo(), [converging]);
   await run(h.tracker.failNext("read", rateLimited(0)));
