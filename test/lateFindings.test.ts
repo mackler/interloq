@@ -42,3 +42,16 @@ test("S8: a location names the longest path it contains at a boundary", () => {
   assert.equal(fileOf("in (src/a.ts, line 3)", ["src/a.ts", "a.ts"]), "src/a.ts");
   assert.equal(fileOf("S3", ["src/a.ts"]), null);
 });
+
+// S13 (W1-R1-2): a supplementary character inside a Git-quoted path is decoded by code point, not as two U+FFFD.
+const quotedSection = (quoted: string): string => `diff --git "a/${quoted}" "b/${quoted}"\nindex 1..2 100644\n--- "a/${quoted}"\n+++ "b/${quoted}"\n@@ -1 +1,2 @@\n x\n+y\n`;
+
+test("S13: a quoted path with an emoji and a tab is keyed by the path, and a finding on it is late", () => {
+  const diff = quotedSection("emoji😀\\t.ts");
+  assert.deepEqual([...diffSections(diff).keys()], ["emoji😀\t.ts"]);
+  assert.deepEqual(lateFindings([record(1, diff), record(2, diff, ["W2-R1-1", "emoji😀\t.ts:1"])]), { late: ["W2-R1-1"], total: 1 });
+});
+
+test("S13: a supplementary character next to an octal escape", () => {
+  assert.deepEqual([...diffSections(quotedSection("\\303\\251😀.ts")).keys()], ["é😀.ts"]);
+});

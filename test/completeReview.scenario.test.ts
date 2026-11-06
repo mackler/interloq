@@ -3,10 +3,11 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import { platformLayer } from "../src/platform.ts";
-import { program } from "../src/program.ts";
+import { exitCodeOf, program } from "../src/program.ts";
 import * as prompts from "../src/prompts.ts";
+import { diffSections } from "../src/lateFindings.ts";
 import { makeStore } from "../src/store.ts";
 import { fakeTrackerOf, finished, issue, respond, runTask, scriptedItem, scriptedStart, TEST_ROOT, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
@@ -120,7 +121,7 @@ test("S9 (f): a finding of code review 2 in a file unchanged since code review 1
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, planWrite("v2"), { output: respond([["W2-R1-1", "accepted"]]) }, planWrite("v3")],
     reviews: [{ issues: [] }, { issues: [at("W1-R1-1", "b.txt")] }, { issues: [] }, { issues: [] }, { issues: [at("W2-R1-1", "b.txt:1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished, finished, finished],
-    execScripts: [{ after: commitFile(repo, "b.txt", "b\n") }, {}, {}],
+    execScripts: [{ after: commitFile(repo, "b.txt", "b\n") }, { after: commitFile(repo, "a.txt", "a2\n") }, {}],
   });
   assert.equal(await runProgram(wiring, probe.project), 0);
   const line = prompts.lateFindingsLine(1, 2);
@@ -128,6 +129,11 @@ test("S9 (f): a finding of code review 2 in a file unchanged since code review 1
   assert.ok(text.includes(line), text.slice(-1500));
   assert.ok(probe.ui.said.includes(line));
   assert.ok(probe.ui.said.indexOf(line) < probe.ui.said.findIndex((l) => l.startsWith("Usage:")), "before the run's last lines");
+  const one = diffSections(read(probe.dir, "work-review-1/changes.diff"));
+  const two = diffSections(read(probe.dir, "work-review-2/changes.diff"));
+  assert.notEqual(two.get("a.txt"), one.get("a.txt"));
+  assert.match(two.get("a.txt") ?? "", /^\+a2$/mu, "execution 2 changed a.txt itself");
+  assert.equal(two.get("b.txt"), one.get("b.txt"));
 });
 
 test("S9 (g): a run halted after one code review writes the line before its halt record, which still ends conversation.md", async () => {
@@ -156,15 +162,36 @@ test("S9 (i): a clean code review counts as a record, and a minor finding of a l
   const minor = { ...at("W2-R1-1", "b.txt"), severity: "minor" as const };
   const { wiring, probe } = testWiring(repo, {
     tracker: fakeTrackerOf([scriptedItem]),
-    steps: [planWrite("v1"), planWrite("v2"), planWrite("v3")],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [minor] }, { issues: [] }, { issues: [] }],
-    execs: [finished, finished],
-    execScripts: [{ after: commitFile(repo, "b.txt", "b\n") }, {}],
-    suite: [{ _tag: "Failed", reason: { kind: "exit", code: 1 }, output: "not ok\n", ms: 10 }],
+    steps: [planWrite("v1"), planWrite("v2"), planWrite("v3"), planWrite("v4")],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [minor] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished, finished],
+    execScripts: [{ after: commitFile(repo, "b.txt", "b\n") }, {}, {}],
+    suite: [{ _tag: "Failed", reason: { kind: "exit", code: 1 }, output: "not ok\n", ms: 10 }, { _tag: "Failed", reason: { kind: "exit", code: 1 }, output: "not ok\n", ms: 10 }],
     config: { suiteCommand: "script/test --all", countMinor: false },
   });
   assert.equal(await runProgram(wiring, probe.project), 0);
   const records = await Effect.runPromise(Effect.gen(function* () { return yield* (yield* makeStore(probe.project, probe.dir.slice(probe.dir.indexOf("runs/")) as never, [])).codeReviewRecords(); }).pipe(Effect.provide(platformLayer)));
-  assert.deepEqual(records.map((r) => [r.review, r.findings.map((f) => f.id)]), [[1, []], [2, ["W2-R1-1"]]]);
+  assert.deepEqual(records.map((r) => [r.review, r.findings.map((f) => f.id)]), [[1, []], [2, ["W2-R1-1"]], [3, []]]);
   assert.ok(read(probe.dir, "conversation.md").includes(prompts.lateFindingsLine(1, 1)));
+});
+
+test("S12 (j): Stop task during planning phase 2 writes the line before the interruption's record, which still ends conversation.md", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), {
+    tracker: fakeTrackerOf([scriptedItem]),
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, { hang: true }],
+    reviews: [{ issues: [] }, { issues: [at("W1-R1-1", "b.txt")] }, { issues: [] }],
+    execs: [finished],
+  });
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)));
+  const ended = await Promise.race([probe.planner.nextHang().then(() => false), Effect.runPromise(Fiber.await(fiber)).then(() => true)]);
+  assert.equal(ended, false, "the run ended before planning phase 2");
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
+  const text = read(probe.dir, "conversation.md");
+  const line = prompts.lateFindingsLine(0, 1);
+  const record = "**Interrupted by the user.**";
+  assert.ok(text.includes(line), text.slice(-1500));
+  assert.ok(probe.ui.said.includes(line));
+  assert.ok(text.indexOf(line) < text.lastIndexOf(record));
+  assert.equal(text.slice(text.lastIndexOf(record) + record.length).trim(), "", "the interruption's record ends conversation.md");
 });

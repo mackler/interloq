@@ -615,6 +615,8 @@ const programWith = (
       yield* records.converse("**Interrupted by the user.**\n").pipe(Effect.ignore);
       yield* tail(yield* sessionId, records);
     });
+    /** Issue #252 (W1-R1-1): every interruption of the run, Stop task and End the run alike, measures before its record. */
+    const interruptedEnding = measureLine(records).pipe(Effect.andThen(interrupted));
     /** The halt of the server's fault once the records and the services exist: its record, then HALTED. */
     const bodyFaulted = (error: ServerFault): Effect.Effect<number> =>
       Effect.gen(function* () {
@@ -633,7 +635,7 @@ const programWith = (
           onNone: () =>
             Effect.gen(function* () {
               const item = yield* returnItem("stopped", false);
-              yield* interrupted;
+              yield* interruptedEnding;
               return yield* conclude((park) => ({ _tag: "Interrupted", park, item }));
             }),
           onSome: bodyFaulted,
@@ -692,8 +694,7 @@ const programWith = (
         // S24 (the user's decision at the stop of execution phase 1): End the run is an interruption, like Ctrl+C.
         if (error.value._tag === "UserStopped") {
           const item = yield* returnItem("stopped", false);
-          yield* measureLine(records);
-          yield* interrupted;
+          yield* interruptedEnding;
           return yield* conclude((park) => ({ _tag: "Interrupted", park, item }));
         }
         if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value);

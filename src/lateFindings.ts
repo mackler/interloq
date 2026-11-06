@@ -13,10 +13,14 @@ const unquoted = (text: string): string => {
   const bytes: number[] = [];
   const inner = text.slice(1, -1);
   const named: Readonly<Record<string, number>> = { t: 9, n: 10, r: 13, a: 7, b: 8, f: 12, v: 11, "\\": 92, '"': 34 };
+  const encoder = new TextEncoder();
   for (let i = 0; i < inner.length; i++) {
-    const c = inner[i]!;
-    if (c !== "\\" || i + 1 >= inner.length) {
-      bytes.push(...new TextEncoder().encode(c));
+    if (inner[i] !== "\\" || i + 1 >= inner.length) {
+      // S13 (W1-R1-2): the run of unescaped text up to the next escape is encoded whole, so by code point.
+      const end = inner.indexOf("\\", i + 1);
+      const stop = end === -1 || end + 1 >= inner.length ? inner.length : end;
+      bytes.push(...encoder.encode(inner.slice(i, stop)));
+      i = stop - 1;
       continue;
     }
     const next = inner[i + 1]!;

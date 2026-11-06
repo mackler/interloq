@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { type CodeReviewRecord, lateFindings } from "../src/lateFindings.ts";
+import { type CodeReviewRecord, diffSections, lateFindings } from "../src/lateFindings.ts";
 
 // Issue #252, S8: a finding on a file whose section is unchanged since an earlier review counts as late, and one whose
 // section changed does not.
@@ -33,5 +33,20 @@ test("S8 (property): late findings never outnumber the findings", () => {
       return result.late.length <= result.total && result.total === records.reduce((n, r) => n + r.findings.length, 0);
     }),
     { numRuns: 200 },
+  );
+});
+
+// S13 (W1-R1-2): any path, written in Git's C-quoted form, keys its section by the original path.
+test("S13 (property): a C-quoted path of arbitrary code points keys its section by the path", () => {
+  const quote = (p: string): string => `"${p.replace(/[\\"\t\n]/gu, (c) => ({ "\\": "\\\\", '"': '\\"', "\t": "\\t", "\n": "\\n" })[c]!)}"`;
+  const pathArb = fc.string({ unit: "grapheme", minLength: 1, maxLength: 12 }).filter((p) => !p.includes("\n") && !p.includes("\r") && p.trim() === p && p.length > 0);
+  fc.assert(
+    fc.property(pathArb, (p) => {
+      const a = quote(`a/${p}`);
+      const b = quote(`b/${p}`);
+      const diff = `diff --git ${a} ${b}\n--- ${a}\n+++ ${b}\n@@ -0,0 +1 @@\n+x\n`;
+      assert.deepEqual([...diffSections(diff).keys()], [p]);
+    }),
+    { numRuns: 300 },
   );
 });
