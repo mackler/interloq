@@ -7,6 +7,7 @@ import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 import { FIGURE_NARROW } from "./figures.ts";
 import { FIGURE_VIEW_MARGIN } from "../web/src/figureView.ts";
+import { PHASE_KINDS } from "../src/uiEvents.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
 // and both columns are side by side; below it, one column at a time, chosen by its title, and a prompt selects "You and
@@ -660,6 +661,63 @@ test.describe("the tests of the tabs server, in order", () => {
         return out;
       }, LONG_ITEM_TITLE);
       expect(problems).toEqual([]);
+    });
+  }
+
+  // Issue #23: each kind of phase has a band color told apart from every other kind's, from the panel behind the bands
+  // and from the two bubbles on them, and its label stays legible on it, in the light scheme and in the dark one. The
+  // colors are the variables of web/src/theme.css, which test (1) of e2e/run.spec.ts checks the bands read.
+  for (const scheme of ["light", "dark"] as const) {
+    test(`(L49) the phase bands' colors are distinct and their labels legible in the ${scheme} scheme`, async ({ page }) => {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.goto(URL);
+      await expect(tabOf(page, "refinement")).toBeVisible();
+      const colors = await page.evaluate((kinds) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 1;
+        canvas.height = 1;
+        const context = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
+        const probe = document.createElement("span");
+        document.body.appendChild(probe);
+        const resolve = (variable: string): number[] => {
+          probe.style.backgroundColor = `var(${variable})`;
+          const color = getComputedStyle(probe).backgroundColor;
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = color;
+          context.fillRect(0, 0, 1, 1);
+          return Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3));
+        };
+        const out = {
+          bands: kinds.map((kind) => ({ kind, band: resolve(`--band-${kind}`), label: resolve(`--on-band-${kind}`) })),
+          panel: resolve("--m3c-surface-container-lowest"),
+          claude: resolve("--m3c-secondary-container"),
+          codex: resolve("--m3c-tertiary-container"),
+        };
+        probe.remove();
+        return out;
+      }, [...PHASE_KINDS]);
+      const problems: string[] = [];
+      const distances: number[] = [];
+      for (const [i, a] of colors.bands.entries()) {
+        for (const b of colors.bands.slice(i + 1)) {
+          const d = okDistance(a.band, b.band);
+          distances.push(d);
+          if (d < 0.05) problems.push(`the ${a.kind} and ${b.kind} bands are ${d.toFixed(3)} apart`);
+          const e = labDistance(a.band, b.band);
+          if (e < 5) problems.push(`the ${a.kind} and ${b.kind} bands are ΔE ${e.toFixed(1)} apart`);
+        }
+        for (const [name, other] of [["panel", colors.panel], ["Claude's bubble", colors.claude], ["Codex's bubble", colors.codex]] as const) {
+          const d = okDistance(a.band, other);
+          if (d < 0.03) problems.push(`the ${a.kind} band is ${d.toFixed(3)} from ${name}`);
+          const e = labDistance(a.band, other);
+          if (e < 4) problems.push(`the ${a.kind} band is ΔE ${e.toFixed(1)} from ${name}`);
+        }
+        const contrast = contrastRatio(a.label, a.band);
+        if (contrast < 4.5) problems.push(`the ${a.kind} band's label has a contrast of ${contrast.toFixed(2)}`);
+      }
+      console.log(`(L49) ${scheme}: smallest band distance ${Math.min(...distances).toFixed(3)}, smallest label contrast ${Math.min(...colors.bands.map((b) => contrastRatio(b.label, b.band))).toFixed(2)}, smallest distance from the panel and bubbles ${Math.min(...colors.bands.flatMap((b) => [colors.panel, colors.claude, colors.codex].map((o) => okDistance(b.band, o)))).toFixed(3)}, smallest ΔE between bands ${Math.min(...colors.bands.flatMap((a, i) => colors.bands.slice(i + 1).map((b) => labDistance(a.band, b.band)))).toFixed(1)}, smallest ΔE from the panel and bubbles ${Math.min(...colors.bands.flatMap((b) => [colors.panel, colors.claude, colors.codex].map((o) => labDistance(b.band, o)))).toFixed(1)}`);
+      expect(problems, `in the ${scheme} scheme`).toEqual([]);
     });
   }
 });
@@ -2177,6 +2235,38 @@ test.describe("the tests of the narrationNote server, in order", () => {
     });
   }
 });
+
+/** The Euclidean distance in OKLab (Björn Ottosson's) of two sRGB colors given as 0–255 channels. */
+const okDistance = (a: readonly number[], b: readonly number[]): number => {
+  const oklab = (rgb: readonly number[]): [number, number, number] => {
+    const [r, g, bl] = rgb.map((channel) => {
+      const c = channel / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    }) as [number, number, number];
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * bl);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * bl);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * bl);
+    return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+  };
+  const [x, y] = [oklab(a), oklab(b)];
+  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+};
+
+/** The CIE76 distance (ΔE) in CIELAB of two sRGB colors given as 0–255 channels, under D65. Issue #23: OKLab overstates
+ * distances near black, where a band of rgb(1, 1, 2) measured 0.07 from a black panel, so L49 asks both. */
+const labDistance = (a: readonly number[], b: readonly number[]): number => {
+  const lab = (rgb: readonly number[]): [number, number, number] => {
+    const [r, g, bl] = rgb.map((channel) => {
+      const c = channel / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    }) as [number, number, number];
+    const f = (t: number): number => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116);
+    const [x, y, z] = [f((0.4124 * r + 0.3576 * g + 0.1805 * bl) / 0.95047), f(0.2126 * r + 0.7152 * g + 0.0722 * bl), f((0.0193 * r + 0.1192 * g + 0.9505 * bl) / 1.08883)];
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+  };
+  const [x, y] = [lab(a), lab(b)];
+  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+};
 
 /** The WCAG contrast ratio of two sRGB colors given as 0–255 channels. */
 const contrastRatio = (a: readonly number[], b: readonly number[]): number => {

@@ -83,14 +83,30 @@ test.describe("the tests of the converge server, in order", () => {
     // Issue #15: each phase is a band opened by its label with the time it began; each kind of phase has its own tone.
     // Issue #22: the bands are the right panel's, where an execution phase writes nothing: the plan review (planning)
     // and the work review (work) are its bands.
-    await expect(right(page).locator(".phase-label", { hasText: /^Planning · \S/ })).toBeVisible();
-    await expect(right(page).locator(".phase-label", { hasText: /^Code review · \S/ })).toBeVisible();
+    await expect(right(page).locator(".phase-label", { hasText: /^Begin Planning · \S/ })).toBeVisible();
+    await expect(right(page).locator(".phase-label", { hasText: /^Begin Code review · \S/ })).toBeVisible();
     const tone = (band: Locator) => band.evaluate((e) => getComputedStyle(e).backgroundColor);
     const [planningTone, workTone] = [await tone(right(page).locator(".band-planning").first()), await tone(right(page).locator(".band-work").first())];
     expect(planningTone).not.toBe(workTone);
     const listTone = await right(page).locator(".list").evaluate((e) => getComputedStyle(e).backgroundColor);
     expect(planningTone).not.toBe(listTone);
     expect(workTone).not.toBe(listTone);
+    // Issue #23: each band's background and its label's color are its kind's variables of web/src/theme.css.
+    const read = await right(page).locator(".band").evaluateAll((els) => els.map((e) => {
+      const kind = [...e.classList].find((c) => c.startsWith("band-"))!.slice("band-".length);
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = `var(--band-${kind})`;
+      probe.style.color = `var(--on-band-${kind})`;
+      document.body.appendChild(probe);
+      const expected = { background: getComputedStyle(probe).backgroundColor, label: getComputedStyle(probe).color };
+      probe.remove();
+      return { kind, background: getComputedStyle(e).backgroundColor, label: getComputedStyle(e.querySelector(".phase-label")!).color, expected };
+    }));
+    expect(read.length).toBeGreaterThan(1);
+    for (const band of read) {
+      expect(band.background, `the ${band.kind} band's background`).toBe(band.expected.background);
+      expect(band.label, `the ${band.kind} band's label`).toBe(band.expected.label);
+    }
   });
 
   test("the fixture records an uncaught error in a second page of the context", async ({ context, pageErrors }) => {

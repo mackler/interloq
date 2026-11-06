@@ -540,3 +540,16 @@ default) for an answer, after which the run stops waiting for it.
 - **Material Design 3, one deviation.** The view is hand-built after M3 (surface container high, elevation level 3,
   extra-large shape, a visible focus ring) rather than m3-svelte's `Dialog`, because a view opened by hover must not be
   modal, trap focus or draw a scrim. It asserts the picture and its alt text, which names it, and nothing more.
+
+## The phase bands' colors (issue #23, 6 Nov 2026)
+
+- **Visibility of system status; consistency and standards.** Each kind of phase in the "Claude and Codex" panel has a
+  band color of its own, an M3 role mixed in OKLab from `web/src/theme.css`, told apart from every other kind's, from the
+  panel behind it and from Claude's and Codex's bubbles on it, in the light and the dark scheme (layout test L49). A
+  band's color asserts the kind of phase its messages belong to, and nothing about the phase's progress or outcome.
+- **Accessibility (WCAG 2.1, 1.4.1 and 1.4.3).** Color is not the only signal: the band's label names the phase and the
+  time it began ("Begin Planning 1 · 06:33:39 PM"), and keeps a contrast of at least 4.5 on its band.
+- **Material Design 3, one deviation.** M3's container roles are meant to sit behind content at full strength; six kinds
+  of phase, two bubble colors and the panel left too few of them distinct in a tonal-spot scheme, so most bands are a
+  role mixed with the panel's surface rather than a container role as it stands. The mix asserts nothing a container
+  color does not.

@@ -17,7 +17,9 @@
   // Issue #15: each phase is a band behind its messages, one subtle tone per kind of phase, so that every execution phase
   // looks alike and a planning phase between two of them stands apart; a small label opens the band with the phase's
   // name and the time it began [visibility of system status: where a phase begins, and when; aesthetic and minimalist
-  // design: a tone and a quiet label rather than a message of their own].
+  // design: a tone and a quiet label rather than a message of their own]. Issue #23: the tones and the label's color
+  // come from web/src/theme.css, one pair of variables per kind of phase, each band's color distinct from every other
+  // kind's, the panel and the two bubbles in both schemes; the label still names the phase, so color is not the only signal.
   const groups = $derived(bandsOf(messages));
   let list = $state<HTMLElement | null>(null);
   let following = $state(true);
@@ -71,10 +73,19 @@
   .empty { color: var(--m3c-on-surface-variant); margin: auto; }
   /* A band is a full-width column like the list, so that each message's align-self keeps its side (P1-R1-1). */
   .band { display: flex; flex-direction: column; align-self: stretch; padding: 0.25rem 0.5rem 0.5rem; margin: 0.25rem 0; border-radius: var(--m3-shape-medium); }
-  .band-questions { background: color-mix(in srgb, var(--m3c-surface-container-lowest) 92%, var(--m3c-outline)); }
-  .band-planning { background: color-mix(in srgb, var(--m3c-surface-container-lowest) 92%, var(--m3c-primary)); }
-  .band-execution { background: color-mix(in srgb, var(--m3c-surface-container-lowest) 92%, var(--m3c-tertiary)); }
-  .band-work { background: color-mix(in srgb, var(--m3c-surface-container-lowest) 92%, var(--m3c-secondary)); }
-  .phase-label { margin: 0.25rem 0.25rem 0.125rem; color: var(--m3c-on-surface-variant); }
+  /* Issue #23: each kind of phase takes its band color and its label color from web/src/theme.css. */
+  .band-update { background: var(--band-update); }
+  .band-update > .phase-label { color: var(--on-band-update); }
+  .band-questions { background: var(--band-questions); }
+  .band-questions > .phase-label { color: var(--on-band-questions); }
+  .band-planning { background: var(--band-planning); }
+  .band-planning > .phase-label { color: var(--on-band-planning); }
+  .band-execution { background: var(--band-execution); }
+  .band-execution > .phase-label { color: var(--on-band-execution); }
+  .band-work { background: var(--band-work); }
+  .band-work > .phase-label { color: var(--on-band-work); }
+  .band-suite { background: var(--band-suite); }
+  .band-suite > .phase-label { color: var(--on-band-suite); }
+  .phase-label { margin: 0.25rem 0.25rem 0.125rem; }
   .jump { position: absolute; bottom: 0.75rem; left: 50%; transform: translateX(-50%); }
 </style>

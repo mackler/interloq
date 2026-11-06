@@ -2,6 +2,7 @@ import { flushSync, mount, tick, unmount } from "svelte";
 import { afterEach, describe, expect, test } from "vitest";
 import ChatPanel from "./components/ChatPanel.svelte";
 import { phaseBandLabel } from "../../src/prompts.ts";
+import { PHASE_KINDS } from "../../src/uiEvents.ts";
 import type { Band, Message } from "./state.ts";
 import { clockTime, fullTime } from "./time.ts";
 
@@ -78,8 +79,21 @@ describe("ChatPanel's phase bands", () => {
       expect(labels[0].textContent?.trim()).toBe(phaseBandLabel(expected.name, clockTime(expected.began)));
       expect(labels[0].title).toBe(fullTime(expected.began));
     }
-    expect(bands[0].querySelector(".phase-label")?.textContent?.trim()).toMatch(/^Planning 1 · \S/);
+    expect(bands[0].querySelector(".phase-label")?.textContent?.trim()).toMatch(/^Begin Planning 1 · \S/);
     const outside = [...target.querySelectorAll("article")].filter((a) => a.closest(".band") === null);
     expect(outside.map((a) => a.textContent?.includes("message 0"))).toEqual([true]);
+  });
+
+  // Issue #23: the band classes the band colors of web/src/theme.css and the layout test L49 rely on, one per kind of phase.
+  test("a band of every kind of phase carries its kind's class and its label", () => {
+    const bands = PHASE_KINDS.map((kind, i): Band => ({ key: `${kind}-1`, kind, name: `${kind} 1`, began: T(10 * (i + 1)) }));
+    const messages = bands.map((b, i) => inBand(i, b));
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    mounted.push(mount(ChatPanel, { target, props: { title: "Claude and Codex", messages, empty: "none" } }));
+    flushSync();
+    const shown = [...target.querySelectorAll<HTMLElement>(".band")];
+    expect(shown.map((b) => [...b.classList].find((c) => c.startsWith("band-")))).toEqual(PHASE_KINDS.map((k) => `band-${k}`));
+    expect(shown.map((b) => b.querySelector(".phase-label")?.textContent?.trim())).toEqual(bands.map((b) => phaseBandLabel(b.name, clockTime(b.began))));
   });
 });

@@ -18,6 +18,11 @@ import type { ShownDocument } from "./reviewedDocument.ts";
 export const NUMBERED_PHASE_KINDS = ["planning", "execution", "work", "suite"] as const;
 export type NumberedPhaseKind = (typeof NUMBERED_PHASE_KINDS)[number];
 export type Phase = Readonly<{ kind: "update" }> | Readonly<{ kind: "questions" }> | Readonly<{ kind: NumberedPhaseKind; n: number }>;
+/** Every kind of phase, in the order a run can hold them (issue #23): the one source the band colors are checked over. */
+export const PHASE_KINDS = ["update", "questions", ...NUMBERED_PHASE_KINDS] as const satisfies readonly Phase["kind"][];
+/** True only while PHASE_KINDS lists every kind of Phase; a kind added to Phase alone fails the type check here. */
+type MissingPhaseKind = Exclude<Phase["kind"], (typeof PHASE_KINDS)[number]>;
+export const PHASE_KINDS_EXHAUSTIVE: [MissingPhaseKind] extends [never] ? true : never = true;
 /** Which conversation with the user runs (issue #21): the first clarification, or a follow-up on accepted requirements gaps. An empty agreed list opens none (issue #83). */
 export type ClarificationStage = "first" | "followUp";
 export type { Agent } from "./agents.ts";

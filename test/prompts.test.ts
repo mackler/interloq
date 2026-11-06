@@ -1182,3 +1182,7 @@ test("issue #24: no prompt of Gather Requirements or of planning names the old w
   assert.match(texts.followUpClarificationPrompt!, /Conduct a follow-up clarification with the user/);
   assert.match(texts.firstClarificationOpenPrompt!, /^Take part in clarifying the requirements with the user\./);
 });
+
+test("phaseBandLabel opens with Begin (issue #23)", () => {
+  assert.equal(prompts.phaseBandLabel("Planning 1", "06:33:39 PM"), "Begin Planning 1 · 06:33:39 PM");
+});

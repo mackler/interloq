@@ -2569,9 +2569,10 @@ export function cycleHeading(heading: string, n: number): string {
   return `${heading}, cycle ${n}`;
 }
 
-/** The label that opens a phase's band in a chat panel (issue #15): the phase's name and the time it began. */
+/** The label that opens a phase's band in a chat panel (issue #15): the phase's name and the time it began. It opens
+ * with "Begin" so that it reads as the moment the phase began, not as a heading of what follows (issue #23). */
 export function phaseBandLabel(name: string, clock: string): string {
-  return `${name} · ${clock}`;
+  return `Begin ${name} · ${clock}`;
 }
 
 /** The hint under the answer field. */

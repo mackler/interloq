@@ -18,6 +18,23 @@
      unlayered rule overrides them. A deviation from M3's Roboto Flex, recorded in docs/ui-review.md. */
   --m3-font: "Liberation Sans", Arial, sans-serif;
   --m3-font-mono: "Liberation Mono", "Courier New", monospace;
+  /* The phase bands of the "Claude and Codex" panel (issue #15): one background, --band-<kind>, and one label color,
+     --on-band-<kind>, per kind of phase (PHASE_KINDS of src/uiEvents.ts), read by ChatPanel.svelte (issue #23). Each
+     band differs from every other kind's, from the panel behind it and from Claude's and Codex's bubbles on it, in the
+     light scheme and the dark one, and its label keeps a contrast of 4.5 on it: layout test L49 measures all of it.
+     The bands are M3 roles mixed in OKLab; the error roles are left out, since the page keeps them for halts. */
+  --band-update: var(--m3c-primary-container);
+  --band-questions: color-mix(in oklab, var(--m3c-surface-container-lowest) 76%, var(--m3c-secondary));
+  --band-planning: color-mix(in oklab, var(--m3c-surface-container-lowest) 64%, var(--m3c-secondary));
+  --band-execution: color-mix(in oklab, var(--m3c-surface-container-lowest) 20%, var(--m3c-tertiary-container-subtle));
+  --band-work: color-mix(in oklab, var(--m3c-surface-container-lowest) 56%, var(--m3c-primary-container-subtle));
+  --band-suite: color-mix(in oklab, var(--m3c-surface-container-lowest) 52%, var(--m3c-secondary));
+  --on-band-update: var(--m3c-on-surface);
+  --on-band-questions: var(--m3c-on-surface);
+  --on-band-planning: var(--m3c-on-surface);
+  --on-band-execution: var(--m3c-on-primary-container);
+  --on-band-work: var(--m3c-on-surface);
+  --on-band-suite: var(--m3c-on-surface);
 }
 html, body { margin: 0; }
 body { font-family: var(--m3-font); }
