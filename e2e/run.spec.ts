@@ -1,6 +1,6 @@
 import type { Ending } from "../src/ending.ts";
 import type { Locator, Page, WebSocketRoute } from "@playwright/test";
-import { dashboard, expect, listOf, listTabOf, runTabOf, startFromTab, tabOf, test, toHaveEnded, toTheList, LONG_FIRST_PROMPT_MS, LONG_TEST_TIMEOUT_MS } from "./fixtures.ts";
+import { dashboard, expect, listOf, listTabOf, runTabOf, startFromTab, tabOf, test, toHaveEnded, toTheList, LONG_FIRST_PROMPT_MS, LONG_TEST_TIMEOUT_MS, WHOLE_RUN_END_MS } from "./fixtures.ts";
 import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
@@ -379,7 +379,7 @@ test.describe("the tests of the workCorrection server, in order", () => {
 
   test("(6) a work correction runs planning, execution and the work review a second time", async ({ page }) => {
     await startTask(page, "workCorrection");
-    await toHaveEnded(page, "Completed");
+    await toHaveEnded(page, "Completed", WHOLE_RUN_END_MS);
     for (const phase of ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]) await expect(rail(page).getByText(phase, { exact: true })).toBeVisible();
     // Issue #14 (G-R1-1): the work review that led to the second planning phase names its corrections due.
     // Issue #252: two cycles, the second raising nothing before the review leaves.

@@ -11,6 +11,9 @@ import type { RunMode } from "../src/runMode.ts";
 export const LONG_FIRST_PROMPT_MS = 300_000;
 /** The timeout of every test of a `long` server: the first prompt's wait plus the rest of the test. */
 export const LONG_TEST_TIMEOUT_MS = 480_000;
+/** The wait for a scripted run of several phases to end, or to reach its execution, under the suite's load: in issue
+ * #219's suite run 2 six phases at about 13 s a review cycle did not end within the default 60 s. */
+export const WHOLE_RUN_END_MS = 240_000;
 
 export const test = base.extend<{ pageErrors: string[] }>({
   pageErrors: async ({}, use) => {
@@ -35,7 +38,8 @@ export { expect };
 /** The dashboard, the region named "You and Interloq"; its compact form under a question has a name of its own. */
 export const dashboard = (page: Page) => page.locator(`section[aria-label="You and Interloq"]`);
 /** Issue #44: waits for the run's ended line, the status region of its ending, by the ending's kind (never an exit code). */
-export const toHaveEnded = (page: Page, tag: Ending["_tag"]) => expect(page.locator(`[role=status][data-ending="${tag}"]`)).toBeVisible();
+export const toHaveEnded = (page: Page, tag: Ending["_tag"], timeout?: number) =>
+  expect(page.locator(`[role=status][data-ending="${tag}"]`)).toBeVisible(timeout === undefined ? undefined : { timeout });
 
 // Issue #120: a run is started from an item of a tab's list; there is no form.
 /** The label of a mode's tab, whose radio input m3-svelte's Tabs hides. */

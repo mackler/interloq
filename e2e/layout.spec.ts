@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList, LONG_FIRST_PROMPT_MS, LONG_TEST_TIMEOUT_MS } from "./fixtures.ts";
+import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList, LONG_FIRST_PROMPT_MS, LONG_TEST_TIMEOUT_MS, WHOLE_RUN_END_MS } from "./fixtures.ts";
 import { ELEMENT_GROUP_NAMES, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, CLOSE_PICTURE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
 import { markedTabName } from "../web/src/notify.ts";
 import { ARGUMENT_TIMING_MARKER, LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_RUN_QUESTION, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
@@ -1825,7 +1825,9 @@ test.describe("the tests of the liveOutput server, in order", () => {
       const section = LIVE_SECTION(page);
       const above = section.locator("[data-dashboard-above]");
       await expect(screen.locator("[data-live-line]")).toHaveCount(1000, { timeout: 330_000 });
-      await live.scrollIntoViewIfNeeded();
+      // Issue #219's suite run 2: scrollIntoViewIfNeeded waits for the panel to be stable, and a panel that receives a
+      // line every 300 ms need not settle under load, so the scroll waits for nothing; every assertion after it waits.
+      await live.evaluate((el) => el.scrollIntoView({ block: "nearest" }));
 
       // The colors and the long line.
       const red = screen.locator(".text > span", { hasText: LIVE_RED_TEXT }).first();
@@ -1988,6 +1990,9 @@ test.describe("the tests of the liveOutputQuestion server, in order", () => {
   test.describe.configure({ mode: "default" });
 
   test("(L37) the compact panel anchored under a question at 1280 × 800, 640 × 400 and 390 × 844", async ({ page }) => {
+    // Issue #219's suite run 2: four question waits of 60 s and the wait for the run's execution can together pass the
+    // configured 360 s under the suite's load.
+    test.setTimeout(600_000);
     await page.setViewportSize({ width: 1280, height: 800 });
     await startTask(page, layoutUrl("liveOutputQuestion"));
     const firstCard = pane(page).getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
@@ -1997,7 +2002,8 @@ test.describe("the tests of the liveOutputQuestion server, in order", () => {
     }
     const compact = page.locator(".dashboard-compact");
     const live = compact.locator("[data-live-output]");
-    await expect(live).toBeVisible({ timeout: 60_000 });
+    // The compact panel appears once the run's execution starts, after Planning's review.
+    await expect(live).toBeVisible({ timeout: WHOLE_RUN_END_MS });
     await expect(pane(page)).toBeVisible();
     const toggle = compact.locator("[data-answers-heading] button").first();
     await toggle.click();
