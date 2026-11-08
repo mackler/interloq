@@ -1829,13 +1829,14 @@ test.describe("the tests of the liveOutput server, in order", () => {
       // line every 300 ms need not settle under load, so the scroll waits for nothing; every assertion after it waits.
       await live.evaluate((el) => el.scrollIntoView({ block: "nearest" }));
 
-      // The colors and the long line.
-      const red = screen.locator(".text > span", { hasText: LIVE_RED_TEXT }).first();
+      // The colors and the long line. Issue #219's suite run 7 read the oldest red line as it was evicted (its computed
+      // color ""), so the test reads the newest marked lines with retrying assertions.
+      const red = screen.locator(".text > span", { hasText: LIVE_RED_TEXT }).last();
       await expect(red).toBeAttached();
-      expect(await red.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(224, 85, 97)");
-      const long = screen.locator("[data-live-line]", { hasText: "w".repeat(50) }).first();
+      await expect(red).toHaveCSS("color", "rgb(224, 85, 97)");
+      const long = screen.locator("[data-live-line]", { hasText: "w".repeat(50) }).last();
       await expect(long).toBeAttached();
-      expect(await long.evaluate((el) => (/w+/u.exec(el.textContent ?? "")?.[0] ?? "").length)).toBe(LIVE_LONG_LINE);
+      await expect.poll(() => long.evaluate((el) => (/w+/u.exec(el.textContent ?? "")?.[0] ?? "").length)).toBe(LIVE_LONG_LINE);
 
       // Following: at its end, the screen stays at its end as ticks arrive.
       await screen.evaluate((s) => { s.scrollTop = s.scrollHeight; });
