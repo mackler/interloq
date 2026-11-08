@@ -131,8 +131,17 @@ const byThread = (round: number, thread: ReviewThread, logFile: string, root: Ru
  * The line said on the page and written to conversation.md when a review's next round starts a new Codex thread
  * (issue #165, the requirements' open point).
  */
+/** The part a line about a code review's thread names after its heading, or nothing for a loop of one thread. */
+const partSuffix = (part: ReviewPart | null): string => (part === null ? "" : ` (${part._tag === "Whole" ? "the whole work" : `step ${part.id}`})`);
 export const threadRestartLine = (heading: string, round: number, inputTokens: number, limit: number, part: ReviewPart | null = null): string =>
-  `${heading}${part === null ? "" : ` (${part._tag === "Whole" ? "the whole work" : `step ${part.id}`})`}: Codex's last turn took ${inputTokens.toLocaleString("en-US")} input tokens, more than the ${limit.toLocaleString("en-US")} set by codexTurnInputLimit; round ${round} starts a new Codex thread, which reads the issue log instead of the earlier conversation.`;
+  `${heading}${partSuffix(part)}: Codex's last turn took ${inputTokens.toLocaleString("en-US")} input tokens, more than the ${limit.toLocaleString("en-US")} set by codexTurnInputLimit; round ${round} starts a new Codex thread, which reads the issue log instead of the earlier conversation.`;
+
+/**
+ * Issue #262: the line said and written when Codex could not resume a review thread, and the round's turn is repeated on
+ * a new thread.
+ */
+export const threadResumeFailedLine = (heading: string, round: number, thread: string, message: string, part: ReviewPart | null = null): string =>
+  `${heading}${partSuffix(part)}: Codex could not resume thread ${thread} (${message.trim()}); round ${round} starts a new Codex thread, which reads the issue log instead of the earlier conversation.`;
 
 /** The heading of the explanations of terms: in conversation.md (decision Q6) and in a relayed question's text (S13). */
 export const TERMS_HEADING = "Terms:";

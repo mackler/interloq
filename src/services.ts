@@ -5,7 +5,7 @@ import { Context, Effect } from "effect";
 import type { Brand, Fiber, Option, Schema, Scope } from "effect";
 import type { Answered, DisputeOwner, OpenDispute, Withdrawn } from "./openDisputes.ts";
 import type { BesideKey } from "./reviewState.ts";
-import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRateLimited, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
+import type { AgentUnreachable, CodexCallFailed, CodexThreadNotResumable, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRateLimited, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { Figure } from "./figure.ts";
 import type { RunMode } from "./runMode.ts";
@@ -168,7 +168,7 @@ export type ReviewReply = Readonly<{ text: string; inputTokens: number | null }>
 export type ReviewSchema = typeof SchemaModule.Review | typeof SchemaModule.EffectReview;
 export interface ReviewSession {
   /** One review turn. Returns the reply with the turn's input tokens; the caller decodes the text. */
-  review(prompt: string, schema: ReviewSchema): Effect.Effect<ReviewReply, ReviewerError | TransportFault | UsageLimited>;
+  review(prompt: string, schema: ReviewSchema): Effect.Effect<ReviewReply, ReviewerError | TransportFault | UsageLimited | CodexThreadNotResumable>;
 }
 export interface ReviewerShape {
   /** Starts a new thread and returns the session bound to it. Called at the start of every review loop. A start failure is a typed error (finding 11). */

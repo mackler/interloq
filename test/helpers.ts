@@ -24,7 +24,7 @@ import type { LimitReset } from "../src/limitReset.ts";
 import type { OutputEvent, ProcessKey } from "../src/liveOutput.ts";
 import type { ClaudeFailure, NetworkCode } from "../src/transport.ts";
 import { callFailure } from "../src/claude.ts";
-import { AgentUnreachable, ClaudeCallFailed, type CodexCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped, NoAnswer, type AskedQuestion } from "../src/errors.ts";
+import { AgentUnreachable, ClaudeCallFailed, type CodexCallFailed, type CodexThreadNotResumable, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped, NoAnswer, type AskedQuestion } from "../src/errors.ts";
 import { turnFailure } from "../src/codex.ts";
 import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
 import { type RunStart, type Task, taskOf, type Wiring } from "../src/program.ts";
@@ -716,16 +716,21 @@ export class ScriptedReviewer implements ReviewerShape {
       }
       return part;
     };
+    // Issue #262: the session's attempted turns, faulted ones included; as a real thread takes its id at thread.started,
+    // a turn after the first resumes the thread `scripted-thread-<phase>`, and the first resumes nothing.
+    let turns = 0;
     return {
       /** Returns the reply text as Codex would: the caller decodes it. */
-      review: (prompt: string): Effect.Effect<ReviewReply, TransportFault | UsageLimited | CodexCallFailed> =>
+      review: (prompt: string): Effect.Effect<ReviewReply, TransportFault | UsageLimited | CodexCallFailed | CodexThreadNotResumable> =>
         Effect.suspend(() => {
           const key = partOf(prompt);
-          return key === null ? this.gated(prompt).pipe(Effect.andThen(Effect.sync(() => this.turn(prompt, phase)))) : Effect.sync(() => this.partTurn(prompt, key));
+          const thread = turns > 0 ? `scripted-thread-${phase}` : null;
+          turns += 1;
+          return (key === null ? this.gated(prompt).pipe(Effect.andThen(Effect.sync(() => this.turn(prompt, phase)))) : Effect.sync(() => this.partTurn(prompt, key))).pipe(Effect.map((reply) => ({ ...reply, thread })));
         }).pipe(
           Effect.flatMap((reply) =>
             reply.failure !== null
-              ? Effect.fail(turnFailure(reply.failure, null, reply.failureReset ?? { kind: "unknown" }))
+              ? Effect.fail(turnFailure(reply.failure, null, reply.failureReset ?? { kind: "unknown" }, reply.thread))
               : reply.fault === null
                 ? Effect.succeed({ text: reply.text, inputTokens: reply.inputTokens })
                 : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null, networkCode: reply.faultCode })),

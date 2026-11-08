@@ -2,7 +2,7 @@
 
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { Effect, Exit, Layer, Ref } from "effect";
-import { CodexCallFailed, limitRefusedBy, TransportFault, type UsageLimited } from "./errors.ts";
+import { CodexCallFailed, CodexThreadNotResumable, limitRefusedBy, TransportFault, type UsageLimited } from "./errors.ts";
 import type { LimitReset } from "./limitReset.ts";
 import { RecordedFailure } from "./codexArgs.ts";
 import { classifyCodex, errorCode, networkCodeOf } from "./transport.ts";
@@ -16,27 +16,30 @@ const failedWith = (e: unknown): CodexCallFailed => new CodexCallFailed({ messag
 /**
  * A failure of a turn, by src/transport.ts: TransportFault for a transport fault (issue #26), UsageLimited for a limit
  * a wait can fix (a 429 or a rate limit, issue #233; a model at capacity, a usage limit or a quota, issue #251), with
- * its limit type and the reset Codex's session file recorded, waited out like a Claude Code limit; CodexCallFailed
- * otherwise. Exported so that the scripted reviewer of the tests fails a turn by this mapping.
+ * its limit type and the reset Codex's session file recorded, waited out like a Claude Code limit;
+ * CodexThreadNotResumable for a turn on the resumed thread `thread` that the CLI refused to resume (issue #262), which the
+ * review loop replaces by a new thread; CodexCallFailed otherwise. Exported so that the scripted reviewer of the tests fails a turn by this mapping.
  */
-export const turnFailure = (message: string, code: string | null = null, reset: LimitReset = { kind: "unknown" }): CodexCallFailed | TransportFault | UsageLimited => {
-  const kind = classifyCodex(message, code, reset);
+export const turnFailure = (message: string, code: string | null = null, reset: LimitReset = { kind: "unknown" }, thread: string | null = null): CodexCallFailed | TransportFault | UsageLimited | CodexThreadNotResumable => {
+  const kind = classifyCodex(message, code, reset, thread !== null);
   switch (kind.kind) {
     case "transport":
       return new TransportFault({ agent: "codex", message, status: null, networkCode: networkCodeOf(code, [message]) });
     case "limited":
       return limitRefusedBy("codex", message, kind);
+    case "resumeFailed":
+      return thread === null ? new CodexCallFailed({ message }) : new CodexThreadNotResumable({ thread, message });
     case "permanent":
       return new CodexCallFailed({ message });
   }
 };
 const UNKNOWN_RESET: LimitReset = { kind: "unknown" };
 /** A thrown value's text, with its code where the text does not name it (W1-R1-2), and the reset Codex's session file recorded (issue #251). */
-const turnFailedWith = (e: unknown): CodexCallFailed | TransportFault | UsageLimited => {
+const turnFailedWith = (e: unknown, thread: string | null): CodexCallFailed | TransportFault | UsageLimited | CodexThreadNotResumable => {
   const code = errorCode(e);
   const message = typeof e === "object" && e !== null ? (e as { message?: unknown }).message : undefined;
   const text = typeof message === "string" ? message : typeof e === "object" && e !== null ? "" : String(e);
-  return turnFailure(thrownText(text, code), code, e instanceof RecordedFailure ? (e.reset ?? UNKNOWN_RESET) : UNKNOWN_RESET);
+  return turnFailure(thrownText(text, code), code, e instanceof RecordedFailure ? (e.reset ?? UNKNOWN_RESET) : UNKNOWN_RESET, thread);
 };
 
 /**
@@ -48,10 +51,12 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: 
   review: (prompt, schema) =>
     nextCallId.pipe(Effect.flatMap((callId) => Effect.gen(function* () {
       yield* ui.notify({ _tag: "AgentCallStarted", agent: "codex", purpose: REVIEW_PURPOSE, callId });
+      // Issue #262: the thread this turn resumes, or null for a thread's first turn, which resumes nothing.
+      const resuming = thread.id;
       const controller = new AbortController();
       const streamed = yield* Effect.tryPromise({
         try: () => thread.runStreamed(prompt, { outputSchema: agentJsonSchema(schema), signal: controller.signal }),
-        catch: turnFailedWith,
+        catch: (e) => turnFailedWith(e, resuming),
       }).pipe(Effect.onInterrupt(() => Effect.sync(() => controller.abort())));
       const events = streamed.events;
       const seen: ThreadEvent[] = [];
@@ -60,7 +65,7 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: 
       const output = yield* Ref.make(EMPTY_CODEX_OUTPUT);
       const consume = Effect.gen(function* () {
         for (;;) {
-          const step = yield* Effect.tryPromise({ try: () => events.next(), catch: turnFailedWith });
+          const step = yield* Effect.tryPromise({ try: () => events.next(), catch: (e) => turnFailedWith(e, resuming) });
           if (step.done === true) return;
           seen.push(step.value);
           if (step.value.type === "error") {
@@ -86,7 +91,7 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: 
       const endOpen = Ref.get(output).pipe(Effect.flatMap((state) => Effect.forEach(codexOpenItems(state), (e) => ui.output(e), { discard: true })));
       yield* consume.pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? endOpen : Effect.andThen(endOpen, close))));
       const outcome = reduceTurn(seen);
-      if (outcome.kind === "failed") return yield* Effect.fail(turnFailure(outcome.message));
+      if (outcome.kind === "failed") return yield* Effect.fail(turnFailure(outcome.message, null, UNKNOWN_RESET, resuming));
       if (outcome.usage !== null) yield* store.recordUsage({ agent: "codex", thread: thread.id, inputTokens: outcome.usage.input_tokens, outputTokens: outcome.usage.output_tokens });
       return { text: outcome.finalResponse, inputTokens: outcome.usage?.input_tokens ?? null };
     }).pipe(Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "codex", ok: Exit.isSuccess(exit), callId }))))),

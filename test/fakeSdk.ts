@@ -129,8 +129,11 @@ export class FakeSdk implements AgentSdk {
     this.threads.push(record);
     const id = `thread-${this.threads.length}`;
     const answers = this.turns;
+    // As codexThread of src/codexExec.ts: a thread has its id once its first turn started (thread.started), none before.
     return {
-      id,
+      get id() {
+        return record.calls.length > 0 ? id : null;
+      },
       runStreamed: async (input: string, turnOptions?: TurnOptions): Promise<{ events: AsyncGenerator<ThreadEvent> }> => {
         record.calls.push({ input, turnOptions });
         this.signal();

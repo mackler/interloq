@@ -55,6 +55,11 @@ export class ClaudeSessionTooLong extends Data.TaggedError("ClaudeSessionTooLong
 export class CheckCommandInvalid extends Data.TaggedError("CheckCommandInvalid")<{ readonly problems: readonly ManifestProblem[] }> {}
 export class CodexCallFailed extends Data.TaggedError("CodexCallFailed")<{ readonly message: string }> {}
 /**
+ * Issue #262: a Codex turn on a resumed thread that the CLI refused to resume (`resumeFailed` of src/transport.ts), with
+ * the thread's id and the CLI's message. Not a RunError: the review loop starts a new thread and repeats the turn there.
+ */
+export class CodexThreadNotResumable extends Data.TaggedError("CodexThreadNotResumable")<{ readonly thread: string; readonly message: string }> {}
+/**
  * A failure of an agent call that src/transport.ts identifies as a dropped connection, a reset, a timeout or a 5xx
  * (issue #26). Not a RunError: the callers retry it (src/retry.ts), and only AgentUnreachable leaves a run.
  */

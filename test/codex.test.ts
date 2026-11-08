@@ -333,3 +333,20 @@ test("a RecordedFailure of a usage limit with a reset fails the review with Usag
   const u = (await failureOf(new RecordedFailure("You've hit your usage limit. Try again later.", reset))) as unknown as { _tag: string; reset: unknown; limitType: string | null };
   assert.deepEqual({ _tag: u._tag, reset: u.reset, limitType: u.limitType }, { _tag: "UsageLimited", reset, limitType: CODEX_USAGE_LIMIT_TYPE });
 });
+
+// Issue #262: the halt of run 2026-11-08T19-37-05-071Z-implementation-256.
+const RESUME_REFUSED = "Codex Exec exited with code 1: Reading prompt from stdin...\nError: thread/resume: thread/resume failed: list_turns is not supported yet (code -32601)";
+test("a resumed turn the CLI refuses to resume fails with CodexThreadNotResumable naming the thread", async () => {
+  const fake = await reviewer([turn('{"issues":[]}'), new Error(RESUME_REFUSED)]);
+  const session = await run(fake.reviewer.startPhase);
+  await run(session.review("review the plan", S.Review));
+  await assert.rejects(run(session.review("review the plan again", S.Review)), (e: unknown) => {
+    const failure = e as { _tag: string; thread?: string; message?: string };
+    return failure._tag === "CodexThreadNotResumable" && failure.thread === "thread-1" && failure.message === RESUME_REFUSED;
+  });
+});
+test("a first turn with the resume text fails with CodexCallFailed, since it resumed nothing", async () => {
+  const fake = await reviewer([new Error(RESUME_REFUSED)]);
+  const session = await run(fake.reviewer.startPhase);
+  await assert.rejects(run(session.review("review the plan", S.Review)), (e: unknown) => tag(e) === "CodexCallFailed");
+});

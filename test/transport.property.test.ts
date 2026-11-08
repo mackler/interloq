@@ -271,3 +271,17 @@ test("property: the capacity text anywhere is limited with the capacity type, an
     { numRuns: 200 },
   );
 });
+// Issue #262: any text around the CLI's refusal to resume, on a resumed turn, is resumeFailed, unless it names a
+// refusal no wait can fix or a refused credential.
+const noWaitWords = /invalid_json_schema|outputSchema|unauthorized|invalid api key|not logged in|log in again|model_not_found|does not exist or you do not have access|unknown model|to use codex with your chatgpt plan|401|403/i;
+test("property: the resume refusal anywhere on a resumed turn is resumeFailed", () => {
+  const free = fc.string({ maxLength: 40 }).filter((s) => !noWaitWords.test(s));
+  fc.assert(
+    fc.property(free, free, (a, b) => {
+      const text = `${a}thread/resume failed${b}`;
+      if (noWaitWords.test(text)) return;
+      assert.deepEqual(classifyCodex(text, null, { kind: "unknown" }, true), { kind: "resumeFailed" });
+    }),
+    { numRuns: 200 },
+  );
+});

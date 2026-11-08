@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CONTEXT_TOO_LONG_PATTERN, type ClaudeFailure, classifyClaude, classifyCodex, processEndOf, rejectionOf } from "../src/transport.ts";
 import { CODEX_CAPACITY_TYPE, CODEX_QUOTA_TYPE, CODEX_RATE_LIMIT_TYPE, CODEX_USAGE_LIMIT_TYPE, timeOfDayIn } from "../src/limitReset.ts";
+import { exitText, recordedFailureText } from "../src/codexArgs.ts";
 
 const isRetried = (failure: ClaudeFailure | null): boolean => classifyClaude(failure).kind === "transport";
 
@@ -289,4 +290,23 @@ test("Claude: an error result naming a network code is retried; a 401 beside it 
   assert.equal(isRetried(f({ resultText: INCIDENT_TEXT })), true);
   assert.equal(isRetried(f({ resultText: INCIDENT_TEXT, apiStatus: 401 })), false);
   assert.equal(isRetried(f({ resultText: "API Error: XEAI_AGAINY" })), false);
+});
+
+// Issue #262: the Codex CLI's refusal to resume a thread, recognized only on a turn that resumed.
+const RESUME_HALT = "Codex Exec exited with code 1: Reading prompt from stdin...\nError: thread/resume: thread/resume failed: list_turns is not supported yet (code -32601)";
+test("Codex: a resumed turn's refusal to resume is resumeFailed, in the exit's text and in a recorded cause", () => {
+  assert.deepEqual(classifyCodex(RESUME_HALT, null, { kind: "unknown" }, true), { kind: "resumeFailed" });
+  const recorded = recordedFailureText("thread/resume failed: list_turns is not supported yet (code -32601)", exitText({ code: 1, signal: null }, "Reading prompt from stdin...") ?? "");
+  assert.deepEqual(classifyCodex(recorded, null, { kind: "unknown" }, true), { kind: "resumeFailed" });
+  assert.deepEqual(classifyCodex("Error: list_turns is not supported yet", null, { kind: "unknown" }, true), { kind: "resumeFailed" });
+});
+test("Codex: the resume text classifies by the ordinary rules on a turn that did not resume", () => {
+  assert.deepEqual(classifyCodex("thread/resume failed: connection reset"), { kind: "transport" });
+  assert.deepEqual(classifyCodex("thread/resume failed: usage limit"), { kind: "limited", reset: { kind: "unknown" }, limitType: CODEX_USAGE_LIMIT_TYPE });
+  assert.deepEqual(classifyCodex(RESUME_HALT), { kind: "permanent" });
+});
+test("Codex: a refused credential beside the resume text stays permanent, and the bare JSON-RPC code is not a refused resume", () => {
+  assert.deepEqual(classifyCodex(`${RESUME_HALT} 401 Unauthorized`, null, { kind: "unknown" }, true), { kind: "permanent" });
+  assert.deepEqual(classifyCodex(`${RESUME_HALT} unauthorized`, null, { kind: "unknown" }, true), { kind: "permanent" });
+  assert.deepEqual(classifyCodex("Error: method not found (code -32601)", null, { kind: "unknown" }, true), { kind: "permanent" });
 });

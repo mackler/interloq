@@ -164,6 +164,13 @@ const codexCapacity = /at capacity|overloaded/i;
 const codexRateLimited = /rate limit|too many requests/i;
 const codexTransport = new RegExp(`stream disconnected|connection reset|connection closed|timed out|timeout|WebSocket protocol error|Reconnecting|socket hang up|${NETWORK_CODES.join("|")}`, "i");
 
+/**
+ * The Codex CLI's refusal to resume a thread (issue #262), as run 2026-11-08T19-37-05-071Z-implementation-256 met it:
+ * "thread/resume failed: list_turns is not supported yet (code -32601)". The JSON-RPC code alone is not matched, since
+ * -32601 is the generic "method not found".
+ */
+const codexResumeFailed = /thread\/resume failed|list_turns is not supported/i;
+
 /** The code of a thrown value (`ECONNRESET`, …), or null: both adapters read it here (W1-R1-2). */
 export const errorCode = (e: unknown): string | null => {
   const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
@@ -173,19 +180,21 @@ export const errorCode = (e: unknown): string | null => {
 /**
  * What a failed Codex turn is, by its message, the code of the thrown value if any, and the reset Codex's session file
  * recorded (issue #251, `unknown` where none). The evidence is read in this order: a refusal no wait can fix
- * (`codexNoWaitFixes`), a 401 or a 403 is permanent; then a usage limit, a quota, a model at capacity or overloaded, and
+ * (`codexNoWaitFixes`), a 401 or a 403 is permanent; then, on a turn that resumed its thread (`resumed`), the CLI's
+ * refusal to resume is `resumeFailed` (issue #262), since repeating a refused resume cannot succeed; then a usage limit, a quota, a model at capacity or overloaded, and
  * a 429 or a rate limit named in words are each `limited` with their limit type, waited out and tried again (issues
  * #233 and #251), the session file's reset kept for all but capacity, since a usage window's reset says nothing of the
  * model's capacity; then any other 4xx is permanent; then a network code, a transport pattern or a 5xx is a transport
  * fault a retry could fix; anything else is permanent.
  */
-export type CodexFailureKind = Readonly<{ kind: "permanent" }> | Readonly<{ kind: "transport" }> | LimitRefusal;
+export type CodexFailureKind = Readonly<{ kind: "permanent" }> | Readonly<{ kind: "transport" }> | Readonly<{ kind: "resumeFailed" }> | LimitRefusal;
 const CODEX_PERMANENT: CodexFailureKind = { kind: "permanent" };
-export const classifyCodex = (message: string, code: string | null = null, reset: LimitReset = UNKNOWN_RESET): CodexFailureKind => {
+export const classifyCodex = (message: string, code: string | null = null, reset: LimitReset = UNKNOWN_RESET, resumed = false): CodexFailureKind => {
   const statuses = statusesIn(message);
   const inRange = (from: number, to: number): boolean => statuses.some((s) => s >= from && s <= to);
   const limited = (limitType: string, kept: LimitReset): CodexFailureKind => ({ kind: "limited", reset: kept, limitType });
   if (codexNoWaitFixes.test(message) || statuses.includes(401) || statuses.includes(403)) return CODEX_PERMANENT;
+  if (resumed && codexResumeFailed.test(message)) return { kind: "resumeFailed" };
   if (codexUsageLimit.test(message)) return limited(CODEX_USAGE_LIMIT_TYPE, reset);
   if (codexQuota.test(message)) return limited(CODEX_QUOTA_TYPE, reset);
   if (codexCapacity.test(message)) return limited(CODEX_CAPACITY_TYPE, UNKNOWN_RESET);
