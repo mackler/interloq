@@ -29,7 +29,9 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   webServer: servers.map(([scenario, port]) => ({
     command: `node e2e/server.ts`,
-    env: { SCENARIO: scenario, PORT: String(port) },
+    // Suite run 9 of issue #219: a server left by a runner stopped with `timeout` held its port, and Playwright refused
+    // the next run. The configuration is evaluated in the runner, so this is the runner's pid, which e2e/server.ts watches.
+    env: { SCENARIO: scenario, PORT: String(port), INTERLOQ_E2E_RUNNER_PID: String(process.pid) },
     url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: false,
     timeout: 120_000,

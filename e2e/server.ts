@@ -595,4 +595,18 @@ const main = Effect.gen(function* () {
   return yield* Effect.never;
 }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layer(() => createServer(), { port })), Effect.provide(platformLayer));
 
+// Suite run 9 of issue #219: a scenario server outlived the Playwright runner that started it and held its port. Where
+// INTERLOQ_E2E_RUNNER_PID names the runner (playwright.config.ts), the server exits once that process is gone; started
+// by hand, without it, it watches nothing. EPERM means the process exists.
+const runnerPid = Number(process.env.INTERLOQ_E2E_RUNNER_PID ?? "");
+if (Number.isSafeInteger(runnerPid) && runnerPid > 0) {
+  setInterval(() => {
+    try {
+      process.kill(runnerPid, 0);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ESRCH") process.exit(0);
+    }
+  }, 1_000).unref();
+}
+
 NodeRuntime.runMain(main);
