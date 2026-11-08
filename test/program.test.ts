@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, test } from "node:test";
-import { Clock, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result } from "effect";
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result } from "effect";
 import { ServerFault, TrackerAuthRefused, TrackerUnreachable } from "../src/errors.ts";
 import { Planner, Reviewer, Tracker } from "../src/services.ts";
 import type { FakeItem } from "./fakeTracker.ts";
@@ -126,10 +126,40 @@ test("an unreadable decision-making format prints HALTED with the file and exits
   assertHaltedBeforeRecords(probe);
 });
 
-/** Runs the program in a fiber, waits for the double to be reached, interrupts it, and returns its exit. */
+/**
+ * Runs the program in a fiber, waits for the double to be reached, interrupts it, and returns its exit. Issue #219's
+ * suite run 10: the race also takes the program's own end, so a program that ended before its point fails the helper at
+ * once with its exit, and the bound's message names where the program stood. The bound's timer is cleared once the race
+ * settles, so a passing invocation keeps no timer alive.
+ */
 const interruptWhen = async (probe: WiringProbe, wiring: Wiring, reached: Promise<void>): Promise<Exit.Exit<number, never>> => {
   const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)));
-  await Promise.race([reached, sleep(30_000).then(() => assert.fail("the program did not reach the point to interrupt within 30 s"))]);
+  const where = (): string => [
+    `order: ${JSON.stringify(probe.ui.order.slice(-10))}`,
+    `notified: ${JSON.stringify(probe.ui.notified.slice(-10).map((event) => event._tag))}`,
+    `said: ${JSON.stringify(probe.ui.said.slice(-5))}`,
+  ].join("\n");
+  // The bound catches a program that never reaches its point; a program that ended is reported at once above. 120 s
+  // stays far below the runner's own limit, and since the timer is cleared a passing test never waits for it. In issue
+  // #219's suite run 10 this test passed 30 s once at a load under which it had run in 5 to 11 s; the cause was not
+  // reproduced, and a later failure's message names where the program stood.
+  const boundMs = 120_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  const bound = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`the program did not reach the point to interrupt within ${boundMs / 1000} s\n${where()}`)), boundMs);
+  });
+  const ended = Effect.runPromise(Fiber.await(fiber)).then((exit): never => {
+    if (settled) return undefined as never;
+    const shown = Exit.isSuccess(exit) ? `succeeded with ${String(exit.value)}` : Cause.pretty(exit.cause);
+    throw new Error(`the program ended before the point to interrupt: ${shown}\n${where()}`);
+  });
+  try {
+    await Promise.race([reached, bound, ended]);
+  } finally {
+    settled = true;
+    clearTimeout(timer);
+  }
   await sleep(10);
   await Effect.runPromise(Fiber.interrupt(fiber));
   return Effect.runPromise(Fiber.await(fiber));
