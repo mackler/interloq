@@ -38,9 +38,12 @@ export default defineConfig({
   // maxWorkers is a quarter of the cores because npm test runs this stage beside the others, and Vitest waits only a
   // fixed 60 s for a forked worker to start, which a fork per core missed on 18 Oct 2026 (issue #172's implementation
   // run) and half the cores missed in issue #41's suite run of 3 Nov 2026; testTimeout does not govern that wait.
-  // test/ci.test.ts checks it is set here alone.
+  // The pool is threads because a forked worker's start, a new Node process, still missed that wait for four files in
+  // issue #219's suite run 5 at a quarter of the cores, and a worker thread skips that start; isolate: false was not
+  // chosen because the test files would then share module state and the stubs of src/test-setup.ts.
+  // test/ci.test.ts checks each is set here alone.
   test: {
-    environment: "jsdom", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"], testTimeout: 120_000, maxWorkers: "25%",
+    environment: "jsdom", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"], testTimeout: 120_000, maxWorkers: "25%", pool: "threads",
     reporters: STAGE_REPORT_DIR === undefined || STAGE_REPORT_DIR === "" ? ["default"] : ["default", ["json", { outputFile: resolve(process.cwd(), STAGE_REPORT_DIR, "vitest.json") }]],
   },
 });

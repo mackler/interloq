@@ -113,6 +113,15 @@ test("the component tests' worker count is 25% of the cores, set in web/vite.con
   noOverride("test:web", /--maxWorkers|--max-workers|VITEST_MAX_WORKERS/);
 });
 
+// Issue #219 (suite run 5): four test files never ran when their forked workers, each a new Node process, missed
+// Vitest's fixed 60 s start wait at a quarter of the cores. A worker thread skips that process's start. The one source
+// of the pool is web/vite.config.ts.
+test("the component tests run in worker threads, set in web/vite.config.ts alone", async () => {
+  const config = (await import("../web/vite.config.ts")).default as { test?: { pool?: string } };
+  assert.equal(config.test?.pool, "threads", "web/vite.config.ts does not run the component tests in worker threads");
+  noOverride("test:web", /--pool|VITEST_POOL/, "the pool");
+});
+
 // Issue #172 (the suite run of 18 Oct 2026): under npm test's load two property tests of the page took 41 s and 51 s,
 // past the 30 s per-test timeout. The one source of that timeout is web/vite.config.ts.
 test("the component tests' per-test timeout is 120 s, set in web/vite.config.ts alone", async () => {
