@@ -127,6 +127,37 @@ test("an unreadable decision-making format prints HALTED with the file and exits
 });
 
 /**
+ * Waits until `reached`, the program fiber's own end or the bound, whichever comes first, and returns the fiber that
+ * observed the program's end, already interrupted (W11-R1-1 of issue #219): the observation is a fiber of its own,
+ * cancelled whichever of the three wins, and a failed invocation (the bound, or the program's early end) interrupts the
+ * program before it rethrows, so it leaves no fiber running.
+ */
+const awaitPoint = async <A, E>(fiber: Fiber.Fiber<A, E>, reached: Promise<void>, boundMs: number, where: () => string): Promise<Fiber.Fiber<Exit.Exit<A, E>, never>> => {
+  const observer = Effect.runFork(Fiber.await(fiber));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`the program did not reach the point to interrupt within ${boundMs / 1000} s\n${where()}`)), boundMs);
+  });
+  const ended = Effect.runPromise(Fiber.await(observer)).then((observed): Promise<never> => {
+    // The observer interrupted: the race was already decided, so this branch must never win it.
+    if (!Exit.isSuccess(observed)) return new Promise<never>(() => {});
+    const exit = observed.value;
+    const shown = Exit.isSuccess(exit) ? `succeeded with ${String(exit.value)}` : Cause.pretty(exit.cause);
+    throw new Error(`the program ended before the point to interrupt: ${shown}\n${where()}`);
+  });
+  try {
+    await Promise.race([reached, bound, ended]);
+  } catch (error) {
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    await Effect.runPromise(Fiber.interrupt(observer));
+  }
+  return observer;
+};
+
+/**
  * Runs the program in a fiber, waits for the double to be reached, interrupts it, and returns its exit. Issue #219's
  * suite run 10: the race also takes the program's own end, so a program that ended before its point fails the helper at
  * once with its exit, and the bound's message names where the program stood. The bound's timer is cleared once the race
@@ -143,27 +174,33 @@ const interruptWhen = async (probe: WiringProbe, wiring: Wiring, reached: Promis
   // stays far below the runner's own limit, and since the timer is cleared a passing test never waits for it. In issue
   // #219's suite run 10 this test passed 30 s once at a load under which it had run in 5 to 11 s; the cause was not
   // reproduced, and a later failure's message names where the program stood.
-  const boundMs = 120_000;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let settled = false;
-  const bound = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`the program did not reach the point to interrupt within ${boundMs / 1000} s\n${where()}`)), boundMs);
-  });
-  const ended = Effect.runPromise(Fiber.await(fiber)).then((exit): never => {
-    if (settled) return undefined as never;
-    const shown = Exit.isSuccess(exit) ? `succeeded with ${String(exit.value)}` : Cause.pretty(exit.cause);
-    throw new Error(`the program ended before the point to interrupt: ${shown}\n${where()}`);
-  });
-  try {
-    await Promise.race([reached, bound, ended]);
-  } finally {
-    settled = true;
-    clearTimeout(timer);
-  }
+  await awaitPoint(fiber, reached, 120_000, where);
   await sleep(10);
   await Effect.runPromise(Fiber.interrupt(fiber));
   return Effect.runPromise(Fiber.await(fiber));
 };
+
+/** Awaits a promise for at most 1,000 ms, failing with `message` otherwise. */
+const within = <T>(promise: Promise<T>, message: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), 1_000); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+};
+
+test("awaitPoint cancels its observation when the point is reached", async () => {
+  const fiber = Effect.runFork(Effect.never);
+  const observer = await awaitPoint(fiber, Promise.resolve(), 5_000, () => "");
+  const exit = await within(Effect.runPromise(Fiber.await(observer)), "the observer was not interrupted");
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  assert.ok(Exit.hasInterrupts(exit), "the observer's exit is not an interruption");
+});
+
+test("awaitPoint interrupts the program when its bound runs out", async () => {
+  const fiber = Effect.runFork(Effect.never);
+  await assert.rejects(awaitPoint(fiber, new Promise(() => {}), 50, () => "where"), /did not reach the point to interrupt within/);
+  const exit = await within(Effect.runPromise(Fiber.await(fiber)), "the program fiber was left running").finally(() => Effect.runPromise(Fiber.interrupt(fiber)));
+  assert.ok(Exit.hasInterrupts(exit), "the program's exit is not an interruption");
+});
 
 const assertInterrupted = (probe: WiringProbe, exit: Exit.Exit<number, never>): void => {
   assert.equal(exitCodeOf(exit), 130);
