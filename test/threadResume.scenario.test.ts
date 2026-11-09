@@ -8,7 +8,9 @@ import { exitCodeOf, program } from "../src/program.ts";
 import { newThreadSentence, TRANSPORT_ANSWERS, reviewPartLine, threadResumeFailedLine, threadRestartLine } from "../src/prompts.ts";
 import { subjectHeading } from "../src/render.ts";
 import type { StoreShape } from "../src/services.ts";
+import type { Asked, RunEvent } from "../src/protocol.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
+import { makeWebUi } from "../src/webUi.ts";
 import { emptyRun, foldEvent, type RunView } from "../web/src/state.ts";
 import { fakeTrackerOf, finished, issue, respond, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
 
@@ -213,31 +215,47 @@ test("(i) a replacement that succeeds after a fault reports the recovery, so the
   assert.equal(views.at(-1)!.retry, null, "the retry is still shown just before the phase ends");
 });
 
-test("(j) Stop task while the exhaustion question is open ends the run 130, interrupted, with no further attempt", async () => {
+test("(j) Stop task while the exhaustion question is open ends the run 130, interrupted, cancels the question and leaves the page without it", async () => {
   const { store } = capturing();
+  const events: RunEvent[] = [];
+  const ui = await Effect.runPromise(makeWebUi((e) => Effect.sync(() => void events.push(e))));
   const { wiring, probe } = testWiring(tempRepo(), {
     tracker: fakeTrackerOf([scriptedItem]),
     store,
+    ui,
     config: { ...fast, maxTransportRetries: 1 },
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
     reviews: repeatedRefusals,
     execs: [finished],
   });
   const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project, "implementation"), wiring)));
-  const presented = async (): Promise<boolean> => {
+  /** The Asked of the Codex transport question: the prompt published after its QuestionPresented. */
+  const transportAsked = (): Asked | null => {
+    const presented = events.findIndex((e) => e._tag === "Notified" && isTransportQuestion(e.event));
+    if (presented < 0) return null;
+    const asked = events.slice(presented).find((e): e is Asked => e._tag === "Asked");
+    return asked ?? null;
+  };
+  const presented = async (): Promise<Asked | null> => {
     for (let k = 0; k < 200; k++) {
-      if (probe.ui.notified.some(isTransportQuestion)) return true;
-      if (fiber.pollUnsafe() !== undefined) return false;
+      const asked = transportAsked();
+      if (asked !== null) return asked;
+      if (fiber.pollUnsafe() !== undefined) return null;
       await new Promise((r) => setTimeout(r, 25));
     }
-    return false;
+    return null;
   };
-  const reached = await presented();
-  if (!reached) await Effect.runPromise(Fiber.interrupt(fiber));
-  assert.ok(reached, "the transport question was never presented");
+  const asked = await presented();
+  if (asked === null) await Effect.runPromise(Fiber.interrupt(fiber));
+  assert.ok(asked !== null, "the transport question was never presented");
   const reviewsBefore = probe.reviewer.prompts.length;
   await Effect.runPromise(Fiber.interrupt(fiber));
   assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
   assert.equal(probe.reviewer.prompts.length, reviewsBefore);
   assert.ok(conversation(probe.dir).includes("**Interrupted by the user.**"));
+  const askedAt = events.indexOf(asked);
+  const cancelledAt = events.findIndex((e, k) => k > askedAt && e._tag === "PromptCancelled" && e.prompt === asked.prompt);
+  assert.ok(cancelledAt > askedAt, `no PromptCancelled of prompt ${asked.prompt} after its Asked: ${events.map((e) => e._tag).join(", ")}`);
+  const view = events.reduce((run: RunView, event) => foldEvent(run, { time: "2026-11-09T00:00:00.000Z", event }), emptyRun(1));
+  assert.equal(view.pending, null, "the page still shows the transport question pending");
 });
