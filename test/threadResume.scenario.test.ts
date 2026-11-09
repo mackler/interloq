@@ -8,7 +8,7 @@ import { program } from "../src/program.ts";
 import { newThreadSentence, reviewPartLine, threadResumeFailedLine, threadRestartLine } from "../src/prompts.ts";
 import { subjectHeading } from "../src/render.ts";
 import type { StoreShape } from "../src/services.ts";
-import { fakeTrackerOf, finished, issue, respond, runTask, scriptedItem, scriptedStart, TEST_ROOT, tempRepo, testLayer, testWiring } from "./helpers.ts";
+import { fakeTrackerOf, finished, issue, respond, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
 
 // Issue #262: a Codex review thread the CLI cannot resume is replaced by a new thread, and the review goes on.
 const HALT = "Codex Exec exited with code 1: Reading prompt from stdin...\nError: thread/resume: thread/resume failed: list_turns is not supported yet (code -32601)";
@@ -70,63 +70,89 @@ test("(b) a code review's step part whose thread cannot be resumed gets a new th
 });
 
 test("(c) a new thread's first turn that fails with the resume text halts: it resumed nothing", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
+  const { store } = capturing();
+  const { wiring, probe } = testWiring(tempRepo(), {
+    tracker: fakeTrackerOf([scriptedItem]),
+    store,
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [], failure: HALT }, { issues: [], failure: HALT }],
     execs: [finished],
   });
-  await assert.rejects(runTask(layer), (e: unknown) => (e as { _tag: string })._tag === "CodexCallFailed");
-  assert.equal(resumeLines(conversation(probe.dir)), 1);
+  assert.equal(await runProgram(wiring, probe.project), 1);
+  const text = conversation(probe.dir);
+  assert.ok(text.includes("Codex review failed:"), "conversation.md lacks the halt's record");
+  assert.equal(resumeLines(text), 1);
 });
 
 test("(d) a refused credential on a resumed turn halts with no new thread", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
+  const { store } = capturing();
+  const { wiring, probe } = testWiring(tempRepo(), {
+    tracker: fakeTrackerOf([scriptedItem]),
+    store,
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [], failure: `${HALT} 401 Unauthorized` }],
     execs: [finished],
   });
-  await assert.rejects(runTask(layer), (e: unknown) => (e as { _tag: string })._tag === "CodexCallFailed");
+  assert.equal(await runProgram(wiring, probe.project), 1);
   assert.deepEqual(probe.reviewer.callPhases, [1, 1]);
   assert.equal(resumeLines(conversation(probe.dir)), 0);
 });
 
 test("(e) a schema repair turn whose thread cannot be resumed: a new thread gets the round's first-round prompt, and its review is accepted", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
+  const { captured, store } = capturing();
+  const { wiring, probe } = testWiring(tempRepo(), {
+    tracker: fakeTrackerOf([scriptedItem]),
+    store,
     steps: [{ output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [], raw: "not json" }, { issues: [], failure: HALT }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
-  assert.equal(await runTask(layer), 1);
+  assert.equal(await runProgram(wiring, probe.project), 0);
+  assert.ok(captured.root !== null);
   assert.deepEqual(probe.reviewer.callPhases, [1, 1, 2, 3]);
   assert.equal(probe.reviewer.prompts[2], probe.reviewer.prompts[0], "round 1's prompt is repeated");
-  assert.ok(conversation(probe.dir).includes(threadResumeFailedLine(subjectHeading({ plan: 1 }), 1, "scripted-thread-1", HALT)));
+  assert.ok(probe.reviewer.prompts[0]!.includes(captured.root!), "the first-round text is built from the run's root");
+  const line = threadResumeFailedLine(subjectHeading({ plan: 1 }), 1, "scripted-thread-1", HALT);
+  assert.ok(conversation(probe.dir).includes(line), "conversation.md lacks the line");
+  assert.ok(probe.ui.said.includes(line), "the page was not told");
   assert.deepEqual(probe.ui.asked, []);
 });
 
 test("(f) the replaced thread's inputs are not counted: the next round continues the new thread", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
+  const { store } = capturing();
+  const { wiring, probe } = testWiring(tempRepo(), {
+    tracker: fakeTrackerOf([scriptedItem]),
+    store,
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [], raw: "not json", inputTokens: 900_000 }, { issues: [], failure: HALT }, { issues: [issue("P1-R1-1")], inputTokens: 1_000 }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
-  assert.equal(await runTask(layer), 1);
+  assert.equal(await runProgram(wiring, probe.project), 0);
   assert.deepEqual(probe.reviewer.callPhases, [1, 1, 2, 2, 3]);
-  assert.ok(!conversation(probe.dir).includes(threadRestartLine(subjectHeading({ plan: 1 }), 2, 900_000, 500_000)));
+  const restart = threadRestartLine(subjectHeading({ plan: 1 }), 2, 900_000, 500_000);
+  assert.ok(!conversation(probe.dir).includes(restart));
+  assert.ok(!probe.ui.said.includes(restart));
 });
 
 test("(g) a replacement thread whose retry resumes and is refused is replaced again, each replacement said", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
+  const { captured, store } = capturing();
+  const { wiring, probe } = testWiring(tempRepo(), {
+    tracker: fakeTrackerOf([scriptedItem]),
+    store,
     config: fast,
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [], failure: HALT }, { issues: [], fault: "stream disconnected" }, { issues: [], failure: HALT }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
-  assert.equal(await runTask(layer), 1);
+  assert.equal(await runProgram(wiring, probe.project), 0);
   assert.deepEqual(probe.reviewer.callPhases, [1, 1, 2, 2, 3, 4]);
-  assert.ok(probe.reviewer.prompts[4]!.startsWith(newThreadSentence(TEST_ROOT, "issue-log.json", 2)));
+  assert.ok(probe.reviewer.prompts[4]!.startsWith(newThreadSentence(captured.root!, "issue-log.json", 2)));
   const text = conversation(probe.dir);
   assert.equal(resumeLines(text), 2);
-  assert.ok(text.includes(threadResumeFailedLine(subjectHeading({ plan: 1 }), 2, "scripted-thread-1", HALT)));
-  assert.ok(text.includes(threadResumeFailedLine(subjectHeading({ plan: 1 }), 2, "scripted-thread-2", HALT)));
+  for (const thread of ["scripted-thread-1", "scripted-thread-2"]) {
+    const line = threadResumeFailedLine(subjectHeading({ plan: 1 }), 2, thread, HALT);
+    assert.ok(text.includes(line), `conversation.md lacks the line of ${thread}`);
+    assert.ok(probe.ui.said.includes(line), `the page was not told of ${thread}`);
+  }
   assert.deepEqual(probe.ui.asked, []);
 });
