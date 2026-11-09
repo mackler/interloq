@@ -458,7 +458,23 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
     // 11 Oct 2026): an implementation run beside it commits to the project, and a commit landing during a Codex turn
     // halted a refinement mid-review.
     const reviewProjectGuarded = guardsReviewProject((yield* RunKind).mode);
-    const reviewCall = (thread: PartThread, text: string) =>
+    /** A round's review prompt for a part in a thread, with the previous response's unexplained change after it (issue #208). */
+    const promptFor = (part: PartThread, round: number, thread: ReviewThread, unexplained: prompts.UnexplainedChange | null): string => {
+      const base = part.prompt(store.root, round, thread);
+      return unexplained === null ? base : `${base}\n\n${prompts.unexplainedChangeReviewNote(unexplained)}`;
+    };
+    /** A line said on the page and written to conversation.md, asking nothing. */
+    const sayAndWrite = (line: string) => Effect.andThen(ui.say(line), store.converse(line));
+
+    /**
+     * One review turn, the review or a repair turn of it, under one transport retry (issue #26). Issue #262: a turn whose
+     * thread Codex could not resume starts a new thread for its part at once and is repeated there, within the same
+     * attempt, with the round's new-thread prompt, said on the page and written to conversation.md, asking nothing; the
+     * new thread's inputs are counted afresh. A transport fault on the new thread ends the attempt, so the retry's count
+     * and its recovery span every replacement, and its next attempt sends the new-thread prompt on the replacement. A new
+     * thread's first turn resumes nothing, so its failure is classified as any first turn's, which bounds the replacements.
+     */
+    const reviewCall = (thread: PartThread, text: string, round: number, unexplained: prompts.UnexplainedChange | null) =>
       Effect.gen(function* () {
         const projectBefore = yield* store.projectSnapshot();
         const fileBefore = yield* store.fileHash(id);
@@ -477,42 +493,28 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
           if (fileChanged) return yield* Effect.fail(new ReviewedFileChanged({ fileLabel, changes: [...changes, { kind: "content_changed", path: fileLabel }] }));
           if (reviewProjectGuarded && changes.length > 0) return yield* Effect.fail(new ProjectChanged({ during: "review", fileLabel, changes }));
         });
-        const attempt = () =>
+        const current = yield* Ref.make(text);
+        const turn: Effect.Effect<ReviewReply, Exclude<Effect.Error<ReturnType<ReviewSession["review"]>>, CodexThreadNotResumable> | Effect.Error<typeof check>> = Effect.suspend(() =>
           Effect.gen(function* () {
-            const reply = yield* Effect.result((yield* Ref.get(thread.session)).review(text, subject.reviewSchema));
+            const session = yield* Ref.get(thread.session);
+            const reply = yield* Effect.result(session.review(yield* Ref.get(current), subject.reviewSchema));
             yield* check;
-            const accepted = yield* Effect.fromResult(reply);
+            if (Result.isFailure(reply)) {
+              const failure = reply.failure;
+              if (failure._tag !== "CodexThreadNotResumable") return yield* Effect.fail(failure);
+              yield* Ref.set(thread.session, yield* reviewer.startPhase);
+              yield* Ref.set(thread.inputs, []);
+              yield* sayAndWrite(prompts.threadResumeFailedLine(heading, round, failure.thread, failure.message, single ? null : thread.part));
+              yield* Ref.set(current, promptFor(thread, round, "new", unexplained));
+              return yield* turn;
+            }
+            const accepted = reply.success;
             yield* Ref.update(thread.inputs, (inputs) => [...inputs, accepted.inputTokens]);
             return accepted;
-          });
-        return yield* withTransportRetry("codex", REVIEW_PURPOSE, transportReviewWhat(heading, prompts.passNoun(subject.id)), attempt, check);
-      });
-
-    /** A round's review prompt for a part in a thread, with the previous response's unexplained change after it (issue #208). */
-    const promptFor = (part: PartThread, round: number, thread: ReviewThread, unexplained: prompts.UnexplainedChange | null): string => {
-      const base = part.prompt(store.root, round, thread);
-      return unexplained === null ? base : `${base}\n\n${prompts.unexplainedChangeReviewNote(unexplained)}`;
-    };
-    /** A line said on the page and written to conversation.md, asking nothing. */
-    const sayAndWrite = (line: string) => Effect.andThen(ui.say(line), store.converse(line));
-
-    /**
-     * Issue #262: a review turn, the review or a repair turn of it, whose thread Codex could not resume starts a new
-     * thread for its part at once and is repeated there with the round's new-thread prompt, said on the page and written
-     * to conversation.md, asking nothing; the new thread's inputs are counted afresh. A new thread's first turn resumes
-     * nothing, so its failure is classified as any first turn's, which bounds the replacements.
-     */
-    const callRecovering = (part: PartThread, round: number, unexplained: prompts.UnexplainedChange | null, text: string): Effect.Effect<ReviewReply, Exclude<Effect.Error<ReturnType<typeof reviewCall>>, CodexThreadNotResumable>, Effect.Services<ReturnType<typeof reviewCall>>> =>
-      reviewCall(part, text).pipe(
-        Effect.catchTag("CodexThreadNotResumable", (e) =>
-          Effect.gen(function* () {
-            yield* Ref.set(part.session, yield* reviewer.startPhase);
-            yield* Ref.set(part.inputs, []);
-            yield* sayAndWrite(prompts.threadResumeFailedLine(heading, round, e.thread, e.message, single ? null : part.part));
-            return yield* callRecovering(part, round, unexplained, promptFor(part, round, "new", unexplained));
           }),
-        ),
-      );
+        );
+        return yield* withTransportRetry("codex", REVIEW_PURPOSE, transportReviewWhat(heading, prompts.passNoun(subject.id)), () => turn, check);
+      });
 
     /**
      * The thread of a round's review (issue #165, requirements Q1): round 1 is the loop's first thread; a later round
@@ -688,7 +690,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>,
                 Effect.gen(function* () {
                   // Issue #208: the previous response's unexplained change, which this review examines, follows the prompt.
                   const prompt = promptFor(part, command.round, threads[i]!, command.unexplained);
-                  const call = (text: string) => callRecovering(part, command.round, command.unexplained, text).pipe(Effect.map((reply) => reply.text));
+                  const call = (text: string) => reviewCall(part, text, command.round, command.unexplained).pipe(Effect.map((reply) => reply.text));
                   // Issue #151: the review's validation with its repair turn in the part's thread, every reply saved first.
                   const { value } = yield* decodeValidating("codex", reviewText, yield* call(prompt), (r) => call(r.prompt), reviewValidation, rawSave(command.round, single ? "review" : { reviewPart: part.key }));
                   return { part, call, review: value };
